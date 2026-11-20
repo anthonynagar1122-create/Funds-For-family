@@ -332,3 +332,15 @@ test('critique: final-CTA disclaimer meets 4.5:1 contrast on the brand backgroun
   }));
   assert.ok(ratio >= 4.5, `contrast ${ratio.toFixed(2)}:1`);
 });
+
+// ---- Card design (card-effects-studio): ledger accent on the example card ----
+
+test('card design: the example card has a 3 px brand rule across its top edge', { skip }, async () => {
+  const rule = await withPage({ width: 1440 }, (p) => p.evaluate(() => {
+    const cs = getComputedStyle(document.querySelector('.example-card'), '::before');
+    return { height: cs.height, color: cs.backgroundColor, content: cs.content };
+  }));
+  assert.notEqual(rule.content, 'none', 'accent rule present');
+  assert.equal(rule.height, '3px');
+  assert.equal(rule.color, 'rgb(31, 111, 92)', 'uses brand-600');
+});

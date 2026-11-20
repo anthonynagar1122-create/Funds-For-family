@@ -185,3 +185,11 @@ h2 { font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.25rem); line-height: 1.15; margi
   .js [data-zoom], [data-tilt] { opacity: 1; transform: none; transition: none; }
   .step::before { display: none; }
 }
+
+/* Card design: the example card reads as a ledger statement, with a brand rule across its top edge. No motion. */
+.example-card { position: relative; overflow: hidden; }
+.example-card::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--color-brand-600);
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+}
