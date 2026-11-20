@@ -59,10 +59,17 @@
     $('#feed-empty').hidden = requests.length > 0;
     list.innerHTML = '';
     for (const r of requests) {
-            const li = document.createElement('li');
-      li.className = 'card';
-      li.innerHTML = `<p class="card-title"><a href="#request/${r.id}">${esc(r.purpose.slice(0, 90))}${r.purpose.length > 90 ? '…' : ''}</a></p>
-        <div class="meta"><span>Requested ${money(r.principalCents)}</span><span>Repay by ${esc(r.repaymentDate)}</span>${statusBadge(r.status)}</div>`;
+      const card = CardModel.requestCard(r, me);
+      const li = document.createElement('li');
+      li.className = `card card-${card.tone}`;
+      const actions = card.actions
+        .map((a) => `<a class="btn btn-sm btn-${a.tone === 'primary' ? 'primary' : 'ghost'}" href="#request/${r.id}" data-action="${esc(a.id)}">${esc(a.label)}</a>`)
+        .join(' ');
+      li.innerHTML = `
+        <p class="card-title"><a href="#request/${r.id}">${esc(card.title)}</a></p>
+        <div class="meta"><span>${esc(card.raisedLabel)}</span><span>${esc(card.dueLabel)}</span><span class="badge badge-${esc(card.tone)}">${esc(card.statusLabel)}</span></div>
+        <div class="progress" role="progressbar" aria-label="Funding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${card.progressPct}"><span style="width:${card.progressPct}%"></span></div>
+        <div class="row-actions">${actions}</div>`;
       list.appendChild(li);
     }
   }

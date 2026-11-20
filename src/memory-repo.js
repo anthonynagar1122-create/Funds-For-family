@@ -48,6 +48,15 @@ function createMemoryRepo() {
       return [...requests.values()].filter((r) => borrowerIds.includes(r.borrowerId)).sort((a, b) => b.id - a.id);
     },
     async listVerifications(requestId) { return verifications.filter((v) => v.requestId === requestId); },
+    // Every request a member is part of: as borrower or nominee, or with a contribution, repayment or decision.
+    async listRequestsForMember(userId) {
+      const ids = new Set();
+      for (const r of requests.values()) if (r.borrowerId === userId || r.nomineeId === userId) ids.add(r.id);
+      for (const c of contributions) if (c.contributorId === userId) ids.add(c.requestId);
+      for (const p of repayments) if (p.payerId === userId) ids.add(p.requestId);
+      for (const v of verifications) if (v.verifierId === userId) ids.add(v.requestId);
+      return [...ids].map((id) => requests.get(id)).sort((a, b) => b.id - a.id);
+    },
     async addVerification(row) {
       const i = verifications.findIndex((v) => v.requestId === row.requestId && v.verifierId === row.verifierId);
       if (i >= 0) verifications[i] = row; else verifications.push(row);

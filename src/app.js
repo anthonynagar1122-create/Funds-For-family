@@ -114,7 +114,49 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       ? following.filter((id) => followers.includes(id))
       : [...new Set([...following, ...followers, req.user.id])];
     const rows = (await repo.listFeed(ids)).filter((r) => rules.isFeedStatus(r.status));
-    res.json({ requests: rows.map((r) => summarise(r, now())) });
+    const withRaised = await Promise.all(rows.map(async (r) => {
+      const raisedCents = (await repo.listContributions(r.id)).reduce((sum, c) => sum + c.amountCents, 0);
+      return { ...summarise(r, now()), raisedCents };
+    }));
+    res.json({ requests: withRaised });
+  });
+
+  // The member's ledger. Built from requests they borrowed plus requests raised by their connections
+  // (the same discovery scope as the feed). Repo has no lookup by participant, so requests outside that scope are not listed.
+  api.get('/activity', async (req, res) => {
+    const me = req.user.id;
+    const asOf = now();
+    const requests = await repo.listRequestsForMember(me);
+    const details = await Promise.all(requests.map(async (r) => ({
+      r,
+      verifs: await repo.listVerifications(r.id),
+      contribs: await repo.listContributions(r.id),
+      repays: await repo.listRepayments(r.id),
+    })));
+    const total = (list) => list.reduce((s, x) => s + x.amountCents, 0);
+    const row = (r, myRole, myAmountCents) => ({
+      requestId: r.id,
+      purpose: r.purpose,
+      status: rules.effectiveStatus(r, asOf),
+      principalCents: r.principalCents,
+      repaymentDate: r.repaymentDate,
+      myRole,
+      myAmountCents,
+    });
+    const out = { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { nominee: [], verifier: [] } };
+    for (const { r, verifs, contribs, repays } of details) {
+      const myPaid = total(repays.filter((p) => p.payerId === me));
+      const myLent = total(contribs.filter((c) => c.contributorId === me));
+      if (r.borrowerId === me) out.borrowing.push(row(r, 'borrower', myPaid));
+      if (myLent > 0) {
+        out.lending.push(row(r, 'lender', myLent));
+        if (repays.length > 0) out.repayments.received.push(row(r, 'lender', total(repays)));
+      }
+      if (myPaid > 0) out.repayments.made.push(row(r, 'payer', myPaid));
+      if (r.nomineeId === me) out.roles.nominee.push(row(r, 'nominee', 0));
+      if (verifs.some((v) => v.verifierId === me)) out.roles.verifier.push(row(r, 'verifier', 0));
+    }
+    res.json(out);
   });
 
   api.post('/requests', async (req, res) => {

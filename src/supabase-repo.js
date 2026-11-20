@@ -87,6 +87,22 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
       if (borrowerIds.length === 0) return [];
       return many(check(await db.from('requests').select().in('borrower_id', borrowerIds).order('id', { ascending: false }).limit(100)));
     },
+    async listRequestsForMember(userId) {
+      const [asParty, asLender, asPayer, asVerifier] = await Promise.all([
+        db.from('requests').select('id').or(`borrower_id.eq.${userId},nominee_id.eq.${userId}`),
+        db.from('contributions').select('request_id').eq('contributor_id', userId),
+        db.from('repayments').select('request_id').eq('payer_id', userId),
+        db.from('verifications').select('request_id').eq('verifier_id', userId),
+      ]);
+      const ids = new Set([
+        ...check(asParty).map((r) => r.id),
+        ...check(asLender).map((r) => r.request_id),
+        ...check(asPayer).map((r) => r.request_id),
+        ...check(asVerifier).map((r) => r.request_id),
+      ]);
+      if (ids.size === 0) return [];
+      return many(check(await db.from('requests').select().in('id', [...ids]).order('id', { ascending: false })));
+    },
     async listVerifications(requestId) {
       return many(check(await db.from('verifications').select().eq('request_id', requestId)))
         .map((v) => ({ ...v }));
