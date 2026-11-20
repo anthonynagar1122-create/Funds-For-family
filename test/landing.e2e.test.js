@@ -175,3 +175,132 @@ test('hero copy ends fully visible once its transition finishes', { skip }, asyn
   });
   assert.ok(opacities.every((o) => o === '1'));
 });
+
+// ---- Motion effects on the landing page (TDD: written before integration) ----
+// Chosen approach (B): zoom on all cards; spotlight and tilt on the four step cards;
+// magnetic pull on the two primary CTAs. Nothing loops; reduced motion disables movement.
+
+test('effects: feature cards zoom from 0.96 to rest as they scroll in', { skip }, async () => {
+  // Feature cards sit below the first viewport, so their starting state is observable.
+  const [start, end] = await withPage({}, async (p) => {
+    await p.waitForSelector('html.js');
+    const card = p.locator('.feature').first();
+    // Read the resting start state deterministically: no transition, no visible class.
+    const before = await card.evaluate((el) => {
+      el.style.transition = 'none';
+      el.classList.remove('is-visible');
+      const t = getComputedStyle(el).transform;
+      el.style.transition = '';
+      return t;
+    });
+    await card.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    await p.waitForFunction(() => getComputedStyle(document.querySelector('.feature')).transform === 'none', null, { timeout: 2000 });
+    return [before, await card.evaluate((el) => getComputedStyle(el).transform)];
+  });
+  // Must start from a 0.96 scale, not the old 8 px translate used by the reveal.
+  assert.match(start, /^matrix\(0\.96,/, `starts at ${start}`);
+  assert.equal(end, 'none', 'ends at rest');
+});
+
+test('effects: step cards carry the pointer spotlight', { skip }, async () => {
+  const vars = await withPage({}, async (p) => {
+    const card = p.locator('.step').first();
+    await card.scrollIntoViewIfNeeded();
+    const box = await card.boundingBox();
+    await p.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.4, { steps: 3 });
+    return card.evaluate((el) => [el.style.getPropertyValue('--mx'), el.style.getPropertyValue('--my')]);
+  });
+  assert.match(vars[0], /%$/);
+  assert.match(vars[1], /%$/);
+});
+
+test('effects: a hovered step card tilts and returns flat on leave', { skip }, async () => {
+  const [hovered, left] = await withPage({}, async (p) => {
+    const card = p.locator('.step').first();
+    await card.scrollIntoViewIfNeeded();
+    await p.waitForFunction(() => getComputedStyle(document.querySelector('.step')).transform === 'none', null, { timeout: 2000 });
+    const box = await card.boundingBox();
+    await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 3 });
+    await p.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.1, { steps: 8 });
+    await p.waitForTimeout(200);
+    const h = await card.evaluate((el) => getComputedStyle(el).transform);
+    await p.mouse.move(2, 2, { steps: 3 });
+    await p.waitForTimeout(200);
+    return [h, await card.evaluate((el) => getComputedStyle(el).transform)];
+  });
+  assert.notEqual(hovered, 'none', 'tilted');
+  assert.equal(left, 'none', 'flat after leave');
+});
+
+test('effects: step tilt never exceeds 4 degrees', { skip }, async () => {
+  const max = await withPage({}, async (p) => {
+    const card = p.locator('.step').first();
+    await card.scrollIntoViewIfNeeded();
+    await p.waitForFunction(() => getComputedStyle(document.querySelector('.step')).transform === 'none', null, { timeout: 2000 });
+    const box = await card.boundingBox();
+    await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 3 });
+    await p.mouse.move(box.x + box.width * 0.95, box.y + box.height * 0.05, { steps: 8 });
+    await p.waitForTimeout(200);
+    return card.evaluate((el) => Math.max(
+      Math.abs(parseFloat(el.style.getPropertyValue('--rx') || '0')),
+      Math.abs(parseFloat(el.style.getPropertyValue('--ry') || '0'))));
+  });
+  assert.ok(max > 0 && max <= 4, `tilt ${max}deg`);
+});
+
+test('effects: the hero CTA leans toward the pointer by at most 4 px', { skip }, async () => {
+  const dx = await withPage({}, async (p) => {
+    const btn = p.locator('.hero .btn-primary');
+    await btn.scrollIntoViewIfNeeded();
+    const box = await btn.boundingBox();
+    await p.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 4 });
+    await p.waitForTimeout(200);
+    return btn.evaluate((el) => {
+      const m = getComputedStyle(el).transform.match(/matrix\(([^)]+)\)/);
+      return m ? Math.abs(parseFloat(m[1].split(',')[4])) : 0;
+    });
+  });
+  assert.ok(dx > 0 && dx <= 4, `moved ${dx}px`);
+});
+
+test('effects: reduced motion disables tilt, magnetic pull and zoom', { skip }, async () => {
+  const r = await withPage({ reducedMotion: 'reduce' }, async (p) => {
+    const step = p.locator('.step').first();
+    await step.scrollIntoViewIfNeeded();
+    const box = await step.boundingBox();
+    await p.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.1, { steps: 4 });
+    await p.waitForTimeout(150);
+    const tilt = await step.evaluate((el) => getComputedStyle(el).transform);
+    const btn = p.locator('.hero .btn-primary');
+    const bb = await btn.boundingBox();
+    await p.mouse.move(bb.x + bb.width / 2 + 40, bb.y + bb.height / 2, { steps: 4 });
+    await p.waitForTimeout(150);
+    const mag = await btn.evaluate((el) => getComputedStyle(el).transform);
+    const zoom = await p.locator('.step').nth(1).evaluate((el) => getComputedStyle(el).transform);
+    return { tilt, mag, zoom };
+  });
+  assert.equal(r.tilt, 'none');
+  assert.equal(r.mag, 'none');
+  assert.equal(r.zoom, 'none');
+});
+
+test('effects: nothing on the landing page animates forever', { skip }, async () => {
+  const count = await withPage({}, async (p) => {
+    await p.waitForTimeout(600);
+    return p.evaluate(() => document.getAnimations().filter((a) => a.effect && a.effect.getTiming().iterations === Infinity).length);
+  });
+  assert.equal(count, 0);
+});
+
+test('effects: every landing transition duration is a token (0/100/150/200/300 ms)', { skip }, async () => {
+  const durations = await withPage({}, (p) => p.evaluate(() => {
+    const out = new Set();
+    for (const el of document.querySelectorAll('*')) {
+      for (const d of getComputedStyle(el).transitionDuration.split(',')) {
+        out.add(Math.round(parseFloat(d) * (d.includes('ms') ? 1 : 1000)));
+      }
+    }
+    return [...out];
+  }));
+  for (const ms of durations) assert.ok([0, 100, 150, 200, 300].includes(ms), `${ms}ms`);
+});

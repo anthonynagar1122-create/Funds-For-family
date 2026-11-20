@@ -159,3 +159,29 @@ h2 { font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.25rem); line-height: 1.15; margi
   .js .reveal, .js .hero-copy.reveal-group > * { opacity: 1; transform: none; transition: none; }
   .btn, .faq summary::after { transition: none; }
 }
+
+/* Effects (approach B): scroll zoom on cards; spotlight and tilt on step cards; magnetic on primary CTAs.
+   Colour and transform only. Durations are tokens. Reduced motion disables all of them. */
+.js [data-zoom] {
+  opacity: 0; transform: scale(.96);
+  transition: opacity var(--motion-200) var(--ease-out), transform var(--motion-200) var(--ease-out);
+}
+.js [data-zoom].is-visible { opacity: 1; transform: none; }
+
+.step, .feature { position: relative; overflow: hidden; }
+.step::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), rgba(31, 111, 92, .09), transparent 70%);
+  transition: opacity var(--motion-150) var(--ease-out);
+}
+.step[data-spotlight]:hover::before { opacity: 1; }
+.step > * { position: relative; }
+
+[data-tilt] {
+  transition: opacity var(--motion-200) var(--ease-out), transform var(--motion-150) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .js [data-zoom], [data-tilt] { opacity: 1; transform: none; transition: none; }
+  .step::before { display: none; }
+}
