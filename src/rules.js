@@ -2,6 +2,8 @@
 // Pure business rules. No I/O: safe to unit-test and to reuse on server and client.
 
 const PURPOSE_MIN_LENGTH = 20;
+const PURPOSE_MAX_LENGTH = 2000;
+const AMOUNT_MAX = 1000000;        // dollars; keeps cents well inside the 32-bit integer column
 const DEFAULT_ANNUAL_RATE = 0.12;   // ⚠ assumption, see docs/01-idea.md
 const DEFAULT_REQUIRED_APPROVALS = 2;
 const MS_PER_DAY = 86400000;
@@ -53,6 +55,8 @@ function validateRequest(input, { borrowerId, now }) {
   const amount = Number(input?.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
     errors.amount = 'Amount must be a positive number';
+  } else if (amount > AMOUNT_MAX) {
+    errors.amount = `Amount cannot exceed ${AMOUNT_MAX}`;
   } else if (Math.round(amount * 100) !== amount * 100) {
     errors.amount = 'Amount can have at most 2 decimal places';
   } else {
@@ -62,6 +66,8 @@ function validateRequest(input, { borrowerId, now }) {
   const purpose = typeof input?.purpose === 'string' ? input.purpose.trim() : '';
   if (purpose.length < PURPOSE_MIN_LENGTH) {
     errors.purpose = `Describe the purpose in at least ${PURPOSE_MIN_LENGTH} characters`;
+  } else if (purpose.length > PURPOSE_MAX_LENGTH) {
+    errors.purpose = `Keep the purpose under ${PURPOSE_MAX_LENGTH} characters`;
   } else {
     value.purpose = purpose;
   }
@@ -134,6 +140,8 @@ function isFeedStatus(status) {
 
 module.exports = {
   PURPOSE_MIN_LENGTH,
+  PURPOSE_MAX_LENGTH,
+  AMOUNT_MAX,
   DEFAULT_ANNUAL_RATE,
   DEFAULT_REQUIRED_APPROVALS,
   FEED_MODE,

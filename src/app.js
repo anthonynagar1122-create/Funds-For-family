@@ -38,10 +38,19 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   }
 
   const api = express.Router();
+
+  // Express 4 does not catch promise rejections from async handlers. Route them to the error handler,
+  // so a failing dependency returns a generic 500 instead of hanging the request.
+  const wrapAsync = (fn) => (req, res, next) => { Promise.resolve().then(() => fn(req, res, next)).catch(next); };
+  for (const method of ['get', 'post', 'delete']) {
+    const original = api[method].bind(api);
+    api[method] = (routePath, ...handlers) => original(routePath, ...handlers.map((h) =>
+      h.constructor.name === 'AsyncFunction' ? wrapAsync(h) : h));
+  }
   api.get('/health', (_req, res) => res.json({ ok: true }));
   api.use(requireUser);
 
-  api.get('/me', (req, res) => res.json({ user: publicUser(req.user) }));
+  api.get('/me', (req, res) => res.json({ user: publicUser(req.user, req.user.id) }));
 
   // Empty query returns your connections (used for the nominee picker). Two or more characters searches all members.
   api.get('/users', async (req, res) => {
@@ -50,17 +59,17 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       const { following, followers } = await repo.connections(req.user.id);
       const ids = [...new Set([...following, ...followers])];
       const users = await Promise.all(ids.map((id) => repo.getUser(id)));
-      return res.json({ users: users.filter(Boolean).map(publicUser) });
+      return res.json({ users: users.filter(Boolean).map((u) => publicUser(u, req.user.id)) });
     }
     if (q.length < 2) return res.json({ users: [] });
     const users = await repo.searchUsers(q, req.user.id);
-    res.json({ users: users.slice(0, 20).map(publicUser) });
+    res.json({ users: users.slice(0, 20).map((u) => publicUser(u, req.user.id)) });
   });
 
   api.get('/users/:id', async (req, res) => {
     const u = await repo.getUser(Number(req.params.id));
     if (!u) return fail(res, 404, 'User not found');
-    res.json({ user: publicUser(u) });
+    res.json({ user: publicUser(u, req.user.id) });
   });
 
   api.post('/follows', async (req, res) => {
@@ -81,7 +90,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const { following, followers } = await repo.connections(req.user.id);
     const followingSet = new Set(following);
     const mutualIds = followers.filter((id) => followingSet.has(id));
-    const load = async (ids) => Promise.all(ids.map((id) => repo.getUser(id).then(publicUser)));
+    const load = async (ids) => Promise.all(ids.map((id) => repo.getUser(id).then((u) => publicUser(u, req.user.id))));
     res.json({ following: await load(following), followers: await load(followers), mutual: await load(mutualIds) });
   });
 
@@ -191,13 +200,20 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
 
   app.use('/api', api);
   app.use((err, _req, res, _next) => {
+    const status = err.status || err.statusCode;
+    if (status === 413) return res.status(413).json({ error: 'Request is too large' });
+    if (status && status >= 400 && status < 500) return res.status(status).json({ error: 'Malformed request' });
     logger.error(err);
     res.status(500).json({ error: 'Something went wrong' });
   });
 
   // ---- helpers bound to deps ----
-  function publicUser(u) {
-    return u ? { id: u.id, name: u.name, email: u.email, isVerifier: !!u.isVerifier } : null;
+  // Email is shown only to its owner. Other members see a name and verifier status.
+  function publicUser(u, viewerId) {
+    if (!u) return null;
+    const out = { id: u.id, name: u.name, isVerifier: !!u.isVerifier };
+    if (viewerId !== undefined && u.id === viewerId) out.email = u.email;
+    return out;
   }
 
   function summarise(r, asOf) {
