@@ -139,3 +139,86 @@ p { color: var(--color-ink-700); }
 
 /* The app stylesheet constrains <main>; the landing page needs full-bleed sections. */
 body.landing main { max-width: none; margin: 0; padding: 0; }
+
+/* ==========================================================================
+   Card system (audit fixes: one radius, one padding scale, one type scale,
+   three variants). Applies to feature, step, example, calc and trust cards.
+   ========================================================================== */
+:root {
+  --card-radius: 12px;
+  --card-pad: 28px;
+  --card-gap: 24px;
+  --card-border: 1px solid var(--color-border);
+  --card-shadow-rest: 0 1px 2px rgba(20, 32, 28, .06);
+  --card-shadow-elevated: 0 1px 2px rgba(20, 32, 28, .06), 0 12px 32px rgba(20, 32, 28, .08);
+  --card-title-size: 1.125rem;      /* 18px */
+  --card-title-lh: 1.3;
+  --card-body-size: 1rem;           /* 16px, same as body */
+  --card-body-lh: 1.55;
+  --card-kicker-size: .8125rem;     /* 13px */
+}
+@media (max-width: 600px) { :root { --card-pad: 24px; --card-gap: 16px; } }
+
+/* Base card. Variants change surface, not structure. */
+.card,
+.feature,
+.step,
+.example-card,
+.calc {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: var(--card-pad);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  background: var(--color-surface);
+  box-shadow: var(--card-shadow-rest);
+}
+.card-tinted,
+.calc { background: var(--color-canvas); }
+.card-elevated,
+.example-card { box-shadow: var(--card-shadow-elevated); }
+
+/* Typography inside cards: one scale everywhere */
+.card h3, .feature h3, .step h3 {
+  font-size: var(--card-title-size);
+  line-height: var(--card-title-lh);
+  font-weight: 650;
+  margin: 0;
+  color: var(--color-ink-900);
+}
+.card p, .feature p, .step p, .trust-item p {
+  font-size: var(--card-body-size);
+  line-height: var(--card-body-lh);
+  color: var(--color-ink-700);
+  margin: 0;
+}
+.card-kicker { font-size: var(--card-kicker-size); letter-spacing: .06em; }
+
+/* Step: number sits above the title, same rhythm as other cards */
+.step { gap: 12px; }
+.step-num { margin-bottom: 4px; }
+
+/* Trust items: title in the same family as card titles, so hierarchy matches */
+.trust-title { font-size: var(--card-title-size); line-height: var(--card-title-lh); font-weight: 650; }
+.trust-item p { font-size: var(--card-body-size); line-height: var(--card-body-lh); }
+
+/* Grid gaps follow the card gap token */
+.feature-grid, .steps, .trust-grid { gap: var(--card-gap); }
+
+/* Example and calc cards: heading inside uses the kicker style, body uses body style */
+.example-list dt { font-size: .9375rem; }
+.example-list dd { font-size: 1rem; }
+.calc-table th, .calc-table td { font-size: 1rem; }
+
+/* Final CTA paragraph: readable size, not footnote size */
+.final-cta .disclaimer { font-size: 1rem; }
+
+/* Interactive card affordance, for any future linked card */
+a.card, .card-link { text-decoration: none; color: inherit; transition: box-shadow var(--motion-150) var(--ease-out), border-color var(--motion-150) var(--ease-out); }
+a.card:hover, .card-link:hover { border-color: var(--color-brand-600); box-shadow: var(--card-shadow-elevated); }
+a.card:focus-visible, .card-link:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+
+/* Review fixes: card titles share one colour everywhere; hero headline wraps to fewer lines on wide screens */
+.trust-title { color: var(--color-ink-900); }
+@media (min-width: 1024px) { h1.hero-h1 { font-size: clamp(2.5rem, 2rem + 1.8vw, 3.25rem); max-width: 16ch; } }
