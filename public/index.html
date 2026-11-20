@@ -3,92 +3,224 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Funds For Family</title>
-  <meta name="description" content="Request and fund small loans within your trusted family and community circle.">
+  <title>Funds For Family: request and fund small loans with trust</title>
+  <meta name="description" content="Request a small amount, have its purpose verified by a team, and let people in your circle fund it. Clear rules, a named nominee, and repayment on the due date.">
+  <meta name="theme-color" content="#1f6f5c">
+  <link rel="canonical" href="https://funds-for-family.vercel.app/">
+  <meta property="og:title" content="Funds For Family">
+  <meta property="og:description" content="Small loans within your trusted circle, with verified purpose and clear rules.">
+  <meta property="og:type" content="website">
   <link rel="stylesheet" href="/styles.css">
-  <script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>
+  <link rel="stylesheet" href="/landing.css">
+  <script src="/landing.js" defer></script>
 </head>
-<body>
+<body class="landing">
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="topbar">
-    <a class="brand" href="/">Funds For Family</a>
-    <nav aria-label="Primary">
-      <button class="btn btn-ghost" id="nav-feed" type="button">Feed</button>
-      <button class="btn btn-ghost" id="nav-new" type="button">Request funds</button>
-      <button class="btn btn-ghost" id="nav-people" type="button">People</button>
-    </nav>
-    <div id="auth-slot"></div>
+
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="/" aria-label="Funds For Family home">
+        <svg class="brand-mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
+          <rect width="28" height="28" rx="8" fill="#1f6f5c"/>
+          <path d="M8 19V9h11v2.5H11.2v2.4h7v2.5h-7V19z" fill="#ffffff"/>
+        </svg>
+        <span>Funds For Family</span>
+      </a>
+      <nav aria-label="Primary" class="site-nav">
+        <a href="#how-it-works">How it works</a>
+        <a href="#interest">Interest</a>
+        <a href="#faq">Questions</a>
+      </nav>
+      <a class="btn btn-secondary btn-sm" href="/app/">Sign in</a>
+    </div>
   </header>
 
   <main id="main" tabindex="-1">
-    <section id="signed-out" class="panel" hidden>
-      <h1>Help family and friends, with purpose and trust.</h1>
-      <p class="lede">Request a small amount, have its purpose verified by a team, and let people in your circle fund it. Repay on the due date.</p>
-      <button class="btn btn-primary" id="sign-in" type="button">Sign in to continue</button>
-    </section>
-
-    <section id="view-feed" hidden aria-labelledby="feed-title">
-      <h1 id="feed-title">Feed</h1>
-      <p class="muted">Approved requests from people you follow and people who follow you.</p>
-      <ul class="cards" id="feed-list"></ul>
-      <p class="empty" id="feed-empty" hidden>No approved requests in your circle yet. Follow people to see their requests.</p>
-    </section>
-
-    <section id="view-new" hidden aria-labelledby="new-title">
-      <h1 id="new-title">Request funds</h1>
-      <form id="new-form" class="form" novalidate>
-        <div class="field">
-          <label for="f-amount">Total amount (USD)</label>
-          <input id="f-amount" name="amount" type="number" min="0.01" step="0.01" required aria-describedby="e-amount">
-          <p class="error" id="e-amount" role="alert"></p>
+    <!-- 1. Hero -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="container hero-grid">
+        <div class="hero-copy reveal-group">
+          <p class="eyebrow">Trusted lending for family and friends</p>
+          <h1 id="hero-title">Ask for a small amount. Let your circle help, with clear rules.</h1>
+          <p class="lead">Every request is checked by a verification team before anyone can fund it. A named nominee stands behind the repayment, and interest starts only after the due date.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary btn-lg" href="/app/#new">Start a request</a>
+            <a class="btn btn-ghost btn-lg" href="#how-it-works">See how it works</a>
+          </div>
+          <p class="disclaimer">Funds For Family records and verifies requests. It does not move money or give financial advice.</p>
         </div>
-        <div class="field">
-          <label for="f-purpose">Purpose</label>
-          <textarea id="f-purpose" name="purpose" rows="4" minlength="20" required aria-describedby="h-purpose e-purpose"></textarea>
-          <p class="hint" id="h-purpose">Be specific. A verification team will check it.</p>
-          <p class="error" id="e-purpose" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-date">Repayment date</label>
-          <input id="f-date" name="repaymentDate" type="date" required aria-describedby="e-date">
-          <p class="hint">Interest starts accruing after this date.</p>
-          <p class="error" id="e-date" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-nominee">Nominee (repays if you cannot)</label>
-          <select id="f-nominee" name="nomineeId" required aria-describedby="e-nominee"></select>
-          <p class="error" id="e-nominee" role="alert"></p>
-        </div>
-        <p class="error" id="e-form" role="alert"></p>
-        <button class="btn btn-primary" type="submit">Submit for verification</button>
-      </form>
+
+        <aside class="example-card" aria-labelledby="example-title">
+          <p class="card-kicker" id="example-title">A request, step by step</p>
+          <dl class="example-list">
+            <div><dt>Purpose</dt><dd>School fees for the second term</dd></div>
+            <div><dt>Amount requested</dt><dd>$1,000.00</dd></div>
+            <div><dt>Verification</dt><dd><span class="badge badge-ok">2 of 2 approvals</span></dd></div>
+            <div><dt>Nominee</dt><dd>Sam, repays if the borrower cannot</dd></div>
+            <div><dt>Repay by</dt><dd>1 March</dd></div>
+          </dl>
+          <p class="card-foot">After the due date, simple interest of 12% a year accrues daily until repaid.</p>
+        </aside>
+      </div>
     </section>
 
-    <section id="view-detail" hidden aria-labelledby="detail-title">
-      <div id="detail"></div>
+    <!-- 2. Trust strip -->
+    <section class="trust-strip" aria-label="Three protections">
+      <div class="container trust-grid">
+        <div class="trust-item reveal">
+          <h2 class="trust-title">Verified purpose</h2>
+          <p>A team reviews each request. Two approvals open it for funding. One rejection closes it.</p>
+        </div>
+        <div class="trust-item reveal">
+          <h2 class="trust-title">A named nominee</h2>
+          <p>Every request names someone who repays if the borrower cannot. That person is a member, not a stranger.</p>
+        </div>
+        <div class="trust-item reveal">
+          <h2 class="trust-title">No hidden interest</h2>
+          <p>The rule is the same for everyone. Interest is calculated from the due date, and the amount due is always shown.</p>
+        </div>
+      </div>
     </section>
 
-    <section id="view-people" hidden aria-labelledby="people-title">
-      <h1 id="people-title">People</h1>
-      <form id="search-form" class="inline-form" role="search">
-        <label for="f-search" class="sr-only">Search members by name or email</label>
-        <input id="f-search" type="search" placeholder="Search by name or email" minlength="2">
-        <button class="btn btn-secondary" type="submit">Search</button>
-      </form>
-      <ul class="list" id="search-results"></ul>
-      <h2>Your connections</h2>
-      <ul class="list" id="connections"></ul>
-      <h2>Invite someone</h2>
-      <form id="invite-form" class="inline-form">
-        <label for="f-invite" class="sr-only">Email address to invite</label>
-        <input id="f-invite" type="email" placeholder="name@example.com" required>
-        <button class="btn btn-secondary" type="submit">Send invite</button>
-      </form>
-      <p class="muted" id="invite-status" role="status"></p>
+    <!-- 3. How it works -->
+    <section class="section" id="how-it-works" aria-labelledby="how-title">
+      <div class="container">
+        <header class="section-head reveal">
+          <p class="eyebrow">How it works</p>
+          <h2 id="how-title">Four steps from request to repayment</h2>
+        </header>
+        <ol class="steps">
+          <li class="step reveal">
+            <span class="step-num" aria-hidden="true">1</span>
+            <h3>Request</h3>
+            <p>Enter the amount, the purpose, the repayment date and a nominee from your network.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-num" aria-hidden="true">2</span>
+            <h3>Verify</h3>
+            <p>Verifiers review the purpose and record their decision. Two approvals open the request. Any rejection stops it.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-num" aria-hidden="true">3</span>
+            <h3>Fund</h3>
+            <p>Members contribute any amount, up to the remaining balance. The request is marked funded once the full amount is raised.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-num" aria-hidden="true">4</span>
+            <h3>Repay</h3>
+            <p>The borrower or nominee records repayments. The request is marked repaid when the full amount due is paid.</p>
+          </li>
+        </ol>
+      </div>
     </section>
 
-    <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
+    <!-- 4. Interest example -->
+    <section class="section section-tint" id="interest" aria-labelledby="interest-title">
+      <div class="container split">
+        <div class="reveal">
+          <p class="eyebrow">Interest, worked through</p>
+          <h2 id="interest-title">Interest starts after the due date, not before</h2>
+          <p>Interest is simple, at 12% a year, and accrues one day at a time. Nothing is charged while the repayment is on time.</p>
+          <p>Here is a $1,000.00 request that is repaid 10 days late:</p>
+        </div>
+        <div class="calc reveal" role="group" aria-labelledby="calc-title">
+          <p class="card-kicker" id="calc-title">Example</p>
+          <table class="calc-table">
+            <caption class="sr-only">Amount due for a $1,000.00 request repaid 10 days after the due date</caption>
+            <tbody>
+              <tr><th scope="row">Principal</th><td>$1,000.00</td></tr>
+              <tr><th scope="row">Days late</th><td>10</td></tr>
+              <tr><th scope="row">Interest (12% a year, simple)</th><td>$3.29</td></tr>
+              <tr class="calc-total"><th scope="row">Amount due</th><td>$1,003.29</td></tr>
+            </tbody>
+          </table>
+          <p class="muted small">Calculated as principal × 12% × days late ÷ 365, rounded to the cent.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Built for trust -->
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="container">
+        <header class="section-head reveal">
+          <p class="eyebrow">Built for trust</p>
+          <h2 id="features-title">Everything is recorded, and nothing is hidden</h2>
+        </header>
+        <div class="feature-grid">
+          <article class="feature reveal">
+            <h3>Your network, not the public</h3>
+            <p>The feed shows requests from people you follow and people who follow you. You choose who to connect with.</p>
+          </article>
+          <article class="feature reveal">
+            <h3>A record of every decision</h3>
+            <p>Each verification, contribution and repayment is stored with its time and author, and shown on the request.</p>
+          </article>
+          <article class="feature reveal">
+            <h3>Separation of roles</h3>
+            <p>Borrowers cannot verify or fund their own requests. Nominees cannot verify the request they are named on.</p>
+          </article>
+          <article class="feature reveal">
+            <h3>Clear status at a glance</h3>
+            <p>Each request shows whether it is awaiting verification, open, funded, repaid, or overdue, with the amount still needed.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. FAQ -->
+    <section class="section section-tint" id="faq" aria-labelledby="faq-title">
+      <div class="container narrow">
+        <header class="section-head reveal">
+          <p class="eyebrow">Questions</p>
+          <h2 id="faq-title">Questions people ask before lending</h2>
+        </header>
+        <div class="faq reveal">
+          <details>
+            <summary>Does Funds For Family move money?</summary>
+            <p>No. The app records requests, verifications, contributions and repayments. Any transfer of money happens outside the app, and that part is not yet connected to a payment provider.</p>
+          </details>
+          <details>
+            <summary>Who checks the purpose of a request?</summary>
+            <p>A verification team reviews each request. A request opens for funding only after two distinct approvals. A single rejection closes it. A verifier cannot decide on a request where they are the borrower or the nominee.</p>
+          </details>
+          <details>
+            <summary>What is a nominee?</summary>
+            <p>A nominee is a member named on the request who agrees to repay if the borrower does not. The borrower picks the nominee from their connections in the app.</p>
+          </details>
+          <details>
+            <summary>When does interest start?</summary>
+            <p>Interest starts the day after the repayment date. It is simple interest at 12% a year, accrued daily, and the amount due is always shown on the request.</p>
+          </details>
+          <details>
+            <summary>Can I contribute any amount?</summary>
+            <p>Yes, up to the balance still needed. You cannot contribute to your own request, and a request stops accepting money once it is fully funded.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. Final CTA -->
+    <section class="final-cta" aria-labelledby="final-title">
+      <div class="container reveal">
+        <h2 id="final-title">Start with one request, or sign in to see your circle</h2>
+        <div class="cta-row cta-center">
+          <a class="btn btn-primary btn-lg" href="/app/#new">Start a request</a>
+          <a class="btn btn-secondary btn-lg" href="/app/">Sign in</a>
+        </div>
+        <p class="disclaimer">Funds For Family records and verifies requests. It does not move money or give financial advice.</p>
+      </div>
+    </section>
   </main>
-  <script src="/app.js" defer></script>
+
+  <footer class="site-footer">
+    <div class="container footer-row">
+      <p class="muted small">&copy; <span id="year">2026</span> Funds For Family. Built for trusted circles.</p>
+      <nav aria-label="Footer" class="site-nav small">
+        <a href="/app/">App</a>
+        <a href="#faq">Questions</a>
+        <a href="mailto:hello@example.invalid">Contact</a>
+      </nav>
+    </div>
+  </footer>
 </body>
 </html>
