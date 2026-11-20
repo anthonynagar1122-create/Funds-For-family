@@ -304,3 +304,31 @@ test('effects: every landing transition duration is a token (0/100/150/200/300 m
   }));
   for (const ms of durations) assert.ok([0, 100, 150, 200, 300].includes(ms), `${ms}ms`);
 });
+
+// ---- Critique findings (docs/13-landing-effects.md) ----
+
+test('critique: the FAQ aligns to the main grid, like the other sections', { skip }, async () => {
+  const [faq, hero] = await withPage({ width: 1440 }, (p) => p.evaluate(() => [
+    Math.round(document.querySelector('#faq .container').getBoundingClientRect().left),
+    Math.round(document.querySelector('.hero .container').getBoundingClientRect().left),
+  ]));
+  assert.equal(faq, hero, `FAQ left ${faq}px vs hero ${hero}px`);
+});
+
+test('critique: final-CTA disclaimer meets 4.5:1 contrast on the brand background', { skip }, async () => {
+  const ratio = await withPage({ width: 1440 }, (p) => p.evaluate(() => {
+    const lum = (rgb) => {
+      const [r, g, b] = rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((c) => {
+        const v = c / 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const el = document.querySelector('.final-cta .disclaimer');
+    const fg = lum(getComputedStyle(el).color);
+    const bg = lum(getComputedStyle(document.querySelector('.final-cta')).backgroundColor);
+    const [hi, lo] = fg > bg ? [fg, bg] : [bg, fg];
+    return (hi + 0.05) / (lo + 0.05);
+  }));
+  assert.ok(ratio >= 4.5, `contrast ${ratio.toFixed(2)}:1`);
+});

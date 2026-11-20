@@ -128,7 +128,7 @@ h2 { font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.25rem); line-height: 1.15; margi
 @media (min-width: 768px) { .feature-grid { grid-template-columns: repeat(2, 1fr); } }
 
 /* FAQ: native details, chevron rotates on the 150 ms token */
-.faq { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.faq { max-width: 760px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .faq details { border-bottom: 1px solid var(--color-border); }
 .faq details:last-child { border-bottom: 0; }
 .faq summary { cursor: pointer; list-style: none; padding: 18px 56px 18px 22px; font-weight: 600; color: var(--color-ink-900); position: relative; min-height: 44px; }

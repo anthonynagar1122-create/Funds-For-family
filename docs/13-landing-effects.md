@@ -30,17 +30,17 @@ Tests: `test/landing.e2e.test.js` (21 tests, including the effect checks). Full 
 ## Critique (rendered at 1440 px, reduced motion)
 **Overall:** calm and trustworthy. The hero and interest example carry the page; the effects add emphasis without noise.
 
-| Finding | Severity | Recommendation |
+| Finding | Severity | Status |
 |---|---|---|
-| FAQ block is centred at 760 px, while every other section left-aligns to the 1120 px grid | 🟡 Moderate | Align the FAQ to the main container, or make the narrow width a documented exception |
-| Trust strip is text-only, weaker than the cards around it | 🟢 Minor | Keep it quiet on purpose; no change now |
-| Final-CTA disclaimer is small on the brand green | 🟢 Minor | Check contrast of `brand-100` on `brand-600` before any change |
-| Effects cannot be seen in a static render | 🟢 Minor | Review them in a screen recording before release |
+| FAQ block centred at 760 px, out of line with the 1120 px grid | 🟡 Moderate | Done: FAQ aligns to the grid; list keeps a 760 px measure. Test: `critique: the FAQ aligns...` |
+| Trust strip text-only, weaker than the cards | 🟢 Minor | Kept quiet on purpose; no change |
+| Final-CTA disclaimer contrast | 🟢 Minor | Checked: about 5.4:1 on brand green, above 4.5:1. No change needed. Test added |
+| Effects not visible in a static render | 🟢 Minor | Done: short screen capture produced (8 s, webm) for review |
 
 **What works:** the three-line headline; four equal step cards; the worked interest example; one primary action per section.
 
-**Priority:** 1. Align the FAQ grid. 2. Record a short screen capture of the step-card effects and check the tilt feels calm. 3. Re-test contrast on the final CTA.
+**Priority:** all three testable findings are implemented. The remaining question, whether the tilt feels calm, needs real users (see Open).
 
 ## Open
-- Usability test whether tilt helps or distracts (see docs/08-user-research-plan.md).
+- Usability test whether tilt helps or distracts (see docs/08-user-research-plan.md). Needs participants; not implementable in code.
 - HawkScan post-commit scan not run: `HAWK_API_KEY` is not set.
