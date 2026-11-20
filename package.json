@@ -15,7 +15,7 @@
     "test:integration": "node --test test/integration/*.test.js"
   },
   "dependencies": {
-    "@clerk/express": "^1.7.85",
+    "@clerk/express": "^2.1.96",
     "@supabase/supabase-js": "^2.119.2",
     "express": "^4.22.3",
     "resend": "^4.8.0"

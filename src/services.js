@@ -1,7 +1,7 @@
 'use strict';
 // Production wiring: Clerk (identity), Resend (email), Supabase (data). Used by server.js and api/index.js.
 const express = require('express');
-const { clerkMiddleware, getAuth, clerkClient } = require('@clerk/express');
+const { clerkMiddleware, getAuth, createClerkClient } = require('@clerk/express');
 const { Resend } = require('resend');
 const { createApp } = require('./app');
 const { createSupabaseRepo } = require('./supabase-repo');
@@ -13,10 +13,13 @@ function buildProductionApp(env = process.env) {
   if (problems.length) throw new Error(`Configuration incomplete: ${problems.join('; ')}`);
   const repo = createSupabaseRepo({ url: env.SUPABASE_URL, serviceRoleKey: config.resolveSupabaseKey(env).value });
 
+  // An explicit client built from this configuration, not from the process environment.
+  const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY, publishableKey: env.CLERK_PUBLISHABLE_KEY });
+
   const identify = async (req) => {
     const { userId } = getAuth(req);
     if (!userId) return null;
-    const u = await clerkClient.users.getUser(userId);
+    const u = await clerk.users.getUser(userId);
     const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || 'Member';
     const email = u.primaryEmailAddress?.emailAddress;
     if (!email) return null;
@@ -42,8 +45,18 @@ function buildProductionApp(env = process.env) {
 
   const root = express();
   root.disable('x-powered-by');
-  root.use(clerkMiddleware());
-  root.get('/api/config', (_req, res) => res.json({ clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null }));
+  // Clerk's built-in Frontend API proxy. Mounted before every route, so proxy requests never reach our JSON parser.
+  // Live keys are served through the proxy on this domain. Development keys talk to Clerk directly.
+  const isLive = /^pk_live_/.test(env.CLERK_PUBLISHABLE_KEY || '');
+  root.use(clerkMiddleware({
+    publishableKey: env.CLERK_PUBLISHABLE_KEY,
+    secretKey: env.CLERK_SECRET_KEY,
+    frontendApiProxy: { enabled: isLive },
+  }));
+  root.get('/api/config', (_req, res) => res.json({
+    clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null,
+    clerkProxyUrl: isLive ? '/__clerk' : null,
+  }));
   root.use(api);
   root.use(express.static(require('path').join(__dirname, '..', 'public')));
   return root;

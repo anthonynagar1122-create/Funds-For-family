@@ -262,7 +262,8 @@
   async function boot() {
     const cfg = await fetch('/api/config').then((r) => r.json());
     if (!cfg.clerkPublishableKey) { $('#auth-slot').textContent = 'Sign-in is not configured.'; show('signed-out'); return; }
-    const clerk = new window.Clerk(cfg.clerkPublishableKey);
+    // Live keys reach Clerk through the same-origin proxy; development keys do not need it.
+    const clerk = new window.Clerk(cfg.clerkPublishableKey, cfg.clerkProxyUrl ? { proxyUrl: cfg.clerkProxyUrl } : undefined);
     await clerk.load();
     const mountAuth = () => {
       if (clerk.user) {
