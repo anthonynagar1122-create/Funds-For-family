@@ -19,5 +19,8 @@
     "@supabase/supabase-js": "^2.119.2",
     "express": "^4.22.3",
     "resend": "^4.8.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }

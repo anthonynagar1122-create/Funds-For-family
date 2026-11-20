@@ -1,0 +1,58 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-browser:
+    name: Unit, API and browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+
+  integration:
+    name: Database integration (staging only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Forks do not receive secrets, so integration runs only for branches in this repository.
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+    environment: staging
+    env:
+      SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      # The production project reference. Integration must never run against it.
+      PRODUCTION_PROJECT_REF: enqxchwiqfdqwrvuqlph
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Check credentials and target (values are never printed)
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::STAGING_SUPABASE_URL and STAGING_SUPABASE_SERVICE_ROLE_KEY must be set in the 'staging' environment. Integration tests were NOT run."
+            exit 1
+          fi
+          case "$SUPABASE_URL" in
+            *"$PRODUCTION_PROJECT_REF"*)
+              echo "::error::STAGING_SUPABASE_URL points at the production project. Refusing to run."
+              exit 1 ;;
+          esac
+          echo "Staging target confirmed (not production)."
+      - run: npm ci
+      - run: npm run test:integration
