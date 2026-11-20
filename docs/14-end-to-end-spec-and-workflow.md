@@ -10,7 +10,7 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 | Landing page `/` | Live and tested | 100 automated tests; deployment `8488bc5` READY |
 | Database schema | Applied to Supabase project `funds-for-family` | migration `init_funds_for_family` applied; advisors show only the intended "RLS on, no policies" info finding |
 | Sign-in (Clerk) | **Not working in production** | `CLERK_PUBLISHABLE_KEY` set; `CLERK_SECRET_KEY` **missing**, so server-side session checks cannot run |
-| Data access (Supabase) | **Not working in production** | `SUPABASE_URL` set; `SUPABASE_SERVICE_ROLE_KEY` **missing** |
+| Data access (Supabase) | **Not working in production** | `SUPABASE_URL` set; `SUPABASE_SECRET_KEY (legacy name SUPABASE_SERVICE_ROLE_KEY also accepted)` **missing** |
 | Email (Resend) | **Not working in production** | `RESEND_API_KEY` and `EMAIL_FROM` **missing** (email is skipped with a warning) |
 | Application features | Implemented in code and tested against an in-memory store; **not verified against the real database** | API tests use `memory-repo`; `supabase-repo` has no integration test yet |
 | Live product UI (`/app/`) | Shell only until sign-in works | depends on the three missing secrets |
@@ -152,7 +152,7 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 | # | Decision or secret | Why it blocks | Who |
 |---|---|---|---|
 | D-1 | Set `CLERK_SECRET_KEY` in Vercel production | Sign-in and every API call | Owner |
-| D-2 | Set `SUPABASE_SERVICE_ROLE_KEY` in Vercel production | Every data read and write | Owner |
+| D-2 | Set `SUPABASE_SECRET_KEY (legacy name SUPABASE_SERVICE_ROLE_KEY also accepted)` in Vercel production | Every data read and write | Owner |
 | D-3 | Set `RESEND_API_KEY` and `EMAIL_FROM` (verified domain) | Invites and notices | Owner |
 | D-4 | Choose the public domain; update `APP_URL`, canonical, sitemap and OG URLs | Links and SEO point at a domain we don't control | Owner |
 | D-5 | Clerk production instance (needs an owned domain) | Development keys cannot serve real users | Owner |
@@ -168,7 +168,7 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 | Row-level security | **Pass** | RLS enabled on all 7 tables |
 | Anonymous and authenticated roles | **Pass** | No select or insert privilege on any table |
 | Test data cleaned up | **Pass** | 0 leftover rows |
-| Repository methods against Postgres | **Not run** | Needs `SUPABASE_SERVICE_ROLE_KEY` for a test project; suite written and skips with a BLOCKED reason |
+| Repository methods against Postgres | **Not run** | Needs `SUPABASE_SECRET_KEY (legacy name SUPABASE_SERVICE_ROLE_KEY also accepted)` for a test project; suite written and skips with a BLOCKED reason |
 | Known edge case | **Open** | A second Clerk account reusing an existing email makes the profile upsert fail (unique email index). Needs a decision: merge, reject, or prompt |
 
 Phase B gate **not yet passed**: the repository suite has to run and pass.

@@ -5,9 +5,13 @@ const { clerkMiddleware, getAuth, clerkClient } = require('@clerk/express');
 const { Resend } = require('resend');
 const { createApp } = require('./app');
 const { createSupabaseRepo } = require('./supabase-repo');
+const config = require('./config');
 
 function buildProductionApp(env = process.env) {
-  const repo = createSupabaseRepo({ url: env.SUPABASE_URL, serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY });
+  // Every entry point (server.js and api/index.js) passes through here, so the same checks always run.
+  const problems = [...config.validateServerConfig(env), ...config.isolationProblems(env)];
+  if (problems.length) throw new Error(`Configuration incomplete: ${problems.join('; ')}`);
+  const repo = createSupabaseRepo({ url: env.SUPABASE_URL, serviceRoleKey: config.resolveSupabaseKey(env).value });
 
   const identify = async (req) => {
     const { userId } = getAuth(req);

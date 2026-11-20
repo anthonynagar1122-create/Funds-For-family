@@ -2,7 +2,7 @@
 
 | Service | Purpose | Set up by | Environment variables | Status |
 |---|---|---|---|---|
-| **Supabase** | Postgres database | Create a project, run `supabase/migrations/0001_init.sql` | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only) | Schema written; project to be created or chosen |
+| **Supabase** | Postgres database | Create a project, run `supabase/migrations/0001_init.sql` | `SUPABASE_URL`, `SUPABASE_SECRET_KEY (legacy name SUPABASE_SERVICE_ROLE_KEY also accepted)` (server only) | Schema written; project to be created or chosen |
 | **Clerk** | Sign-in and sessions | Create an application; enable email sign-in; add the Vercel domain to allowed origins | `CLERK_PUBLISHABLE_KEY` (browser ok), `CLERK_SECRET_KEY` (server only) | Code wired; keys needed |
 | **Resend** | Invite and notification emails | Verify a sending domain in Resend; create an API key | `RESEND_API_KEY`, `EMAIL_FROM` | Code wired; sending domain and key needed |
 | **Vercel** | Hosting for `public/` and `api/` | Import the GitHub repo; set env vars for Production and Preview | all of the above, plus `APP_URL` | `vercel.json` committed; project to be created |
@@ -19,7 +19,7 @@
 | Name | Default | Purpose |
 |---|---|---|
 | `SUPABASE_URL` | — | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | — | Server-only data access |
+| `SUPABASE_SECRET_KEY (legacy name SUPABASE_SERVICE_ROLE_KEY also accepted)` | — | Server-only data access |
 | `CLERK_PUBLISHABLE_KEY` | — | Served to the browser via `/api/config` |
 | `CLERK_SECRET_KEY` | — | Server-only session verification |
 | `RESEND_API_KEY` | — | Sends email. If missing, email is skipped with a warning. |
