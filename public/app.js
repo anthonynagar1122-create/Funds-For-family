@@ -3,7 +3,7 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => `$${(cents / 100).toFixed(2)}`;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const views = ['signed-out', 'view-feed', 'view-new', 'view-detail', 'view-people'];
+  const views = ['signed-out', 'view-feed', 'view-new', 'view-detail', 'view-people', 'view-activity'];
   let me = null;
   let usersById = new Map();
 
@@ -174,6 +174,37 @@
     });
   }
 
+  // ---- My activity (loop A) ----
+  async function renderActivity() {
+    show('view-activity');
+    let data;
+    try {
+      data = await api('/activity');
+    } catch (err) {
+      $('#view-activity').querySelectorAll('[id^="activity-"]').forEach((el) => {
+        el.innerHTML = `<p class="error" role="alert">Could not load your activity. ${esc(err.message)}</p>`;
+      });
+      return;
+    }
+    const groups = {
+      borrowing: data.borrowing,
+      lending: data.lending,
+      repayments: [...data.repayments.made, ...data.repayments.received],
+      roles: [...data.roles.nominee, ...data.roles.verifier],
+    };
+    for (const [name, rows] of Object.entries(groups)) {
+      const box = $(`#activity-${name}`);
+      if (rows.length === 0) {
+        box.innerHTML = '<p class="empty">Nothing here yet.</p>';
+        continue;
+      }
+      box.innerHTML = `<ul class="list">${rows.map((r) => `
+        <li><a href="#request/${esc(r.requestId)}">${esc((r.purpose || '').slice(0, 90))}</a>
+          <span class="muted">${esc(r.myRole)}${r.myAmountCents > 0 ? ` · ${money(r.myAmountCents)}` : ''} · ${esc(r.repaymentDate)}</span>
+          ${statusBadge(r.status)}</li>`).join('')}</ul>`;
+    }
+  }
+
   // ---- People ----
   async function renderPeople() {
     show('view-people');
@@ -218,12 +249,14 @@
     if (hash.startsWith('request/')) return renderDetail(hash.split('/')[1]);
     if (hash === 'new') return renderNew();
     if (hash === 'people') return renderPeople();
+    if (hash === 'activity') return renderActivity();
     return renderFeed();
   }
   window.addEventListener('hashchange', route);
   $('#nav-feed').addEventListener('click', () => (location.hash = '#feed'));
   $('#nav-new').addEventListener('click', () => (location.hash = '#new'));
   $('#nav-people').addEventListener('click', () => (location.hash = '#people'));
+  $('#nav-activity').addEventListener('click', () => (location.hash = '#activity'));
 
   // ---- Clerk sign-in ----
   async function boot() {

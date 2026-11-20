@@ -1,0 +1,10 @@
+Command: npm test
+# tests 136
+# pass 136
+# fail 0
+# skipped 0
+
+Command: node --test test/activity-page.e2e.test.js (three runs)
+run 1: pass 4, fail 0
+run 2: pass 4, fail 0
+run 3: pass 4, fail 0

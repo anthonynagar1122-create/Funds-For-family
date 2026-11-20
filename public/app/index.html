@@ -17,6 +17,7 @@
       <button class="btn btn-ghost" id="nav-feed" type="button">Feed</button>
       <button class="btn btn-ghost" id="nav-new" type="button">Request funds</button>
       <button class="btn btn-ghost" id="nav-people" type="button">People</button>
+      <button class="btn btn-ghost" id="nav-activity" type="button">My activity</button>
     </nav>
     <div id="auth-slot"></div>
   </header>
@@ -63,6 +64,14 @@
         <p class="error" id="e-form" role="alert"></p>
         <button class="btn btn-primary" type="submit">Submit for verification</button>
       </form>
+    </section>
+
+    <section id="view-activity" hidden aria-labelledby="activity-title">
+      <h1 id="activity-title">My activity</h1>
+      <h2>Borrowing</h2><div id="activity-borrowing"></div>
+      <h2>Lending</h2><div id="activity-lending"></div>
+      <h2>Repayments</h2><div id="activity-repayments"></div>
+      <h2>Roles</h2><div id="activity-roles"></div>
     </section>
 
     <section id="view-detail" hidden aria-labelledby="detail-title">
