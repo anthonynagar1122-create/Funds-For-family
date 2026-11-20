@@ -139,7 +139,8 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 | T-1 Rules | pure business rules | node:test | 11 |
 | T-2 API | every route, auth, validation, errors, privacy | node:test with in-memory store | 40+ |
 | T-3 Browser | landing: motion, layout, interaction, CSP, SEO | Playwright (Chromium) | 45+ |
-| T-4 Integration | Supabase repository against the real project (test schema) | node:test + service key in CI secrets | **0 — to build** |
+| T-4 Integration | Supabase repository against a real Postgres database | `npm run test:integration`; needs a test project and its service key | 6 written; **not yet run (BLOCKED on the service key)** |
+| T-4a Database contract | constraints, status machine, privileges, RLS on real Postgres | Supabase connector probes, run inside a transaction and cleaned up | **13 probes + privilege check: passing** |
 | T-5 Cross-browser | Firefox and WebKit | Playwright | **0 — to build** |
 | T-6 Visual | landing at 375, 768, 1440 | hashed baselines | 3 |
 | T-7 End-to-end | J1–J6 through the real UI with a test Clerk user | Playwright + Clerk test mode | **0 — to build** |
@@ -158,6 +159,19 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 | D-6 | Launch currency | Money fields are currently USD | Owner |
 | D-7 | Legal review: nominee role and NBFC-P2P classification (research report §5) | Live lending must not start before this | Owner with counsel |
 | D-8 | Interest policy confirmation (12%, simple, daily from the day after due) | Financial terms | Owner with counsel |
+
+## 9a. Phase B status (real integration)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Schema constraints reject invalid data | **Pass** (13 of 13) | Bogus status (insert and update), nominee equal to borrower, purpose under 20 characters, zero principal, self-follow, zero contribution, unknown decision, second decision by the same verifier, duplicate email (case-insensitive), duplicate Clerk id. Valid lifecycle open then funded works |
+| Row-level security | **Pass** | RLS enabled on all 7 tables |
+| Anonymous and authenticated roles | **Pass** | No select or insert privilege on any table |
+| Test data cleaned up | **Pass** | 0 leftover rows |
+| Repository methods against Postgres | **Not run** | Needs `SUPABASE_SERVICE_ROLE_KEY` for a test project; suite written and skips with a BLOCKED reason |
+| Known edge case | **Open** | A second Clerk account reusing an existing email makes the profile upsert fail (unique email index). Needs a decision: merge, reject, or prompt |
+
+Phase B gate **not yet passed**: the repository suite has to run and pass.
 
 ## 10. Implementation workflow
 
