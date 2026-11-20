@@ -1,0 +1,64 @@
+'use strict';
+// In-memory repository. Same contract as src/supabase-repo.js. Used by tests and local demos.
+let seq = 0;
+const nextId = () => ++seq;
+
+function createMemoryRepo() {
+  const users = new Map();          // id -> user
+  const usersByClerk = new Map();   // clerkId -> id
+  const follows = [];               // {followerId, followeeId}
+  const invites = [];
+  const requests = new Map();       // id -> request
+  const verifications = [];         // {requestId, verifierId, decision, note}
+  const contributions = [];         // {requestId, contributorId, amountCents}
+  const repayments = [];            // {requestId, payerId, amountCents}
+
+  return {
+    async upsertUser({ clerkId, name, email }) {
+      let id = usersByClerk.get(clerkId);
+      if (!id) {
+        id = nextId();
+        usersByClerk.set(clerkId, id);
+        users.set(id, { id, clerkId, name, email, isVerifier: false });
+      }
+      return users.get(id);
+    },
+    async getUser(id) { return users.get(id) ?? null; },
+    async setVerifier(id, isVerifier) { users.get(id).isVerifier = isVerifier; },
+    async searchUsers(q, excludeId) {
+      const s = q.toLowerCase();
+      return [...users.values()].filter((u) => u.id !== excludeId && (u.name.toLowerCase().includes(s) || u.email.toLowerCase().includes(s)));
+    },
+    async addFollow(followerId, followeeId) {
+      if (!follows.some((f) => f.followerId === followerId && f.followeeId === followeeId)) follows.push({ followerId, followeeId });
+    },
+    async removeFollow(followerId, followeeId) {
+      const i = follows.findIndex((f) => f.followerId === followerId && f.followeeId === followeeId);
+      if (i >= 0) follows.splice(i, 1);
+    },
+    async connections(userId) {
+      const following = follows.filter((f) => f.followerId === userId).map((f) => f.followeeId);
+      const followers = follows.filter((f) => f.followeeId === userId).map((f) => f.followerId);
+      return { following, followers };
+    },
+    async createRequest(row) { const r = { id: nextId(), status: 'pending_verification', createdAt: new Date().toISOString(), ...row }; requests.set(r.id, r); return r; },
+    async getRequest(id) { return requests.get(id) ?? null; },
+    async setRequestStatus(id, patch) { Object.assign(requests.get(id), patch); return requests.get(id); },
+    async listFeed(borrowerIds) {
+      return [...requests.values()].filter((r) => borrowerIds.includes(r.borrowerId)).sort((a, b) => b.id - a.id);
+    },
+    async listVerifications(requestId) { return verifications.filter((v) => v.requestId === requestId); },
+    async addVerification(row) {
+      const i = verifications.findIndex((v) => v.requestId === row.requestId && v.verifierId === row.verifierId);
+      if (i >= 0) verifications[i] = row; else verifications.push(row);
+    },
+    async listContributions(requestId) { return contributions.filter((c) => c.requestId === requestId); },
+    async addContribution(row) { contributions.push(row); },
+    async listRepayments(requestId) { return repayments.filter((p) => p.requestId === requestId); },
+    async addRepayment(row) { repayments.push(row); },
+    async addInvite(row) { invites.push(row); },
+    _state: { users, follows, invites, requests, verifications, contributions, repayments },
+  };
+}
+
+module.exports = { createMemoryRepo };

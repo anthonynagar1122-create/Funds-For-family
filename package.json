@@ -1,0 +1,22 @@
+{
+  "name": "funds-for-family",
+  "version": "0.1.0",
+  "description": "A community web app where families and friends request and fund small loans with verified purposes.",
+  "private": true,
+  "main": "src/server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@clerk/express": "^1.7.85",
+    "@supabase/supabase-js": "^2.119.2",
+    "express": "^4.22.3",
+    "resend": "^4.8.0"
+  }
+}
