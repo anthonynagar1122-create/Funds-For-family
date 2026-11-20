@@ -128,3 +128,17 @@ test('status labels and tones match the lifecycle', () => {
     assert.equal(card.tone, tone, `tone for ${status}`);
   }
 });
+
+test('a verifier who already decided sees no verify actions on that request', () => {
+  const base = { id: 3, borrowerId: 1, nomineeId: 2, purpose: 'School fees for the second term', principalCents: 50000, repaymentDate: '2027-03-01', status: 'pending_verification', raisedCents: 0, amountDueCents: 50000, daysOverdue: 0 };
+  const decided = { ...base, verifications: [{ verifierId: 3, decision: 'approve', note: '' }] };
+  const fresh = { ...base, verifications: [] };
+  const viewer = { id: 3, isVerifier: true };
+  assert.ok(requestCard(fresh, viewer).actions.some((a) => a.id === 'verify-approve'), 'undecided verifier can approve');
+  assert.ok(!requestCard(decided, viewer).actions.some((a) => a.id.startsWith('verify-')), 'decided verifier cannot decide again');
+});
+
+test('the borrower can record repayments on a funded request', () => {
+  const r = { id: 4, borrowerId: 1, nomineeId: 2, purpose: 'Medical bill for the surgery in March', principalCents: 20000, repaymentDate: '2027-03-01', status: 'funded', raisedCents: 20000, amountDueCents: 20000, daysOverdue: 0, verifications: [] };
+  assert.ok(requestCard(r, { id: 1, isVerifier: false }).actions.some((a) => a.id === 'repay'), 'borrower can repay');
+});

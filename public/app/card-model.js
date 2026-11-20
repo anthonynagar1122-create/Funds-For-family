@@ -25,7 +25,8 @@
     const actions = [];
     const status = request.status;
 
-    if (role === 'verifier' && status === 'pending_verification') {
+    const decided = (request.verifications || []).some((v) => v.verifierId === viewer.id);
+    if (role === 'verifier' && status === 'pending_verification' && !decided) {
       actions.push({ id: 'verify-approve', label: 'Approve', tone: 'ok' });
       actions.push({ id: 'verify-reject', label: 'Reject', tone: 'danger' });
     }
@@ -34,7 +35,8 @@
       actions.push({ id: 'contribute', label: 'Contribute', tone: 'primary' });
     }
 
-    if (role === 'nominee' && (status === 'funded' || status === 'overdue')) {
+    // The borrower and the nominee may both record repayments (constraint: only they may).
+    if ((role === 'nominee' || role === 'borrower') && (status === 'funded' || status === 'overdue')) {
       actions.push({ id: 'repay', label: 'Record repayment', tone: 'primary' });
     }
 

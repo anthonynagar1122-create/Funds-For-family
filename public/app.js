@@ -110,13 +110,12 @@
   async function renderDetail(id) {
     show('view-detail');
     const { request: r } = await api(`/requests/${id}`);
-    const isBorrower = me && r.borrowerId === me.id;
-    const isNominee = me && r.nomineeId === me.id;
     const pct = Math.min(100, Math.round(((r.principalCents - r.remainingCents) / r.principalCents) * 100));
     const borrower = await userName(r.borrowerId);
     const nominee = await userName(r.nomineeId);
-    const canVerify = me?.isVerifier && !isBorrower && !isNominee && r.status === 'pending_verification';
-    const alreadyVerified = r.verifications.some((v) => v.verifierId === me?.id);
+    // Every role-based decision comes from the card model, so the page and the cards cannot disagree.
+    const card = CardModel.requestCard(r, me);
+    const can = (id) => card.actions.some((a) => a.id === id);
 
     $('#detail').innerHTML = `
       <p><a href="#feed">← Back to feed</a></p>
@@ -130,7 +129,7 @@
         <p class="muted">${money(r.principalCents - r.remainingCents)} raised of ${money(r.principalCents)}</p>` : ''}
       <h2>Verification</h2>
       <ul class="list">${r.verifications.length ? r.verifications.map((v) => `<li>${v.decision === 'approve' ? 'Approved' : 'Rejected'}${v.note ? ': ' + esc(v.note) : ''}</li>`).join('') : '<li class="muted">No decisions yet. Two approvals are needed.</li>'}</ul>
-      ${canVerify && !alreadyVerified ? `
+      ${can('verify-approve') ? `
         <form id="verify-form" class="form" style="margin-top:16px">
           <div class="field"><label for="v-note">Note (optional)</label><textarea id="v-note" rows="2" maxlength="1000"></textarea></div>
           <div class="row-actions">
@@ -138,14 +137,14 @@
             <button class="btn btn-secondary" name="decision" value="reject" type="submit">Reject</button>
           </div>
         </form>` : ''}
-      ${r.status === 'open' && me && !isBorrower ? `
+      ${can('contribute') ? `
         <form id="fund-form" class="form" style="margin-top:16px">
           <div class="field"><label for="c-amount">Contribute (USD, up to ${money(r.remainingCents)})</label>
             <input id="c-amount" type="number" min="0.01" step="0.01" max="${(r.remainingCents / 100).toFixed(2)}" required>
             <p class="error" id="e-fund" role="alert"></p></div>
           <button class="btn btn-primary" type="submit">Contribute</button>
         </form>` : ''}
-      ${(r.status === 'funded' || r.status === 'overdue') && (isBorrower || isNominee) ? `
+      ${can('repay') ? `
         <form id="repay-form" class="form" style="margin-top:16px">
           <div class="field"><label for="p-amount">Record a repayment (USD)</label>
             <input id="p-amount" type="number" min="0.01" step="0.01" required>
