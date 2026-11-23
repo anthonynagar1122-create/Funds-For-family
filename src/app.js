@@ -29,7 +29,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     try {
       const identity = await identify(req);
       if (!identity?.clerkId) return fail(res, 401, 'Sign in required');
-      req.user = await repo.upsertUser(identity);
+      // Interim: implicit sign-up stays until Task 5 makes joining invite-only.
+      req.user = (await repo.findUserByClerkId(identity.clerkId))
+        ?? (await repo.createUser({ clerkId: identity.clerkId, name: identity.name || 'Member', email: identity.email }));
       next();
     } catch (err) {
       next(err);
@@ -97,7 +99,13 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email', 'email');
     const token = require('crypto').randomBytes(24).toString('base64url');
-    await repo.addInvite({ inviterId: req.user.id, email, token, createdAt: now().toISOString() });
+    // Interim: Task 5 rewrites invites. Only the token's SHA-256 hex is stored.
+    const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
+    await repo.createInvite({
+      inviterId: req.user.id, email, tokenHash,
+      expiresAt: new Date(now().getTime() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: now().toISOString(),
+    });
     const link = `${appUrl}/?invite=${token}`;
     await safeMail({
       to: email,
@@ -111,7 +119,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const { following, followers } = await repo.connections(req.user.id);
     const ids = [...new Set([...following, ...followers, req.user.id])];
     // Interim filter; Task 9 rewrites the feed.
-    const rows = (await repo.listFeed(ids)).filter((r) => ['open', 'funded', 'repaid'].includes(r.status));
+    const rows = (await repo.listRequestsByBorrowers(ids)).filter((r) => ['open', 'funded', 'repaid'].includes(r.status));
     const withRaised = await Promise.all(rows.map(async (r) => {
       const raisedCents = (await repo.listContributions(r.id)).reduce((sum, c) => sum + c.amountCents, 0);
       return { ...summarise(r, now()), raisedCents };
@@ -151,7 +159,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
         if (repays.length > 0) out.repayments.received.push(row(r, 'lender', total(repays)));
       }
       if (myPaid > 0) out.repayments.made.push(row(r, 'payer', myPaid));
-      if (r.nomineeId === me) out.roles.nominee.push(row(r, 'nominee', 0));
+      if (r.trustedContactId === me) out.roles.nominee.push(row(r, 'nominee', 0));
       if (verifs.some((v) => v.verifierId === me)) out.roles.verifier.push(row(r, 'verifier', 0));
     }
     res.json(out);
@@ -164,7 +172,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (!(await repo.getUser(value.trustedContactId))) return fail(res, 400, 'Choose a trusted contact', 'trustedContactId');
     const created = await repo.createRequest({
       borrowerId: req.user.id,
-      nomineeId: value.trustedContactId,
+      trustedContactId: value.trustedContactId,
       purpose: value.purpose,
       principalCents: value.principalCents,
       repaymentDate: value.repaymentDate,
@@ -184,14 +192,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (!r) return fail(res, 404, 'Request not found');
     const decision = req.body?.decision;
     if (decision !== 'approve' && decision !== 'reject') return fail(res, 400, 'decision must be approve or reject', 'decision');
-    const check = rules.canVerify({ verifier: req.user, borrowerId: r.borrowerId, trustedContactId: r.nomineeId, status: r.status });
+    const check = rules.canVerify({ verifier: req.user, borrowerId: r.borrowerId, trustedContactId: r.trustedContactId, status: r.status });
     if (!check.ok) return fail(res, 403, check.reason);
     const note = String(req.body?.note ?? '').slice(0, 1000);
     await repo.addVerification({ requestId: r.id, verifierId: req.user.id, decision, note, createdAt: now().toISOString() });
     const outcome = rules.verificationOutcome(await repo.listVerifications(r.id), requiredApprovals);
     if (outcome !== 'pending') {
       const status = outcome === 'approved' ? 'open' : 'rejected';
-      await repo.setRequestStatus(r.id, { status, decidedAt: now().toISOString() });
+      await repo.updateRequest(r.id, { status, decidedAt: now().toISOString() });
       const borrower = await repo.getUser(r.borrowerId);
       await safeMail({
         to: borrower.email,
@@ -211,9 +219,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const raisedCents = totals.confirmedCents;
     const check = rules.checkContribution({ amountCents, principalCents: r.principalCents, totals, contributorId: req.user.id, borrowerId: r.borrowerId, isMutual: true, status: r.status });
     if (!check.ok) return fail(res, 409, check.reason);
-    await repo.addContribution({ requestId: r.id, contributorId: req.user.id, amountCents, createdAt: now().toISOString() });
+    await repo.addContribution({ requestId: r.id, contributorId: req.user.id, amountCents, status: 'confirmed', createdAt: now().toISOString() });
     if (raisedCents + amountCents >= r.principalCents) {
-      await repo.setRequestStatus(r.id, { status: 'funded', fundedAt: now().toISOString() });
+      await repo.updateRequest(r.id, { status: 'funded', fundedAt: now().toISOString() });
     }
     await safeMail({
       to: req.user.email,
@@ -226,16 +234,16 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   api.post('/requests/:id/repayments', async (req, res) => {
     const r = await repo.getRequest(Number(req.params.id));
     if (!r) return fail(res, 404, 'Request not found');
-    if (req.user.id !== r.borrowerId && req.user.id !== r.nomineeId) {
+    if (req.user.id !== r.borrowerId && req.user.id !== r.trustedContactId) {
       return fail(res, 403, 'Only the borrower or nominee can record repayments');
     }
     if (r.status !== 'funded') return fail(res, 409, 'Repayments can be recorded only for funded requests');
     const amountCents = toCents(req.body?.amount);
     if (amountCents === null) return fail(res, 400, 'Amount must be a positive number with at most 2 decimals', 'amount');
-    await repo.addRepayment({ requestId: r.id, payerId: req.user.id, amountCents, createdAt: now().toISOString() });
+    await repo.addRepayment({ requestId: r.id, payerId: req.user.id, amountCents, status: 'confirmed', createdAt: now().toISOString() });
     const paid = (await repo.listRepayments(r.id)).reduce((s, p) => s + p.amountCents, 0);
     const due = r.principalCents;
-    if (paid >= due) await repo.setRequestStatus(r.id, { status: 'repaid', repaidAt: now().toISOString() });
+    if (paid >= due) await repo.updateRequest(r.id, { status: 'repaid', repaidAt: now().toISOString() });
     res.status(201).json({ request: await detail(await repo.getRequest(r.id)) });
   });
 
@@ -261,7 +269,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return {
       id: r.id,
       borrowerId: r.borrowerId,
-      nomineeId: r.nomineeId,
+      trustedContactId: r.trustedContactId,
+      nomineeId: r.trustedContactId, // alias: the current front end and its tests still read nomineeId
       purpose: r.purpose,
       principalCents: r.principalCents,
       repaymentDate: r.repaymentDate,

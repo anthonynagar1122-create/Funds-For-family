@@ -256,7 +256,7 @@ test('hygiene: a server failure returns a generic message and no stack trace', a
   const s = await setup();
   try {
     await s.call('ann', 'GET', '/me');
-    s.repo.listFeed = async () => { throw new Error('db secret detail: connection string leaked'); };
+    s.repo.listRequestsByBorrowers = async () => { throw new Error('db secret detail: connection string leaked'); };
     const r = await s.call('ann', 'GET', '/feed');
     assert.equal(r.status, 500);
     assert.equal(r.body.error, 'Something went wrong');
