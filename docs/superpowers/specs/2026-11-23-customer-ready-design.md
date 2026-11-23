@@ -1,6 +1,6 @@
 # Funds For Family: customer-ready design
 
-Date: 2026-11-23. Status: draft for owner approval.
+Date: 2026-11-23. Status: approved by the owner on 2026-11-23, with P-37 to P-44 added after approval.
 Builds on `docs/15-product-decisions.md` (P-1 to P-20). Where this document and older docs (01–14) differ, this one and doc 15 win.
 
 ## 1. Intent
@@ -56,6 +56,14 @@ The owner wants it ready for real customers, not only a pilot. They should be ab
 | P-34 | Stuck entries | After 7 days without an answer, an item shows "Waiting 7+ days" with a WhatsApp nudge. Either side can ask the owner, who can confirm or remove the entry from the admin page. A note and the owner's name are recorded in the history. No automatic confirmation. |
 | P-35 | Invite email | The one-time link is enough, whatever email the person signs in with. |
 | P-36 | Privacy basics | Plain-English Terms and Privacy pages; agreement at the welcome step; the trusted contact must accept being named before verification; self-service account deletion (the name becomes "Former member" in others' records). The owner should have a lawyer review the pages before wide launch. |
+| P-37 | Purpose | The borrower picks a category (Education, Medical, Home, Family event, Work or business, Emergency, Other) and writes the purpose. Mutual connections see both. |
+| P-38 | Names | Full name, plus the profile photo from the Clerk account (Google), or initials in a coloured circle. |
+| P-39 | Rejection | The rejecting verifier must give a reason (10 to 500 characters), shown only to the borrower. The borrower can resubmit straight away as a new request, prefilled, and the trusted contact is asked again. |
+| P-40 | Email preferences | Essential emails always go (money to confirm, trusted-contact request, decisions, settlements, account events). Due-date reminders and thank-you notes can be switched off in Profile. No marketing emails. |
+| P-41 | Address | Keep `funds-for-family.vercel.app` for now. |
+| P-42 | Support | An in-app "Get help" form in Profile. Messages appear on the admin page, and the owner gets an email (to `OWNER_EMAIL`, never shown to members). |
+| P-43 | Analytics | Vercel Web Analytics on the public landing page only: no cookies, nothing inside `/app`. The owner switches it on in Vercel. |
+| P-44 | Contact load | One person can be the trusted contact on at most 3 active requests at a time. |
 
 ## 4. Approaches considered
 
@@ -73,7 +81,8 @@ All amounts are integers in paise. The existing `*_cents` columns keep their nam
 - Amount: from ₹100 up to ₹50,000 (10,000 to 5,000,000 paise), whole rupees or paise.
 - Purpose: 20 to 2,000 characters (unchanged).
 - Due date: after today and no later than 12 calendar months from today (P-16).
-- Trusted contact: required. Must be a mutual connection of the borrower and not the borrower. Stored in the existing `nominee_id` column. Code and UI say "trusted contact".
+- Category (P-37): required, one of `education`, `medical`, `home`, `family_event`, `work`, `emergency`, `other`.
+- Trusted contact: required. Must be a mutual connection of the borrower and not the borrower, and may be named on no more than 3 active requests (P-44). Stored in the existing `nominee_id` column. Code and UI say "trusted contact".
 - One open request per member. A member cannot create a request while one of theirs is `pending_verification`, `open` or `funded` (overdue included). This is enforced in rules and by a partial unique index.
 - Withdraw (agent's call): the borrower can withdraw a request while it is `pending_verification` or `open` and no contribution is `confirmed`. Its status becomes `withdrawn`. Any lender with a contribution still `sent` is told by email.
 - Trusted contact consent (P-36): a new request starts as `awaiting_contact`. The trusted contact gets an email and a home-screen item, and accepts or declines. Accepting moves the request to `pending_verification`. Declining sets it to `contact_declined`, and the borrower may pick someone else, which starts a new consent. After 7 days with no answer, the borrower is prompted to pick someone else.
@@ -83,6 +92,8 @@ All amounts are integers in paise. The existing `*_cents` columns keep their nam
 
 ### 5.2 Verification (unchanged, P-5)
 Two distinct approvals open a request; one rejection closes it. A verifier cannot decide on a request where they are the borrower or the trusted contact.
+
+Rejections (P-39): a `reject` verification needs a reason (10 to 500 characters). It is shown only to the borrower, with a "Try again" button that opens a new request prefilled from the rejected one.
 
 ### 5.3 Contributions: two-step (P-9, P-22)
 1. A lender on an `open` request records "sent", with an amount and an optional UPI reference (UTR, 6 to 35 letters or digits). The status is `sent`.
@@ -149,13 +160,15 @@ The borrower can post short notes (1 to 500 characters) on their own request onc
 
 The migration only adds things: new columns are nullable or have defaults, and new tables are separate. It is applied to **staging first**. Production is applied only at the owner-approved release (P-4), after a read-only row count. If production has real rows in `contributions` or `repayments`, stop and ask the owner how to map them.
 
-- `users`: add `upi_id text` (checked as `^[A-Za-z0-9._-]{2,256}@[A-Za-z]{2,64}$`), `is_admin boolean default false`, `invite_limit integer` (null means the default), `welcomed_at timestamptz`, `terms_accepted_at timestamptz`, `deleted_at timestamptz`.
+- `users`: add `avatar_url text` (copied from Clerk on sign-in), `email_reminders boolean default true`, `email_thanks boolean default true`, `upi_id text` (checked as `^[A-Za-z0-9._-]{2,256}@[A-Za-z]{2,64}$`), `is_admin boolean default false`, `invite_limit integer` (null means the default), `welcomed_at timestamptz`, `terms_accepted_at timestamptz`, `deleted_at timestamptz`.
 - `invites`: add `token_hash text unique`, `expires_at timestamptz not null default now() + 14 days`, `revoked_at timestamptz`, `superseded_at timestamptz`, `accepted_user_id bigint references users`. Make `token` nullable (new rows store only the hash).
 - `requests`: widen the status check to add `awaiting_contact`, `contact_declined` and `withdrawn`; add `funded_cents integer`, `original_repayment_date date`, `withdrawn_at timestamptz`, `contact_decided_at timestamptz`, and the check `principal_cents between 10000 and 5000000` (added `not valid`, then validated on staging). Add the partial unique index `requests_one_active_per_borrower on (borrower_id) where status in ('awaiting_contact','contact_declined','pending_verification','open','funded')`.
 - `contributions`: add `status text not null default 'confirmed' check (status in ('sent','confirmed','not_received'))`. The default `confirmed` backfills old rows; the app always inserts `sent`. Add `utr text`, `confirmed_at timestamptz`, `updated_at timestamptz`, `settled_by bigint references users`, `settled_note text`, `settled_at timestamptz`, `help_requested_at timestamptz`.
 - `repayments`: add `lender_id bigint references users`, `status` (same set and default as contributions), `utr`, `confirmed_at`, `updated_at`, and the same `settled_*` and `help_requested_at` columns. New rows require `lender_id` (app rule; the column stays nullable for old rows).
 - New `date_changes`: id, request_id, proposed_date, status (`pending`, `accepted`, `declined`), created_at, decided_at.
 - New `date_change_votes`: date_change_id, lender_id, decision, created_at, with primary key (date_change_id, lender_id).
+- `requests`: also add `category text` (check against the list in P-37; nullable for old rows, required by the app).
+- New `help_messages`: id, user_id, body (10 to 2,000 characters), created_at, resolved_at.
 - New `notes`: id, request_id, author_id, body (1 to 500 characters), created_at.
 - New `notifications_sent`: request_id, kind, recipient_id, sent_on date, unique on all four. This keeps reminder emails to at most one per day per kind.
 - RLS is enabled on every new table, and everything is revoked from `anon` and `authenticated` (same pattern as 0001). Run the Supabase security and performance advisors after applying, and index every new foreign key.
@@ -168,6 +181,7 @@ Existing routes keep working but follow the new rules. New or changed:
 - `GET /home`: one call for the dashboard. It returns items needing action (contributions to confirm, repayments to confirm, verifications for verifiers, date proposals to vote on, `not_received` items to fix), then my requests and my loans with confirmed and pending totals.
 - `POST /requests/:id/withdraw`, `POST /requests/:id/close` (close early at the confirmed amount), `POST /requests/:id/contact-decision {decision}` (trusted contact), `POST /requests/:id/trusted-contact {userId}` (borrower re-picks after a decline).
 - `POST /contributions/:id/help`, `POST /repayments/:id/help` (ask the owner).
+- `PATCH /me/email-preferences {reminders, thanks}`, `POST /help {body}`; admin `GET /admin/help-messages`, `POST /admin/help-messages/:id/resolve`.
 - `POST /me/accept-terms`, `DELETE /me` (account deletion, section 5.7b).
 - `POST /requests/:id/contributions {amount, utr?}` creates a `sent` contribution. `POST /contributions/:id/confirm`, `POST /contributions/:id/not-received`, `PATCH /contributions/:id {amount?, utr?}` (lender, only while `not_received`), `DELETE /contributions/:id` (lender, not when `confirmed`).
 - `POST /requests/:id/repayments {lenderId, amount, utr?}`, then `confirm`, `not-received`, `PATCH` and `DELETE` on `/repayments/:id`, mirroring contributions.
@@ -222,7 +236,7 @@ Navigation: on phones (up to 768 px), a bottom tab bar with Home, Requests, **+ 
 4. **New request**: amount with live `₹` formatting and the ₹50,000 limit shown, purpose with a character count, a due-date picker limited to 12 months, and a trusted-contact picker from mutual connections. If the member already has an active request, the page explains why and links to it.
 5. **Request detail**: status and progress (confirmed solid, pending striped); a lender list with each lender's sent, confirmed and owed amounts; actions for the viewer's role (lend: Pay with UPI and then "I've sent it"; confirm or not received; repay a lender in instalments; propose a new date; vote; withdraw; thank-you note); a timeline of every event; and links to the receipt and WhatsApp reminders. When the request becomes repaid, a quiet marigold "Repaid. Thank you for keeping your word." banner appears.
 6. **Circle**: mutual connections and the people I follow or who follow me (with a follow-back button), invite by email followed by WhatsApp share, my pending invites (copy link, revoke), and "N invites left this month".
-7. **Profile**: name, UPI ID, trust history, statement link, sign out. Signing out also clears the service-worker caches.
+7. **Profile**: photo, name, UPI ID, trust history, statement link, email preferences, "Get help", sign out. Signing out also clears the service-worker caches.
 8. **Admin**: members with a verifier toggle and invite limit; all invites with revoke; the invite funnel numbers.
 9. **Receipt**: a print layout.
 10. **Terms** and **Privacy**: static plain-English pages at `/terms` and `/privacy`, linked from the landing footer and the welcome step. Draft text by the agent, marked for lawyer review.
