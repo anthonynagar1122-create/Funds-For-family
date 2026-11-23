@@ -82,6 +82,9 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     const up = await repo.updateRequest(r.id, { status: 'rejected', rejectionReason: 'Not enough detail given' });
     assert.equal(up.rejectionReason, 'Not enough detail given');
     assert.ok('fundedCents' in up);
+    const again = await repo.updateRequest(r.id, { rejectionReason: 'A clear reason here' });
+    assert.equal(again.rejectionReason, 'A clear reason here');
+    assert.equal((await repo.getRequest(r.id)).rejectionReason, 'A clear reason here');
     assert.equal((await repo.listRequestsByBorrowers([b.id])).length, 1);
     assert.deepEqual(await repo.listRequestsByBorrowers([]), []);
   });

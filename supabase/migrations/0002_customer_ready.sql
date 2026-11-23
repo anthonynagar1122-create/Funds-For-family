@@ -35,6 +35,10 @@ alter table public.requests add column if not exists original_repayment_date dat
 alter table public.requests add column if not exists withdrawn_at            timestamptz;
 alter table public.requests add column if not exists contact_decided_at      timestamptz;
 alter table public.requests add column if not exists category                text;
+alter table public.requests add column if not exists rejection_reason        text;
+alter table public.requests drop constraint if exists requests_rejection_reason_check;
+alter table public.requests add constraint requests_rejection_reason_check
+  check (rejection_reason is null or char_length(rejection_reason) between 10 and 500);
 alter table public.requests drop constraint if exists requests_status_check;
 alter table public.requests add constraint requests_status_check
   check (status in ('awaiting_contact','contact_declined','pending_verification','rejected','open','funded','repaid','withdrawn'));
