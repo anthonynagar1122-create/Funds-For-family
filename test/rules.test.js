@@ -127,7 +127,7 @@ test('canVerify blocks non-verifiers, the borrower, the trusted contact, and dec
 });
 
 test('contributions are capped at the remaining amount and only on open requests', () => {
-  const base = { principalCents: 10000, raisedCents: 6000, contributorId: 'c', borrowerId: 'b', status: 'open' };
+  const base = { principalCents: 10000, totals: { confirmedCents: 6000, pendingCents: 0 }, isMutual: true, contributorId: 'c', borrowerId: 'b', status: 'open' };
   assert.equal(r.checkContribution({ ...base, amountCents: 4000 }).ok, true);
   assert.equal(r.checkContribution({ ...base, amountCents: 4001 }).ok, false);
   assert.equal(r.checkContribution({ ...base, amountCents: 100, contributorId: 'b' }).ok, false);
@@ -147,4 +147,139 @@ test('interest is gone', () => {
   assert.equal(r.interestCents, undefined);
   assert.equal(r.amountDueCents, undefined);
   assert.equal(r.DEFAULT_ANNUAL_RATE, undefined);
+});
+
+// ---- Task 3: money flow and visibility ----
+
+const TOTALS = r.fundingTotals([
+  { amountCents: 500, status: 'confirmed' },
+  { amountCents: 300, status: 'sent' },
+  { amountCents: 900, status: 'not_received' },
+]);
+
+test('validateUtr allows empty and 6-35 alphanumerics only', () => {
+  assert.equal(r.validateUtr(''), true);
+  assert.equal(r.validateUtr(undefined), true);
+  assert.equal(r.validateUtr('AB12CD'), true);
+  assert.equal(r.validateUtr('A'.repeat(35)), true);
+  assert.equal(r.validateUtr('A'.repeat(36)), false);
+  assert.equal(r.validateUtr('ABC12'), false);
+  assert.equal(r.validateUtr('ABC-123'), false);
+  assert.deepEqual(r.ENTRY_STATUSES, ['sent', 'confirmed', 'not_received']);
+});
+
+test('fundingTotals counts confirmed and sent, not not_received', () => {
+  assert.deepEqual(TOTALS, { confirmedCents: 500, pendingCents: 300 });
+});
+
+const contrib = (extra = {}) => r.checkContribution({
+  amountCents: 200, principalCents: 1000, totals: TOTALS, contributorId: 5, borrowerId: 1,
+  isMutual: true, status: 'open', ...extra,
+});
+
+test('checkContribution caps at principal - confirmed - pending', () => {
+  assert.equal(contrib().ok, true);
+  assert.equal(contrib().remainingCents, 200);
+  const over = contrib({ amountCents: 201 });
+  assert.equal(over.ok, false);
+  assert.equal(over.remainingCents, 200);
+});
+
+test('checkContribution rejects non-mutual, borrower, non-open and bad amounts', () => {
+  assert.equal(contrib({ isMutual: false }).ok, false);
+  assert.equal(contrib({ contributorId: 1 }).ok, false);
+  assert.equal(contrib({ status: 'funded' }).ok, false);
+  assert.equal(contrib({ amountCents: 0 }).ok, false);
+  assert.equal(contrib({ amountCents: 1.5 }).ok, false);
+});
+
+const CONTRIBS = [{ lenderId: 7, amountCents: 1000, status: 'confirmed' }, { lenderId: 7, amountCents: 50, status: 'sent' }];
+const REPAYS = [
+  { lenderId: 7, amountCents: 400, status: 'confirmed' },
+  { lenderId: 7, amountCents: 100, status: 'sent' },
+  { lenderId: 7, amountCents: 999, status: 'not_received' },
+];
+
+test('owedByLender uses confirmed for lent and repaid, sent for pending', () => {
+  const m = r.owedByLender(CONTRIBS, REPAYS);
+  assert.deepEqual(m.get(7), { lentCents: 1000, repaidCents: 400, pendingRepayCents: 100, owedCents: 600 });
+});
+
+test('checkRepayment bounds by owed minus pending and restricts payer', () => {
+  const owed = r.owedByLender(CONTRIBS, REPAYS).get(7);
+  const base = { amountCents: 500, payerId: 1, borrowerId: 1, trustedContactId: 2, lenderId: 7, owed, status: 'funded' };
+  assert.equal(r.checkRepayment(base).ok, true);
+  assert.equal(r.checkRepayment({ ...base, payerId: 2 }).ok, true);
+  assert.equal(r.checkRepayment({ ...base, amountCents: 501 }).ok, false);
+  assert.equal(r.checkRepayment({ ...base, payerId: 99 }).ok, false);
+  assert.equal(r.checkRepayment({ ...base, status: 'open' }).ok, false);
+  assert.equal(r.checkRepayment({ ...base, owed: undefined }).ok, false);
+});
+
+test('isFullyRepaid needs a non-empty map with everything at zero', () => {
+  assert.equal(r.isFullyRepaid(new Map()), false);
+  const done = r.owedByLender([{ lenderId: 7, amountCents: 100, status: 'confirmed' }], [{ lenderId: 7, amountCents: 100, status: 'confirmed' }]);
+  assert.equal(r.isFullyRepaid(done), true);
+  assert.equal(r.isFullyRepaid(r.owedByLender(CONTRIBS, REPAYS)), false);
+});
+
+test('isMutual needs both directions', () => {
+  assert.equal(r.isMutual({ following: [1, 2], followers: [2, 3] }, 2), true);
+  assert.equal(r.isMutual({ following: [1, 2], followers: [3] }, 2), false);
+  assert.equal(r.isMutual({ following: [], followers: [2] }, 2), false);
+});
+
+const STATUSES = ['awaiting_contact', 'contact_declined', 'pending_verification', 'open', 'funded', 'repaid', 'rejected'];
+const see = (status, extra = {}) => r.canSeeRequest({
+  viewerId: 50, request: { borrowerId: 1, trustedContactId: 2, status },
+  isMutualWithBorrower: false, isLender: false, viewerIsVerifier: false, ...extra,
+});
+
+test('canSeeRequest: stranger sees nothing', () => {
+  for (const s of STATUSES) assert.equal(see(s), false, s);
+});
+
+test('canSeeRequest: borrower, trusted contact and lenders always', () => {
+  for (const s of STATUSES) {
+    assert.equal(see(s, { viewerId: 1 }), true, s);
+    assert.equal(see(s, { viewerId: 2 }), true, s);
+    assert.equal(see(s, { isLender: true }), true, s);
+  }
+});
+
+test('canSeeRequest: mutual connection on open, funded, repaid only', () => {
+  for (const s of STATUSES) {
+    assert.equal(see(s, { isMutualWithBorrower: true }), ['open', 'funded', 'repaid'].includes(s), s);
+  }
+});
+
+test('canSeeRequest: verifier only while pending_verification', () => {
+  for (const s of STATUSES) assert.equal(see(s, { viewerIsVerifier: true }), s === 'pending_verification', s);
+});
+
+test('paymentTargetVisible: owner always sees own', () => {
+  const request = { borrowerId: 1, trustedContactId: 2, status: 'rejected' };
+  assert.equal(r.paymentTargetVisible({ viewerId: 1, ownerId: 1, request, lenderIds: [] }), true);
+  assert.equal(r.paymentTargetVisible({ viewerId: 7, ownerId: 7, request, lenderIds: [7] }), true);
+});
+
+test('paymentTargetVisible: borrower UPI to lenders, and to mutuals only while open', () => {
+  const pv = (status, extra) => r.paymentTargetVisible({
+    viewerId: 50, ownerId: 1, request: { borrowerId: 1, trustedContactId: 2, status }, lenderIds: [7], isMutualWithOwner: false, ...extra,
+  });
+  assert.equal(pv('funded', { viewerId: 7 }), true);
+  assert.equal(pv('open', { isMutualWithOwner: true }), true);
+  assert.equal(pv('funded', { isMutualWithOwner: true }), false);
+  assert.equal(pv('pending_verification', { isMutualWithOwner: true }), false);
+  assert.equal(pv('open'), false);
+});
+
+test('paymentTargetVisible: lender UPI to borrower and trusted contact only', () => {
+  const pv = (viewerId, extra) => r.paymentTargetVisible({
+    viewerId, ownerId: 7, request: { borrowerId: 1, trustedContactId: 2, status: 'funded' }, lenderIds: [7, 8], isMutualWithOwner: true, ...extra,
+  });
+  assert.equal(pv(1), true);
+  assert.equal(pv(2), true);
+  assert.equal(pv(8), false);
+  assert.equal(pv(50), false);
 });

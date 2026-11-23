@@ -207,8 +207,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (!r) return fail(res, 404, 'Request not found');
     const amountCents = toCents(req.body?.amount);
     if (amountCents === null) return fail(res, 400, 'Amount must be a positive number with at most 2 decimals', 'amount');
-    const raisedCents = (await repo.listContributions(r.id)).reduce((s, c) => s + c.amountCents, 0);
-    const check = rules.checkContribution({ amountCents, principalCents: r.principalCents, raisedCents, contributorId: req.user.id, borrowerId: r.borrowerId, status: r.status });
+    const totals = rules.fundingTotals((await repo.listContributions(r.id)).map((c) => ({ ...c, status: c.status || 'confirmed' })));
+    const raisedCents = totals.confirmedCents;
+    const check = rules.checkContribution({ amountCents, principalCents: r.principalCents, totals, contributorId: req.user.id, borrowerId: r.borrowerId, isMutual: true, status: r.status });
     if (!check.ok) return fail(res, 409, check.reason);
     await repo.addContribution({ requestId: r.id, contributorId: req.user.id, amountCents, createdAt: now().toISOString() });
     if (raisedCents + amountCents >= r.principalCents) {

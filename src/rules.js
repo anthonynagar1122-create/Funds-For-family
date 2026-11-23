@@ -163,18 +163,111 @@ function canVerify({ verifier, borrowerId, trustedContactId, status }) {
   return { ok: true };
 }
 
+const ENTRY_STATUSES = ['sent', 'confirmed', 'not_received'];
+const UTR_RE = /^[A-Za-z0-9]{6,35}$/;
+
+/** A UTR is optional; when present it must be 6-35 alphanumerics. */
+function validateUtr(s) {
+  if (s === undefined || s === null || s === '') return true;
+  return typeof s === 'string' && UTR_RE.test(s);
+}
+
+/** Money lent so far: confirmed counts as raised, sent as pending. not_received is ignored. */
+function fundingTotals(contributions) {
+  let confirmedCents = 0;
+  let pendingCents = 0;
+  for (const c of contributions) {
+    if (c.status === 'confirmed') confirmedCents += c.amountCents;
+    else if (c.status === 'sent') pendingCents += c.amountCents;
+  }
+  return { confirmedCents, pendingCents };
+}
+
 /** Contribution cap. Returns { ok, reason?, remainingCents }. */
-function checkContribution({ amountCents, principalCents, raisedCents, contributorId, borrowerId, status }) {
-  const remainingCents = Math.max(0, principalCents - raisedCents);
+function checkContribution({ amountCents, principalCents, totals, contributorId, borrowerId, isMutual: mutual, status }) {
+  const remainingCents = Math.max(0, principalCents - totals.confirmedCents - totals.pendingCents);
   if (contributorId === borrowerId) return { ok: false, reason: 'You cannot fund your own request', remainingCents };
+  if (!mutual) return { ok: false, reason: 'Only mutual connections can fund this request', remainingCents };
   if (status !== 'open') return { ok: false, reason: 'This request is not accepting contributions', remainingCents };
   if (!Number.isInteger(amountCents) || amountCents <= 0) {
     return { ok: false, reason: 'Contribution must be a positive amount', remainingCents };
   }
   if (amountCents > remainingCents) {
-    return { ok: false, reason: `Only ${remainingCents} cents remain to be funded`, remainingCents };
+    return { ok: false, reason: `Only ${remainingCents} paise remain to be funded`, remainingCents };
   }
   return { ok: true, remainingCents };
+}
+
+/** Per-lender position. Lent and repaid count confirmed rows only; pendingRepay counts sent repayments. */
+function owedByLender(contributions, repayments) {
+  const map = new Map();
+  const entry = (id) => {
+    if (!map.has(id)) map.set(id, { lentCents: 0, repaidCents: 0, pendingRepayCents: 0, owedCents: 0 });
+    return map.get(id);
+  };
+  for (const c of contributions) {
+    if (c.status === 'confirmed') entry(c.lenderId).lentCents += c.amountCents;
+  }
+  for (const p of repayments) {
+    if (p.status === 'confirmed') entry(p.lenderId).repaidCents += p.amountCents;
+    else if (p.status === 'sent') entry(p.lenderId).pendingRepayCents += p.amountCents;
+  }
+  for (const e of map.values()) e.owedCents = e.lentCents - e.repaidCents;
+  return map;
+}
+
+/** A repayment to one lender. Returns { ok, reason? }. */
+function checkRepayment({ amountCents, payerId, borrowerId, trustedContactId, lenderId, owed, status }) {
+  if (status !== 'funded') return { ok: false, reason: 'This request is not in repayment' };
+  if (payerId !== borrowerId && payerId !== trustedContactId) {
+    return { ok: false, reason: 'Only the borrower or trusted contact can record a repayment' };
+  }
+  if (lenderId === undefined || lenderId === null || !owed) return { ok: false, reason: 'Unknown lender' };
+  if (!Number.isInteger(amountCents) || amountCents <= 0) {
+    return { ok: false, reason: 'Repayment must be a positive amount' };
+  }
+  const room = owed.owedCents - owed.pendingRepayCents;
+  if (amountCents > room) return { ok: false, reason: `Only ${Math.max(0, room)} paise can still be repaid to this lender` };
+  return { ok: true };
+}
+
+/** Every lender fully repaid, and there is at least one lender. */
+function isFullyRepaid(owedMap) {
+  if (!owedMap || owedMap.size === 0) return false;
+  for (const e of owedMap.values()) if (e.owedCents !== 0) return false;
+  return true;
+}
+
+/** Mutual = each follows the other. Accepts arrays or Sets of ids. */
+function isMutual({ following, followers }, otherId) {
+  const has = (c) => (c instanceof Set ? c.has(otherId) : Array.isArray(c) && c.includes(otherId));
+  return has(following) && has(followers);
+}
+
+/** Who may read a request (callers return 404 when false). */
+function canSeeRequest({ viewerId, request, isMutualWithBorrower, isLender, viewerIsVerifier }) {
+  if (viewerId === request.borrowerId || viewerId === request.trustedContactId) return true;
+  if (isLender) return true;
+  if (viewerIsVerifier && request.status === 'pending_verification') return true;
+  if (isMutualWithBorrower && ['open', 'funded', 'repaid'].includes(request.status)) return true;
+  return false;
+}
+
+/**
+ * Spec 5.6: whether the viewer sees ownerId's UPI ID on this request.
+ * Owner always. Borrower's UPI: its lenders, and mutuals while open.
+ * A lender's UPI: the borrower and trusted contact.
+ */
+function paymentTargetVisible({ viewerId, ownerId, request, lenderIds = [], isMutualWithOwner = false }) {
+  if (viewerId === ownerId) return true;
+  if (ownerId === request.borrowerId) {
+    if (lenderIds.includes(viewerId)) return true;
+    return Boolean(isMutualWithOwner) && request.status === 'open';
+  }
+  if (lenderIds.includes(ownerId)) {
+    return viewerId === request.borrowerId || viewerId === request.trustedContactId;
+  }
+  return false;
 }
 
 /** Stored status plus derived 'overdue'. */
@@ -202,6 +295,15 @@ module.exports = {
   validateVerification,
   verificationOutcome,
   canVerify,
+  ENTRY_STATUSES,
+  validateUtr,
+  fundingTotals,
   checkContribution,
+  owedByLender,
+  checkRepayment,
+  isFullyRepaid,
+  isMutual,
+  canSeeRequest,
+  paymentTargetVisible,
   effectiveStatus,
 };
