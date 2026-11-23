@@ -341,6 +341,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can choose a trusted contact');
     if (r.status !== 'contact_declined') return fail(res, 409, 'You can choose a new trusted contact only after the first one declined');
     const contactId = Number(req.body?.userId);
+    if (contactId === r.trustedContactId) {
+      return fail(res, 409, 'Choose someone other than the person who declined', 'trustedContactId');
+    }
     const problem = await contactProblem(req.user.id, contactId);
     if (problem) return fail(res, problem.status, problem.error, problem.field);
     const updated = await repo.updateRequest(r.id, { trustedContactId: contactId, status: 'awaiting_contact', contactDecidedAt: null });
@@ -463,14 +466,15 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       id: r.id,
       borrowerId: r.borrowerId,
       trustedContactId: r.trustedContactId,
+      category: r.category ?? null,
       nomineeId: r.trustedContactId, // alias: the current front end and its tests still read nomineeId
       purpose: r.purpose,
       principalCents: r.principalCents,
+      fundedCents: r.fundedCents ?? null,
       repaymentDate: r.repaymentDate,
       status: rules.effectiveStatus(r, asOf),
       createdAt: r.createdAt,
     };
-    if (r.fundedCents !== null && r.fundedCents !== undefined) out.fundedCents = r.fundedCents;
     // The rejection reason is for the borrower only.
     if (viewerId !== undefined && viewerId === r.borrowerId && r.rejectionReason) out.rejectionReason = r.rejectionReason;
     return out;

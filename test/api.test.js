@@ -33,6 +33,10 @@ test('a member creates a request; it starts awaiting the trusted contact', async
     assert.equal(created.status, 201, JSON.stringify(created.body));
     assert.equal(created.body.request.status, 'awaiting_contact');
     assert.equal(created.body.request.principalCents, 50000);
+    assert.equal(created.body.request.category, 'education');
+    assert.equal(created.body.request.fundedCents, null);
+    const got = await call('ann', 'GET', `/requests/${created.body.request.id}`);
+    assert.equal(got.body.request.category, 'education');
     assert.equal(sent.at(-1).to, 'ben@example.com');
     assert.equal(sent.at(-1).subject, 'ann named you as their trusted contact');
     assert.match(sent.at(-1).html, /₹500\.00/);
@@ -256,6 +260,10 @@ test('after a decline the borrower picks a new mutual contact and consent restar
     assert.equal(notMutual.body.field, 'trustedContactId');
     const stranger = await ctx.call('zed', 'POST', `/requests/${id}/trusted-contact`, { userId: ids.bea });
     assert.equal(stranger.status, 404);
+    const same = await ctx.call('ann', 'POST', `/requests/${id}/trusted-contact`, { userId: ids.nat });
+    assert.equal(same.status, 409);
+    assert.equal(same.body.field, 'trustedContactId');
+    assert.equal(same.body.error, 'Choose someone other than the person who declined');
     const picked = await ctx.call('ann', 'POST', `/requests/${id}/trusted-contact`, { userId: ids.bea });
     assert.equal(picked.status, 200, JSON.stringify(picked.body));
     assert.equal(picked.body.request.status, 'awaiting_contact');
