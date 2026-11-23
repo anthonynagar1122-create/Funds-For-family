@@ -328,6 +328,12 @@ test('repayments: bad lender, state, amount and role are refused with the right 
     assert.equal(noLender.status, 400);
     assert.equal(noLender.body.field, 'lenderId');
     assert.equal((await repay(ctx, 'ann', id, bea, 600.01)).status, 409, 'more than owed');
+    assert.equal((await repay(ctx, 'ann', id, bea, 600.01)).body.error, 'Only ₹600.00 can still be repaid to this lender');
+    for (const bad of [true, '', 'abc', null, 1.5]) {
+      const r = await repay(ctx, 'ann', id, bad, 100);
+      assert.equal(r.status, 400, `lenderId ${JSON.stringify(bad)}`);
+      assert.equal(r.body.field, 'lenderId');
+    }
     assert.equal((await repay(ctx, 'ann', id, cal, 100)).status, 201);
     assert.doesNotMatch(JSON.stringify(badAmount.body) + JSON.stringify(noLender.body), /nominee/i);
   } finally { await ctx.close(); }

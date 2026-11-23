@@ -33,6 +33,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     try { await mailer(msg); } catch (err) { logger.error('mail failed', err?.message); }
   };
 
+  const appLink = () => `<a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>`;
+
   // Why a new person may join, or null. Never trusts the repo for expiry: inviteState uses the injected clock.
   async function admissionFor(req, identity) {
     const email = String(identity.email ?? '').trim().toLowerCase();
@@ -420,14 +422,36 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return rules.validateUtr(text) ? { utr: text } : { error: 'A UPI reference is 6 to 35 letters or digits' };
   }
 
-  // Load a contribution on a request the caller can see (404 otherwise). Returns { c, r } or null after responding.
-  async function loadContribution(req, res) {
+  // Load an entry (contribution or repayment) on a request the caller can see (404 otherwise).
+  // Returns { entry, r } or null after responding.
+  async function loadEntry(req, res, getter, label) {
     const id = Number(req.params.id);
-    const c = Number.isInteger(id) ? await repo.getContribution(id) : null;
-    if (!c) { fail(res, 404, 'Contribution not found'); return null; }
-    const r = await visibleRequest(req, res, c.requestId);
+    const entry = Number.isInteger(id) ? await getter(id) : null;
+    if (!entry) { fail(res, 404, `${label} not found`); return null; }
+    const r = await visibleRequest(req, res, entry.requestId);
     if (!r) return null;
-    return { c, r };
+    return { entry, r };
+  }
+
+  // Parses a correction body: a new amount and/or UPI reference. Returns { patch, amountCents } or { error, field }.
+  function readEntryPatch(body, currentCents) {
+    const hasAmount = body?.amount !== undefined;
+    const hasUtr = body?.utr !== undefined;
+    if (!hasAmount && !hasUtr) return { error: 'Give a new amount or UPI reference', field: 'amount' };
+    const patch = { status: 'sent', updatedAt: now().toISOString() };
+    let amountCents = currentCents;
+    if (hasAmount) {
+      const parsed = parseRupees(body.amount);
+      if (parsed.error) return { error: parsed.error, field: 'amount' };
+      amountCents = parsed.paise;
+      patch.amountCents = amountCents;
+    }
+    if (hasUtr) {
+      const u = readUtr(body);
+      if (u.error) return { error: u.error, field: 'utr' };
+      patch.utr = u.utr;
+    }
+    return { patch, amountCents };
   }
 
   // Never lets an email problem fail a change that is already saved.
@@ -445,7 +469,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     for (const c of sentRows) {
       await mailLender(c.contributorId, `A request you sent money to was ${verb}`,
         `<p>The request you sent ${formatInr(c.amountCents)} to was ${verb}. Your ${formatInr(c.amountCents)} marked as sent is not counted.</p>`
-        + `<p>You can remove it in the app: <a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>.</p>`);
+        + `<p>You can remove it in the app: ${appLink()}.</p>`);
     }
   }
 
@@ -473,16 +497,16 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
         to: borrower.email,
         subject: `${req.user.name} says they sent ${formatInr(parsed.paise)}. Please confirm.`,
         html: `<p>${escapeHtml(req.user.name)} says they sent you ${formatInr(parsed.paise)}.</p>`
-          + `<p>Once the money reaches you, please confirm it in the app: <a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>.</p>`,
+          + `<p>Once the money reaches you, please confirm it in the app: ${appLink()}.</p>`,
       });
     }
     res.status(201).json({ contribution: contributionJson(created), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   api.post('/contributions/:id/confirm', async (req, res) => {
-    const loaded = await loadContribution(req, res);
+    const loaded = await loadEntry(req, res, repo.getContribution, 'Contribution');
     if (!loaded) return;
-    const { c, r } = loaded;
+    const { entry: c, r } = loaded;
     if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can confirm that money arrived');
     if (c.status === 'confirmed') {
       return res.json({ contribution: contributionJson(c), request: await detail(r, req.user.id) });
@@ -502,40 +526,27 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.post('/contributions/:id/not-received', async (req, res) => {
-    const loaded = await loadContribution(req, res);
+    const loaded = await loadEntry(req, res, repo.getContribution, 'Contribution');
     if (!loaded) return;
-    const { c, r } = loaded;
+    const { entry: c, r } = loaded;
     if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can say money did not arrive');
     if (c.status !== 'sent') return fail(res, 409, 'Only an entry marked as sent can be marked not received');
     const updated = await repo.updateContribution(c.id, { status: 'not_received', updatedAt: now().toISOString() });
     await mailLender(c.contributorId, `${req.user.name} has not received your ${formatInr(c.amountCents)}`,
       `<p>${escapeHtml(req.user.name)} says your ${formatInr(c.amountCents)} has not arrived.</p>`
-      + `<p>Please check the amount and UPI reference and correct them in the app, or remove the entry: <a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>.</p>`);
+      + `<p>Please check the amount and UPI reference and correct them in the app, or remove the entry: ${appLink()}.</p>`);
     res.json({ contribution: contributionJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   api.patch('/contributions/:id', async (req, res) => {
-    const loaded = await loadContribution(req, res);
+    const loaded = await loadEntry(req, res, repo.getContribution, 'Contribution');
     if (!loaded) return;
-    const { c, r } = loaded;
+    const { entry: c, r } = loaded;
     if (c.contributorId !== req.user.id) return fail(res, 403, 'Only the person who sent this can change it');
     if (c.status !== 'not_received') return fail(res, 409, 'You can correct an entry only after the borrower marked it not received');
-    const hasAmount = req.body?.amount !== undefined;
-    const hasUtr = req.body?.utr !== undefined;
-    if (!hasAmount && !hasUtr) return fail(res, 400, 'Give a new amount or UPI reference', 'amount');
-    const patch = { status: 'sent', updatedAt: now().toISOString() };
-    let amountCents = c.amountCents;
-    if (hasAmount) {
-      const parsed = parseRupees(req.body.amount);
-      if (parsed.error) return fail(res, 400, parsed.error, 'amount');
-      amountCents = parsed.paise;
-      patch.amountCents = amountCents;
-    }
-    if (hasUtr) {
-      const u = readUtr(req.body);
-      if (u.error) return fail(res, 400, u.error, 'utr');
-      patch.utr = u.utr;
-    }
+    const edit = readEntryPatch(req.body, c.amountCents);
+    if (edit.error) return fail(res, 400, edit.error, edit.field);
+    const { patch, amountCents } = edit;
     const check = rules.checkContribution({
       amountCents, principalCents: r.principalCents, totals: rules.fundingTotals(await repo.listContributions(r.id)),
       contributorId: req.user.id, borrowerId: r.borrowerId,
@@ -547,9 +558,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.delete('/contributions/:id', async (req, res) => {
-    const loaded = await loadContribution(req, res);
+    const loaded = await loadEntry(req, res, repo.getContribution, 'Contribution');
     if (!loaded) return;
-    const { c, r } = loaded;
+    const { entry: c, r } = loaded;
     if (c.contributorId !== req.user.id) return fail(res, 403, 'Only the person who sent this can remove it');
     if (c.status === 'confirmed') return fail(res, 409, 'The borrower already confirmed this, so it cannot be removed');
     await repo.deleteContribution(c.id);
@@ -568,18 +579,6 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return rules.owedByLender(contribs.map((c) => ({ ...c, lenderId: c.contributorId })), repays);
   }
 
-  // Load a repayment on a request the caller can see (404 otherwise). Returns { p, r } or null after responding.
-  async function loadRepayment(req, res) {
-    const id = Number(req.params.id);
-    const p = Number.isInteger(id) ? await repo.getRepayment(id) : null;
-    if (!p) { fail(res, 404, 'Repayment not found'); return null; }
-    const r = await visibleRequest(req, res, p.requestId);
-    if (!r) return null;
-    return { p, r };
-  }
-
-  const repayLink = () => `<a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>`;
-
   api.post('/requests/:id/repayments', async (req, res) => {
     const r = await visibleRequest(req, res);
     if (!r) return;
@@ -587,8 +586,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       return fail(res, 403, 'Only the borrower or trusted contact can record a repayment');
     }
     if (r.status !== 'funded') return fail(res, 409, 'Repayments can be recorded only for funded requests');
-    const lenderId = Number(req.body?.lenderId);
-    if (req.body?.lenderId === undefined || req.body?.lenderId === null || !Number.isInteger(lenderId)) {
+    const rawLender = req.body?.lenderId;
+    const lenderId = Number(rawLender);
+    if (!(typeof rawLender === 'number' || /^\d+$/.test(rawLender ?? '')) || !Number.isInteger(lenderId)) {
       return fail(res, 400, 'Choose who you are repaying', 'lenderId');
     }
     const parsed = parseRupees(req.body?.amount);
@@ -606,14 +606,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     });
     await mailLender(lenderId, `${req.user.name} says they repaid you ${formatInr(parsed.paise)}. Please confirm.`,
       `<p>${escapeHtml(req.user.name)} says they repaid you ${formatInr(parsed.paise)}.</p>`
-      + `<p>Once the money reaches you, please confirm it in the app: ${repayLink()}.</p>`);
+      + `<p>Once the money reaches you, please confirm it in the app: ${appLink()}.</p>`);
     res.status(201).json({ repayment: repaymentJson(created), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   api.post('/repayments/:id/confirm', async (req, res) => {
-    const loaded = await loadRepayment(req, res);
+    const loaded = await loadEntry(req, res, repo.getRepayment, 'Repayment');
     if (!loaded) return;
-    const { p, r } = loaded;
+    const { entry: p, r } = loaded;
     if (p.lenderId !== req.user.id) return fail(res, 403, 'Only the person who was repaid can confirm it');
     if (p.status === 'confirmed') {
       return res.json({ repayment: repaymentJson(p), request: await detail(r, req.user.id) });
@@ -632,40 +632,27 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.post('/repayments/:id/not-received', async (req, res) => {
-    const loaded = await loadRepayment(req, res);
+    const loaded = await loadEntry(req, res, repo.getRepayment, 'Repayment');
     if (!loaded) return;
-    const { p, r } = loaded;
+    const { entry: p, r } = loaded;
     if (p.lenderId !== req.user.id) return fail(res, 403, 'Only the person who was repaid can say it did not arrive');
     if (p.status !== 'sent') return fail(res, 409, 'Only a repayment marked as sent can be marked not received');
     const updated = await repo.updateRepayment(p.id, { status: 'not_received', updatedAt: now().toISOString() });
     await mailLender(p.payerId, `${req.user.name} has not received your repayment of ${formatInr(p.amountCents)}`,
       `<p>${escapeHtml(req.user.name)} says your repayment of ${formatInr(p.amountCents)} has not arrived.</p>`
-      + `<p>Please check the amount and UPI reference and correct them in the app, or remove the entry: ${repayLink()}.</p>`);
+      + `<p>Please check the amount and UPI reference and correct them in the app, or remove the entry: ${appLink()}.</p>`);
     res.json({ repayment: repaymentJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   api.patch('/repayments/:id', async (req, res) => {
-    const loaded = await loadRepayment(req, res);
+    const loaded = await loadEntry(req, res, repo.getRepayment, 'Repayment');
     if (!loaded) return;
-    const { p, r } = loaded;
+    const { entry: p, r } = loaded;
     if (p.payerId !== req.user.id) return fail(res, 403, 'Only the person who sent this can change it');
     if (p.status !== 'not_received') return fail(res, 409, 'You can correct a repayment only after it was marked not received');
-    const hasAmount = req.body?.amount !== undefined;
-    const hasUtr = req.body?.utr !== undefined;
-    if (!hasAmount && !hasUtr) return fail(res, 400, 'Give a new amount or UPI reference', 'amount');
-    const patch = { status: 'sent', updatedAt: now().toISOString() };
-    let amountCents = p.amountCents;
-    if (hasAmount) {
-      const parsed = parseRupees(req.body.amount);
-      if (parsed.error) return fail(res, 400, parsed.error, 'amount');
-      amountCents = parsed.paise;
-      patch.amountCents = amountCents;
-    }
-    if (hasUtr) {
-      const u = readUtr(req.body);
-      if (u.error) return fail(res, 400, u.error, 'utr');
-      patch.utr = u.utr;
-    }
+    const edit = readEntryPatch(req.body, p.amountCents);
+    if (edit.error) return fail(res, 400, edit.error, edit.field);
+    const { patch, amountCents } = edit;
     // This entry is not_received, so it is not in the owed figures yet; checking it as new is correct.
     const check = rules.checkRepayment({
       amountCents, payerId: p.payerId, borrowerId: r.borrowerId, trustedContactId: r.trustedContactId,
@@ -677,9 +664,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.delete('/repayments/:id', async (req, res) => {
-    const loaded = await loadRepayment(req, res);
+    const loaded = await loadEntry(req, res, repo.getRepayment, 'Repayment');
     if (!loaded) return;
-    const { p, r } = loaded;
+    const { entry: p, r } = loaded;
     if (p.payerId !== req.user.id) return fail(res, 403, 'Only the person who sent this can remove it');
     if (p.status === 'confirmed') return fail(res, 409, 'The lender already confirmed this, so it cannot be removed');
     await repo.deleteRepayment(p.id);

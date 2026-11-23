@@ -1,7 +1,7 @@
 'use strict';
 // Pure business rules. No I/O: safe to unit-test and to reuse on server and client.
 
-const { parseRupees } = require('../public/app/money');
+const { parseRupees, formatInr } = require('../public/app/money');
 
 const PURPOSE_MIN_LENGTH = 20;
 const PURPOSE_MAX_LENGTH = 2000;
@@ -193,7 +193,7 @@ function checkContribution({ amountCents, principalCents, totals, contributorId,
     return { ok: false, reason: 'Contribution must be a positive amount', remainingCents };
   }
   if (amountCents > remainingCents) {
-    return { ok: false, reason: `Only ${remainingCents} paise remain to be funded`, remainingCents };
+    return { ok: false, reason: `Only ${formatInr(remainingCents)} is still needed`, remainingCents };
   }
   return { ok: true, remainingCents };
 }
@@ -227,7 +227,7 @@ function checkRepayment({ amountCents, payerId, borrowerId, trustedContactId, le
     return { ok: false, reason: 'Repayment must be a positive amount' };
   }
   const room = owed.owedCents - owed.pendingRepayCents;
-  if (amountCents > room) return { ok: false, reason: `Only ${Math.max(0, room)} paise can still be repaid to this lender` };
+  if (amountCents > room) return { ok: false, reason: `Only ${formatInr(Math.max(0, room))} can still be repaid to this lender` };
   return { ok: true };
 }
 
