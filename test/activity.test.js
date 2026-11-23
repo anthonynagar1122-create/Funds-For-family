@@ -31,10 +31,15 @@ const validRequest = (nomineeId) => ({
   trustedContactId: nomineeId,
 });
 
+// Nat is always the trusted contact here: Ann follows Nat (Nat already follows Ann), then Nat accepts.
 async function createRequest({ call }, nomineeId) {
+  await call('ann', 'POST', '/follows', { userId: nomineeId });
   const r = await call('ann', 'POST', '/requests', validRequest(nomineeId));
   assert.equal(r.status, 201, JSON.stringify(r.body));
-  return r.body.request.id;
+  const id = r.body.request.id;
+  const accepted = await call('nat', 'POST', `/requests/${id}/contact-decision`, { decision: 'accept' });
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  return id;
 }
 
 // A request that is open for funding: created by Ann, approved by both verifiers.
@@ -178,7 +183,7 @@ test('a lender sees a loan from a borrower outside their network', async () => {
   const s = await setup();
   try {
     const ids = await community(s);
-    const id = (await s.call('ann', 'POST', '/requests', validRequest(ids.nat))).body.request.id;
+    const id = await createRequest(s, ids.nat);
     await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     // Sam has no connection to Ann; he is only a lender here.

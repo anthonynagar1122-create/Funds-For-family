@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { setup } = require('./helpers/harness');
+const { startRequest } = require('./helpers/lifecycle');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -81,7 +82,7 @@ test('injection: a verifier note is stored and returned as data, not markup', as
     const wes = (await s.call('wes', 'GET', '/me')).body.user;
     await s.repo.setVerifier(vee.id, true);
     await s.repo.setVerifier(wes.id, true);
-    const id = (await s.call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
+    const id = await startRequest(s.call, 'ann', 'nat');
     const note = '<script>alert(1)</script>';
     const r = await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve', note });
     assert.equal(r.status, 200);
@@ -123,7 +124,7 @@ test('access: the borrower cannot verify their own request', async () => {
     const nat = (await s.call('nat', 'GET', '/me')).body.user;
     const ann = (await s.call('ann', 'GET', '/me')).body.user;
     await s.repo.setVerifier(ann.id, true);
-    const id = (await s.call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
+    const id = await startRequest(s.call, 'ann', 'nat');
     const r = await s.call('ann', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     assert.equal(r.status, 403);
   } finally { await s.close(); }
@@ -134,7 +135,7 @@ test('access: a stranger cannot record a repayment on someone else\'s loan', asy
   try {
     await s.call('ann', 'GET', '/me');
     const nat = (await s.call('nat', 'GET', '/me')).body.user;
-    const id = (await s.call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
+    const id = await startRequest(s.call, 'ann', 'nat');
     const r = await s.call('zed', 'POST', `/requests/${id}/repayments`, { amount: 10 });
     assert.equal(r.status, 403);
   } finally { await s.close(); }

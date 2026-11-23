@@ -2,6 +2,7 @@
 const express = require('express');
 const rules = require('./rules');
 const invites = require('./invites');
+const { formatInr } = require('../public/app/money');
 
 const INVITE_ONLY = {
   error: 'Funds For Family is invite only. Ask someone who uses it to send you an invite.',
@@ -208,7 +209,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const rows = (await repo.listRequestsByBorrowers(ids)).filter((r) => ['open', 'funded', 'repaid'].includes(r.status));
     const withRaised = await Promise.all(rows.map(async (r) => {
       const raisedCents = (await repo.listContributions(r.id)).reduce((sum, c) => sum + c.amountCents, 0);
-      return { ...summarise(r, now()), raisedCents };
+      return { ...summarise(r, now(), req.user.id), raisedCents };
     }));
     res.json({ requests: withRaised });
   });
@@ -251,49 +252,155 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json(out);
   });
 
+  // Load a request and refuse (404) unless the caller may see it. Returns null after responding.
+  async function visibleRequest(req, res) {
+    const id = Number(req.params.id);
+    const r = Number.isInteger(id) ? await repo.getRequest(id) : null;
+    if (!r) { fail(res, 404, 'Request not found'); return null; }
+    const me = req.user;
+    const [conn, contribs] = await Promise.all([repo.connections(me.id), repo.listContributions(r.id)]);
+    const seen = rules.canSeeRequest({
+      viewerId: me.id, request: r,
+      isMutualWithBorrower: rules.isMutual(conn, r.borrowerId),
+      isLender: contribs.some((c) => c.contributorId === me.id),
+      viewerIsVerifier: !!me.isVerifier,
+    });
+    if (!seen) { fail(res, 404, 'Request not found'); return null; }
+    return r;
+  }
+
+  // Checks for naming a trusted contact. Returns an error { status, error, field } or null.
+  async function contactProblem(borrowerId, contactId) {
+    if (!Number.isInteger(contactId) || !(await repo.getUser(contactId))) {
+      return { status: 400, error: 'Choose a trusted contact', field: 'trustedContactId' };
+    }
+    const check = rules.checkTrustedContact({
+      borrowerId, contactId,
+      isMutual: rules.isMutual(await repo.connections(borrowerId), contactId),
+      contactActiveCount: await repo.countActiveAsContact(contactId),
+    });
+    return check.ok ? null : { status: 409, error: check.reason, field: 'trustedContactId' };
+  }
+
+  async function mailTrustedContact(borrower, contactId, r) {
+    const contact = await repo.getUser(contactId);
+    if (!contact?.email) return;
+    const link = `${appUrl.replace(/\/+$/, '')}/app/`;
+    await safeMail({
+      to: contact.email,
+      subject: `${borrower.name} named you as their trusted contact`,
+      html: `<p>${escapeHtml(borrower.name)} asked for ${formatInr(r.principalCents)} and named you as their trusted contact.</p>`
+        + `<p>Please accept or decline in the app: <a href="${escapeHtml(link)}">open Funds For Family</a>.</p>`,
+    });
+  }
+
   api.post('/requests', async (req, res) => {
     const { errors, value } = rules.validateRequest(req.body, { borrowerId: req.user.id, now: now() });
     const first = Object.keys(errors)[0];
     if (first) return fail(res, 400, errors[first], first);
-    if (!(await repo.getUser(value.trustedContactId))) return fail(res, 400, 'Choose a trusted contact', 'trustedContactId');
+    const active = rules.checkCanCreateRequest({ borrowerActiveCount: await repo.countActiveByBorrower(req.user.id) });
+    if (!active.ok) return fail(res, 409, active.reason);
+    const problem = await contactProblem(req.user.id, value.trustedContactId);
+    if (problem) return fail(res, problem.status, problem.error, problem.field);
     const created = await repo.createRequest({
       borrowerId: req.user.id,
       trustedContactId: value.trustedContactId,
       purpose: value.purpose,
+      category: value.category,
       principalCents: value.principalCents,
       repaymentDate: value.repaymentDate,
+      status: 'awaiting_contact',
       createdAt: now().toISOString(),
     });
-    res.status(201).json({ request: summarise(created, now()) });
+    await mailTrustedContact(req.user, value.trustedContactId, created);
+    res.status(201).json({ request: summarise(created, now(), req.user.id) });
   });
 
   api.get('/requests/:id', async (req, res) => {
-    const r = await repo.getRequest(Number(req.params.id));
-    if (!r) return fail(res, 404, 'Request not found');
-    res.json({ request: await detail(r) });
+    const r = await visibleRequest(req, res);
+    if (r) res.json({ request: await detail(r, req.user.id) });
+  });
+
+  api.post('/requests/:id/contact-decision', async (req, res) => {
+    const r = await visibleRequest(req, res);
+    if (!r) return;
+    if (r.trustedContactId !== req.user.id) return fail(res, 403, 'Only the trusted contact can answer this');
+    const decision = req.body?.decision;
+    if (decision !== 'accept' && decision !== 'decline') return fail(res, 400, 'decision must be accept or decline', 'decision');
+    if (r.status !== 'awaiting_contact') return fail(res, 409, 'This request is not waiting for your answer');
+    await repo.updateRequest(r.id, {
+      status: decision === 'accept' ? 'pending_verification' : 'contact_declined',
+      contactDecidedAt: now().toISOString(),
+    });
+    res.json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.post('/requests/:id/trusted-contact', async (req, res) => {
+    const r = await visibleRequest(req, res);
+    if (!r) return;
+    if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can choose a trusted contact');
+    if (r.status !== 'contact_declined') return fail(res, 409, 'You can choose a new trusted contact only after the first one declined');
+    const contactId = Number(req.body?.userId);
+    const problem = await contactProblem(req.user.id, contactId);
+    if (problem) return fail(res, problem.status, problem.error, problem.field);
+    const updated = await repo.updateRequest(r.id, { trustedContactId: contactId, status: 'awaiting_contact', contactDecidedAt: null });
+    await mailTrustedContact(req.user, contactId, updated);
+    res.json({ request: await detail(updated, req.user.id) });
   });
 
   api.post('/requests/:id/verify', async (req, res) => {
-    const r = await repo.getRequest(Number(req.params.id));
-    if (!r) return fail(res, 404, 'Request not found');
-    const decision = req.body?.decision;
-    if (decision !== 'approve' && decision !== 'reject') return fail(res, 400, 'decision must be approve or reject', 'decision');
+    const r = await visibleRequest(req, res);
+    if (!r) return;
+    const { errors, value } = rules.validateVerification({ decision: req.body?.decision, reason: req.body?.reason ?? req.body?.note });
+    const first = Object.keys(errors)[0];
+    if (first) return fail(res, 400, errors[first], first);
     const check = rules.canVerify({ verifier: req.user, borrowerId: r.borrowerId, trustedContactId: r.trustedContactId, status: r.status });
     if (!check.ok) return fail(res, 403, check.reason);
-    const note = String(req.body?.note ?? '').slice(0, 1000);
-    await repo.addVerification({ requestId: r.id, verifierId: req.user.id, decision, note, createdAt: now().toISOString() });
+    await repo.addVerification({ requestId: r.id, verifierId: req.user.id, decision: value.decision, note: value.reason ?? '', createdAt: now().toISOString() });
     const outcome = rules.verificationOutcome(await repo.listVerifications(r.id), requiredApprovals);
     if (outcome !== 'pending') {
-      const status = outcome === 'approved' ? 'open' : 'rejected';
-      await repo.updateRequest(r.id, { status, decidedAt: now().toISOString() });
+      const approved = outcome === 'approved';
+      const patch = { status: approved ? 'open' : 'rejected', decidedAt: now().toISOString() };
+      let reason = '';
+      if (!approved) {
+        reason = value.reason ?? (await repo.listVerifications(r.id)).find((v) => v.decision === 'reject')?.note ?? '';
+        patch.rejectionReason = reason;
+      }
+      await repo.updateRequest(r.id, patch);
       const borrower = await repo.getUser(r.borrowerId);
       await safeMail({
         to: borrower.email,
-        subject: `Your Funds For Family request was ${status === 'open' ? 'approved' : 'rejected'}`,
-        html: `<p>Your request for ${formatCents(r.principalCents)} was <strong>${status === 'open' ? 'approved and is open for funding' : 'rejected by the verification team'}</strong>.</p>`,
+        subject: approved ? 'Your Funds For Family request was approved' : 'Your Funds For Family request was not approved',
+        html: approved
+          ? `<p>Your request for ${formatInr(r.principalCents)} was <strong>approved and is open for funding</strong>.</p>`
+          : `<p>Your request for ${formatInr(r.principalCents)} was <strong>not approved</strong> by the verification team.</p><p>Reason: ${escapeHtml(reason)}</p>`,
       });
     }
-    res.json({ request: await detail(await repo.getRequest(r.id)) });
+    res.json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.post('/requests/:id/withdraw', async (req, res) => {
+    const r = await visibleRequest(req, res);
+    if (!r) return;
+    if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can withdraw this request');
+    if (!['awaiting_contact', 'contact_declined', 'pending_verification', 'open'].includes(r.status)) {
+      return fail(res, 409, 'This request can no longer be withdrawn');
+    }
+    const { confirmedCents } = rules.fundingTotals(await repo.listContributions(r.id));
+    if (confirmedCents > 0) return fail(res, 409, 'Someone has already lent money on this request, so it cannot be withdrawn');
+    await repo.updateRequest(r.id, { status: 'withdrawn', withdrawnAt: now().toISOString() });
+    res.json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.post('/requests/:id/close', async (req, res) => {
+    const r = await visibleRequest(req, res);
+    if (!r) return;
+    if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can close this request');
+    if (r.status !== 'open') return fail(res, 409, 'Only an open request can be closed');
+    const { confirmedCents } = rules.fundingTotals(await repo.listContributions(r.id));
+    if (confirmedCents <= 0) return fail(res, 409, 'Nothing has been lent yet. Withdraw the request instead.');
+    await repo.updateRequest(r.id, { status: 'funded', fundedCents: confirmedCents, fundedAt: now().toISOString() });
+    res.json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   api.post('/requests/:id/contributions', async (req, res) => {
@@ -312,9 +419,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     await safeMail({
       to: req.user.email,
       subject: 'Thank you for your contribution',
-      html: `<p>You contributed ${formatCents(amountCents)} to request #${r.id}. Thank you.</p>`,
+      html: `<p>You contributed ${formatInr(amountCents)} to request #${r.id}. Thank you.</p>`,
     });
-    res.status(201).json({ request: await detail(await repo.getRequest(r.id)) });
+    res.status(201).json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   api.post('/requests/:id/repayments', async (req, res) => {
@@ -330,7 +437,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const paid = (await repo.listRepayments(r.id)).reduce((s, p) => s + p.amountCents, 0);
     const due = r.principalCents;
     if (paid >= due) await repo.updateRequest(r.id, { status: 'repaid', repaidAt: now().toISOString() });
-    res.status(201).json({ request: await detail(await repo.getRequest(r.id)) });
+    res.status(201).json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   app.use('/api', api);
@@ -351,8 +458,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return out;
   }
 
-  function summarise(r, asOf) {
-    return {
+  function summarise(r, asOf, viewerId) {
+    const out = {
       id: r.id,
       borrowerId: r.borrowerId,
       trustedContactId: r.trustedContactId,
@@ -363,21 +470,29 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       status: rules.effectiveStatus(r, asOf),
       createdAt: r.createdAt,
     };
+    if (r.fundedCents !== null && r.fundedCents !== undefined) out.fundedCents = r.fundedCents;
+    // The rejection reason is for the borrower only.
+    if (viewerId !== undefined && viewerId === r.borrowerId && r.rejectionReason) out.rejectionReason = r.rejectionReason;
+    return out;
   }
 
-  async function detail(r) {
+  async function detail(r, viewerId) {
     const asOf = now();
     const [verifs, contribs, repays] = await Promise.all([repo.listVerifications(r.id), repo.listContributions(r.id), repo.listRepayments(r.id)]);
     const raisedCents = contribs.reduce((s, c) => s + c.amountCents, 0);
     const paidCents = repays.reduce((s, p) => s + p.amountCents, 0);
     return {
-      ...summarise(r, asOf),
+      ...summarise(r, asOf, viewerId),
       raisedCents,
       remainingCents: Math.max(0, r.principalCents - raisedCents),
       daysOverdue: rules.daysOverdue(r.repaymentDate, asOf),
       amountDueCents: r.principalCents,
       paidCents,
-      verifications: verifs.map((v) => ({ verifierId: v.verifierId, decision: v.decision, note: v.note })),
+      // A rejection note is the borrower's reason: other viewers (bar the verifier who wrote it) do not get the text.
+      verifications: verifs.map((v) => ({
+        verifierId: v.verifierId, decision: v.decision,
+        note: v.decision === 'reject' && viewerId !== r.borrowerId && viewerId !== v.verifierId ? '' : v.note,
+      })),
       verificationOutcome: rules.verificationOutcome(verifs, requiredApprovals),
       contributions: contribs.map((c) => ({ contributorId: c.contributorId, amountCents: c.amountCents, createdAt: c.createdAt })),
       repayments: repays.map((p) => ({ payerId: p.payerId, amountCents: p.amountCents, createdAt: p.createdAt })),
@@ -392,10 +507,6 @@ function toCents(raw) {
   if (!Number.isFinite(n) || n <= 0) return null;
   const cents = Math.round(n * 100);
   return Math.abs(cents - n * 100) < 1e-6 ? cents : null;
-}
-
-function formatCents(c) {
-  return `$${(c / 100).toFixed(2)}`;
 }
 
 function escapeHtml(s) {

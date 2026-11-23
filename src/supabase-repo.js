@@ -49,7 +49,7 @@ const VERIFICATION = mapper({ requestId: 'request_id', verifierId: 'verifier_id'
 const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt'];
 const INVITE_PATCH = ['acceptedAt', 'acceptedUserId', 'revokedAt', 'supersededAt'];
 const REQUEST_PATCH = ['status', 'decidedAt', 'fundedAt', 'repaidAt', 'fundedCents', 'rejectionReason', 'repaymentDate',
-  'originalRepaymentDate', 'withdrawnAt', 'contactDecidedAt', 'category', 'purpose'];
+  'originalRepaymentDate', 'withdrawnAt', 'contactDecidedAt', 'category', 'purpose', 'trustedContactId'];
 const ENTRY_PATCH = ['status', 'utr', 'amountCents', 'confirmedAt', 'updatedAt', 'settledBy', 'settledNote', 'settledAt', 'helpRequestedAt'];
 
 // Escape LIKE wildcards so user text is matched literally.
