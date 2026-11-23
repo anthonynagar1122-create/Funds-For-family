@@ -787,7 +787,6 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       borrowerId: r.borrowerId,
       trustedContactId: r.trustedContactId,
       category: r.category ?? null,
-      nomineeId: r.trustedContactId, // alias: the current front end and its tests still read nomineeId
       purpose: r.purpose,
       principalCents: r.principalCents,
       fundedCents: r.fundedCents ?? null,
@@ -830,7 +829,6 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       payTo,
       remainingCents: r.status === 'open' ? Math.max(0, r.principalCents - raisedCents - pendingCents) : 0,
       daysOverdue: rules.daysOverdue(r.repaymentDate, asOf),
-      amountDueCents: r.principalCents,
       paidCents,
       // A rejection note is the borrower's reason: other viewers (bar the verifier who wrote it) do not get the text.
       verifications: verifs.map((v) => ({

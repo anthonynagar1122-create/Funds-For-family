@@ -32,7 +32,7 @@ test.before(async () => {
 });
 test.after(async () => { if (browser) await browser.close(); if (server) server.close(); });
 
-const EMPTY = { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { nominee: [], verifier: [] } };
+const EMPTY = { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { trustedContact: [], verifier: [] } };
 const ROW = { requestId: 5, purpose: 'School fees for the second term', status: 'open', principalCents: 50000, repaymentDate: '2027-03-01', myRole: 'lender', myAmountCents: 10000 };
 
 async function openActivity(activity) {

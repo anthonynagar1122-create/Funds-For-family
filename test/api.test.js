@@ -37,6 +37,9 @@ test('a member creates a request; it starts awaiting the trusted contact', async
     assert.equal(created.body.request.fundedCents, null);
     const got = await call('ann', 'GET', `/requests/${created.body.request.id}`);
     assert.equal(got.body.request.category, 'education');
+    assert.equal(got.body.request.nomineeId, undefined, 'the nominee alias is gone');
+    assert.equal(got.body.request.amountDueCents, undefined, 'amountDueCents is gone');
+    assert.equal(created.body.request.nomineeId, undefined);
     assert.equal(sent.at(-1).to, 'ben@example.com');
     assert.equal(sent.at(-1).subject, 'ann named you as their trusted contact');
     assert.match(sent.at(-1).html, /₹500\.00/);
