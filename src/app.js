@@ -432,14 +432,18 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return { c, r };
   }
 
+  // Never lets an email problem fail a change that is already saved.
   async function mailLender(lenderId, subject, html) {
-    const lender = await repo.getUser(lenderId);
-    if (lender?.email) await safeMail({ to: lender.email, subject, html });
+    try {
+      const lender = await repo.getUser(lenderId);
+      if (lender?.email) await safeMail({ to: lender.email, subject, html });
+    } catch (err) { logger.error('mail failed', err?.message); }
   }
 
   // Tell every lender with a "sent" entry that it is not counted (request withdrawn or closed).
   async function mailSentLenders(r, verb) {
-    const sentRows = (await repo.listContributions(r.id)).filter((c) => c.status === 'sent');
+    let sentRows = [];
+    try { sentRows = (await repo.listContributions(r.id)).filter((c) => c.status === 'sent'); } catch (err) { logger.error('mail failed', err?.message); }
     for (const c of sentRows) {
       await mailLender(c.contributorId, `A request you sent money to was ${verb}`,
         `<p>The request you sent ${formatInr(c.amountCents)} to was ${verb}. Your ${formatInr(c.amountCents)} marked as sent is not counted.</p>`
@@ -448,13 +452,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   }
 
   api.post('/requests/:id/contributions', async (req, res) => {
-    const id = Number(req.params.id);
-    const r = Number.isInteger(id) ? await repo.getRequest(id) : null;
-    if (!r) return fail(res, 404, 'Request not found');
-    const conn = await repo.connections(req.user.id);
-    const mutual = rules.isMutual(conn, r.borrowerId);
-    // Hide requests nobody outside the circle may see. An open request answers a non-mutual lender with 409.
-    if (r.status !== 'open' && !(await visibleRequest(req, res))) return;
+    const r = await visibleRequest(req, res);
+    if (!r) return;
+    const mutual = rules.isMutual(await repo.connections(req.user.id), r.borrowerId);
     const parsed = parseRupees(req.body?.amount);
     if (parsed.error) return fail(res, 400, parsed.error, 'amount');
     const u = readUtr(req.body);
@@ -469,7 +469,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       requestId: r.id, contributorId: req.user.id, amountCents: parsed.paise, utr: u.utr,
       status: 'sent', createdAt: now().toISOString(),
     });
-    const borrower = await repo.getUser(r.borrowerId);
+    const borrower = await repo.getUser(r.borrowerId).catch(() => null);
     if (borrower?.email) {
       await safeMail({
         to: borrower.email,
@@ -620,7 +620,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       ...summarise(r, asOf, viewerId),
       raisedCents,
       pendingCents,
-      remainingCents: Math.max(0, r.principalCents - raisedCents - pendingCents),
+      remainingCents: r.status === 'open' ? Math.max(0, r.principalCents - raisedCents - pendingCents) : 0,
       daysOverdue: rules.daysOverdue(r.repaymentDate, asOf),
       amountDueCents: r.principalCents,
       paidCents,

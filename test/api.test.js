@@ -100,7 +100,8 @@ test('lending: borrower and non-mutual members cannot lend, sent entries are cap
     const id = await openThousand(ctx);
     assert.equal((await sendMoney(ctx, 'ann', id, 10)).status, 409, 'borrower cannot fund own request');
     const stranger = await sendMoney(ctx, 'zed', id, 100);
-    assert.equal(stranger.status, 409, 'non-mutual member cannot lend');
+    assert.equal(stranger.status, 404, 'a member who cannot see the request gets 404');
+    assert.equal((await sendMoney(ctx, 'vee', id, 100)).status, 404, 'a non-mutual verifier cannot lend on an open request');
     assert.equal((await sendMoney(ctx, 'bea', id, 1100)).status, 409, 'cannot exceed the principal');
 
     const a = await sendMoney(ctx, 'bea', id, 600, { utr: 'ABC123456' });
@@ -527,5 +528,19 @@ test('GET /requests/:id is 404 for a stranger and 200 for the people involved', 
     assert.equal((await ctx.call('vee', 'GET', `/requests/${id}`)).status, 200, 'verifier while pending');
     await connect(ctx.call, 'ann', 'zed');
     assert.equal((await ctx.call('zed', 'GET', `/requests/${id}`)).status, 404, 'a mutual cannot see it before it is open');
+  } finally { await ctx.close(); }
+});
+
+test('a failing mailer never fails a saved confirmation', async () => {
+  const ctx = await setup();
+  try {
+    const id = await openThousand(ctx);
+    const c1 = (await sendMoney(ctx, 'bea', id, 300)).body.contribution.id;
+    const realGetUser = ctx.repo.getUser;
+    ctx.repo.getUser = async () => { throw new Error('db down'); };
+    const r = await ctx.call('ann', 'POST', `/contributions/${c1}/confirm`);
+    ctx.repo.getUser = realGetUser;
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.contribution.status, 'confirmed');
   } finally { await ctx.close(); }
 });
