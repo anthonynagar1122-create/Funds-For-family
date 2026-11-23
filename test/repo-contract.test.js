@@ -96,6 +96,9 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.equal((await repo.getRequest(r.id)).rejectionReason, 'A clear reason here');
     assert.equal((await repo.listRequestsByBorrowers([b.id])).length, 1);
     assert.deepEqual(await repo.listRequestsByBorrowers([]), []);
+    assert.equal((await repo.listRequestsByBorrowers([b.id], { statuses: ['open'] })).length, 0);
+    assert.equal((await repo.listRequestsByBorrowers([b.id], { statuses: ['rejected', 'open'] })).length, 1);
+    assert.deepEqual(await repo.listRequestsByBorrowers([b.id], { statuses: [] }), []);
   });
 
   test('contract: listRequestsByStatus returns only requests in that status', async () => {
@@ -136,13 +139,14 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.equal((await repo.listRequestsForMember(other.id)).length, 0);
   });
 
-  test('contract: searchUsers matches name or email, excludes the searcher, and treats punctuation literally', async () => {
+  test('contract: searchUsers matches name only (not email), excludes the searcher, and treats punctuation literally', async () => {
     const repo = await makeRepo();
     const tag = uniq();
     const me = await repo.createUser({ clerkId: `${prefix}${tag}me`, name: `Zed ${tag}`, email: `${tag}me@c.test` });
     const other = await repo.createUser({ clerkId: `${prefix}${tag}ot`, name: `Zed ${tag} Other`, email: `${tag}ot@c.test` });
     const hits = await repo.searchUsers(`zed ${tag}`, me.id);
     assert.deepEqual(hits.map((u) => u.id), [other.id]);
+    assert.deepEqual(await repo.searchUsers(`${tag}ot@c`, me.id), [], 'email is not searchable');
     assert.deepEqual(await repo.searchUsers('a,name.eq.x),or(id.gt.0', me.id), []);
   });
 }

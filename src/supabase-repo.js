@@ -116,16 +116,11 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
       return list(check(await db.from('users').select().in('id', ids)), USER);
     },
     async setVerifier(id, isVerifier) { check(await db.from('users').update({ is_verifier: !!isVerifier }).eq('id', id)); },
-    // Two parameterised queries merged in code: user text never goes into a filter string.
+    // Name only (email is private). Parameterised: user text never goes into a filter string.
     async searchUsers(q, excludeId) {
       const pattern = `%${likeEscape(q)}%`;
-      const [byName, byEmail] = await Promise.all([
-        db.from('users').select().ilike('name', pattern).neq('id', excludeId).limit(20),
-        db.from('users').select().ilike('email', pattern).neq('id', excludeId).limit(20),
-      ]);
-      const seen = new Map();
-      for (const u of [...list(check(byName), USER), ...list(check(byEmail), USER)]) if (!seen.has(u.id)) seen.set(u.id, u);
-      return [...seen.values()].slice(0, 20);
+      const byName = await db.from('users').select().ilike('name', pattern).neq('id', excludeId).limit(20);
+      return list(check(byName), USER).slice(0, 20);
     },
 
     // ---- follows ----
@@ -182,9 +177,11 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
       if (Object.keys(row).length === 0) return maybe(db.from('requests').select().eq('id', id), REQUEST);
       return maybe(db.from('requests').update(row).eq('id', id).select(), REQUEST);
     },
-    async listRequestsByBorrowers(ids) {
-      if (ids.length === 0) return [];
-      return list(check(await db.from('requests').select().in('borrower_id', ids).order('id', { ascending: false }).limit(100)), REQUEST);
+    async listRequestsByBorrowers(ids, { statuses } = {}) {
+      if (ids.length === 0 || (statuses && statuses.length === 0)) return [];
+      let q = db.from('requests').select().in('borrower_id', ids);
+      if (statuses) q = q.in('status', statuses);
+      return list(check(await q.order('id', { ascending: false }).limit(100)), REQUEST);
     },
     async listRequestsByStatus(status) {
       return list(check(await db.from('requests').select().eq('status', status).order('id', { ascending: false })), REQUEST);

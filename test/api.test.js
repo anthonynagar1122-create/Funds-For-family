@@ -883,3 +883,41 @@ test('home: repick_contact when the contact declined; a stranger has an empty ho
     assert.deepEqual((await call('zed', 'GET', '/home')).body, { needsYou: [], myRequests: [], myLending: [] });
   } finally { await close(); }
 });
+
+test('users: search does not match on email', async () => {
+  const { call, close } = await setup();
+  try {
+    await idOf(call, 'ann');
+    await idOf(call, 'ben');
+    for (const q of ['ben@example.com', 'ben@exam', '@example.com']) {
+      const r = await call('ann', 'GET', `/users?q=${encodeURIComponent(q)}`);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.users, [], q);
+    }
+  } finally { await close(); }
+});
+
+test('payTo: mutual non-lender loses the borrower UPI once funded; verifier on pending gets none', async () => {
+  const { repo, call, close } = await setup();
+  try {
+    await connect(call, 'ann', 'ben');
+    await connect(call, 'ann', 'cal');
+    await connect(call, 'ann', 'nat');
+    await repo.updateUser(await idOf(call, 'ann'), { upiId: 'ann@okbank' });
+    const vee = await idOf(call, 'vee');
+    await repo.setVerifier(vee, true);
+    await repo.setVerifier(await idOf(call, 'wes'), true);
+    const id = await startRequest(call, 'ann', 'nat');
+    const pending = await call('vee', 'GET', `/requests/${id}`);
+    assert.equal(pending.status, 200);
+    assert.deepEqual(pending.body.request.payTo, []);
+    await call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    await call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    assert.equal((await call('cal', 'GET', `/requests/${id}`)).body.request.payTo.length, 1);
+    await lend(call, 'ben', 'ann', id, 500);
+    const funded = await call('cal', 'GET', `/requests/${id}`);
+    assert.equal(funded.body.request.status, 'funded');
+    assert.deepEqual(funded.body.request.payTo, []);
+    assert.equal((await call('ben', 'GET', `/requests/${id}`)).body.request.payTo.length, 1, 'lender still sees it');
+  } finally { await close(); }
+});

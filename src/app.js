@@ -238,8 +238,11 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   api.get('/feed', async (req, res) => {
     const conn = await repo.connections(req.user.id);
     const mutualIds = conn.following.filter((id) => rules.isMutual(conn, id));
-    const rows = (await repo.listRequestsByBorrowers([...new Set([...mutualIds, req.user.id])]))
-      .filter((r) => r.borrowerId === req.user.id || ['open', 'funded', 'repaid'].includes(r.status));
+    const [own, theirs] = await Promise.all([
+      repo.listRequestsByBorrowers([req.user.id]),
+      repo.listRequestsByBorrowers(mutualIds, { statuses: ['open', 'funded', 'repaid'] }),
+    ]);
+    const rows = [...own, ...theirs].sort((a, b) => b.id - a.id);
     const items = await Promise.all(rows.map(async (r) => {
       const totals = rules.fundingTotals(await repo.listContributions(r.id));
       return { ...summarise(r, now(), req.user.id), totals, raisedCents: totals.confirmedCents };

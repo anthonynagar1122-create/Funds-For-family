@@ -69,7 +69,7 @@ function createMemoryRepo() {
     async setVerifier(id, isVerifier) { users.get(id).isVerifier = !!isVerifier; },
     async searchUsers(q, excludeId) {
       const s = q.toLowerCase();
-      return [...users.values()].filter((u) => u.id !== excludeId && (u.name.toLowerCase().includes(s) || u.email.toLowerCase().includes(s))).slice(0, 20).map(copy);
+      return [...users.values()].filter((u) => u.id !== excludeId && u.name.toLowerCase().includes(s)).slice(0, 20).map(copy);
     },
 
     // ---- follows ----
@@ -126,8 +126,8 @@ function createMemoryRepo() {
       Object.assign(r, patchOnly(patch, REQUEST_PATCH));
       return copy(r);
     },
-    async listRequestsByBorrowers(ids) {
-      return [...requests.values()].filter((r) => ids.includes(r.borrowerId)).sort((a, b) => b.id - a.id).slice(0, 100).map(copy);
+    async listRequestsByBorrowers(ids, { statuses } = {}) {
+      return [...requests.values()].filter((r) => ids.includes(r.borrowerId) && (!statuses || statuses.includes(r.status))).sort((a, b) => b.id - a.id).slice(0, 100).map(copy);
     },
     async listRequestsByStatus(status) {
       return [...requests.values()].filter((r) => r.status === status).sort((a, b) => b.id - a.id).map(copy);
