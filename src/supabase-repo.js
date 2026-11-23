@@ -186,6 +186,9 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
       if (ids.length === 0) return [];
       return list(check(await db.from('requests').select().in('borrower_id', ids).order('id', { ascending: false }).limit(100)), REQUEST);
     },
+    async listRequestsByStatus(status) {
+      return list(check(await db.from('requests').select().eq('status', status).order('id', { ascending: false })), REQUEST);
+    },
     async listRequestsForMember(userId) {
       const [asBorrower, asContact, asContributor, asPayer, asLender, asVerifier] = await Promise.all([
         db.from('requests').select('id').eq('borrower_id', userId),

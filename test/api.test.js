@@ -415,7 +415,7 @@ test('feed shows connected members requests only once approved', async () => {
     const wes = (await call('wes', 'GET', '/me')).body.user;
     await repo.setVerifier(vee.id, true);
     await repo.setVerifier(wes.id, true);
-    assert.equal((await call('ben', 'POST', '/follows', { userId: ann.id })).status, 201);
+    await connect(call, 'ann', 'ben');
     const id = await startRequest(call, 'ann', 'nat');
 
     let feed = await call('ben', 'GET', '/feed');
@@ -684,4 +684,202 @@ test('a failing mailer never fails a saved confirmation', async () => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.contribution.status, 'confirmed');
   } finally { await ctx.close(); }
+});
+
+// ---------- Task 9: feed, profile, home ----------
+
+async function openRequestFor(call, repo, borrower, contact) {
+  const vee = await idOf(call, 'vee');
+  const wes = await idOf(call, 'wes');
+  await repo.setVerifier(vee, true);
+  await repo.setVerifier(wes, true);
+  const id = await startRequest(call, borrower, contact);
+  await call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+  await call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+  return id;
+}
+
+test('feed: a one-way follow does not show the request; mutual does; own requests show in any status', async () => {
+  const { repo, call, close } = await setup();
+  try {
+    const ann = await idOf(call, 'ann');
+    await idOf(call, 'ben');
+    await call('ben', 'POST', '/follows', { userId: ann });
+    await connect(call, 'ann', 'nat');
+    const id = await openRequestFor(call, repo, 'ann', 'nat');
+    assert.equal((await call('ben', 'GET', '/feed')).body.requests.length, 0, 'follower only');
+    await call('ann', 'POST', '/follows', { userId: await idOf(call, 'ben') });
+    const feed = await call('ben', 'GET', '/feed');
+    assert.deepEqual(feed.body.requests.map((r) => r.id), [id]);
+    assert.deepEqual(feed.body.requests[0].totals, { confirmedCents: 0, pendingCents: 0 });
+    // The borrower sees their own request in any status; the contact (mutual) sees it once open.
+    assert.equal((await call('ann', 'GET', '/feed')).body.requests.length, 1);
+  } finally { await close(); }
+});
+
+test('feed: a borrower sees their own pending request', async () => {
+  const { call, close } = await setup();
+  try {
+    await startRequest(call, 'ann', 'nat');
+    const feed = await call('ann', 'GET', '/feed');
+    assert.equal(feed.body.requests.length, 1);
+    assert.equal(feed.body.requests[0].status, 'pending_verification');
+    assert.equal((await call('nat', 'GET', '/feed')).body.requests.length, 0);
+  } finally { await close(); }
+});
+
+test('payTo: a mutual viewer sees the borrower UPI on an open request; a stranger gets 404', async () => {
+  const { repo, call, close } = await setup();
+  try {
+    await connect(call, 'ann', 'ben');
+    await connect(call, 'ann', 'nat');
+    await idOf(call, 'zed');
+    const annId = await idOf(call, 'ann');
+    await repo.updateUser(annId, { upiId: 'ann@okbank' });
+    const id = await openRequestFor(call, repo, 'ann', 'nat');
+    const ben = await call('ben', 'GET', `/requests/${id}`);
+    assert.equal(ben.status, 200);
+    assert.deepEqual(ben.body.request.payTo, [{ userId: annId, name: 'ann', upiId: 'ann@okbank' }]);
+    assert.equal((await call('zed', 'GET', `/requests/${id}`)).status, 404);
+  } finally { await close(); }
+});
+
+test('detail: totals and per-lender positions; lender UPI goes to borrower and contact only', async () => {
+  const { repo, call, close } = await setup();
+  try {
+    await connect(call, 'ann', 'ben');
+    await connect(call, 'ann', 'nat');
+    await connect(call, 'ann', 'cal');
+    await connect(call, 'ben', 'cal');
+    const [annId, benId] = [await idOf(call, 'ann'), await idOf(call, 'ben')];
+    await repo.updateUser(benId, { upiId: 'ben@okbank' });
+    const id = await openRequestFor(call, repo, 'ann', 'nat');
+    await lend(call, 'ben', 'ann', id, 200);
+    await call('cal', 'POST', `/requests/${id}/contributions`, { amount: 100 });
+    const ann = (await call('ann', 'GET', `/requests/${id}`)).body.request;
+    assert.deepEqual(ann.totals, { confirmedCents: 20000, pendingCents: 10000 });
+    assert.deepEqual(ann.lenders, [{ userId: benId, lentCents: 20000, repaidCents: 0, pendingRepayCents: 0, owedCents: 20000 }]);
+    assert.ok(ann.payTo.some((p) => p.userId === benId && p.upiId === 'ben@okbank'));
+    assert.ok(!ann.payTo.some((p) => p.userId === annId), 'not your own');
+    const nat = (await call('nat', 'GET', `/requests/${id}`)).body.request;
+    assert.ok(nat.payTo.some((p) => p.userId === benId));
+    const cal = (await call('cal', 'GET', `/requests/${id}`)).body.request;
+    assert.ok(!cal.payTo.some((p) => p.userId === benId), 'another lender does not see a lender UPI');
+  } finally { await close(); }
+});
+
+test('users: another member has no email, upiId or welcome fields; non-member is 404', async () => {
+  const { repo, call, close } = await setup();
+  try {
+    await idOf(call, 'ann');
+    const ben = await idOf(call, 'ben');
+    await repo.updateUser(ben, { upiId: 'ben@okbank' });
+    const r = await call('ann', 'GET', `/users/${ben}`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(Object.keys(r.body.user).sort(), ['avatarUrl', 'id', 'isVerifier', 'name']);
+    const search = await call('ann', 'GET', '/users?q=ben');
+    assert.ok(search.body.users.length > 0);
+    assert.doesNotMatch(JSON.stringify(search.body), /upiId|email|okbank/);
+    assert.equal((await call('ann', 'GET', '/users/99999')).status, 404);
+    const mine = (await call('ben', 'GET', '/me')).body.user;
+    assert.equal(mine.upiId, 'ben@okbank');
+    assert.equal(mine.email, 'ben@example.com');
+    assert.ok('welcomedAt' in mine && 'termsAcceptedAt' in mine);
+  } finally { await close(); }
+});
+
+test('users: an empty query lists mutual connections only', async () => {
+  const { call, close } = await setup();
+  try {
+    await connect(call, 'ann', 'ben');
+    await call('ann', 'POST', '/follows', { userId: await idOf(call, 'cal') });
+    await call('dee', 'POST', '/follows', { userId: await idOf(call, 'ann') });
+    const r = await call('ann', 'GET', '/users?q=');
+    assert.deepEqual(r.body.users.map((u) => u.name), ['ben']);
+  } finally { await close(); }
+});
+
+test('PATCH /me validates name and UPI, clears an empty UPI, and stamps terms and welcome', async () => {
+  const { call, close } = await setup();
+  try {
+    await idOf(call, 'ann');
+    const bad = await call('ann', 'PATCH', '/me', { upiId: 'bad' });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.field, 'upiId');
+    for (const name of ['', '   ', 'x'.repeat(121)]) {
+      const r = await call('ann', 'PATCH', '/me', { name });
+      assert.equal(r.status, 400);
+      assert.equal(r.body.field, 'name');
+    }
+    const ok = await call('ann', 'PATCH', '/me', { name: '  Ann B  ', upiId: 'ann.b@okbank' });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.user.name, 'Ann B');
+    assert.equal(ok.body.user.upiId, 'ann.b@okbank');
+    const cleared = await call('ann', 'PATCH', '/me', { upiId: '' });
+    assert.equal(cleared.body.user.upiId, null);
+    const terms = await call('ann', 'POST', '/me/accept-terms');
+    assert.equal(terms.status, 200);
+    assert.ok(terms.body.user.termsAcceptedAt);
+    const welcomed = await call('ann', 'POST', '/me/welcomed');
+    assert.ok(welcomed.body.user.welcomedAt);
+  } finally { await close(); }
+});
+
+test('home: confirm_contribution, fix_*, confirm_repayment, contact_decision, verify and repick_contact', async () => {
+  const { repo, call, close } = await setup();
+  try {
+    const [vee, wes] = [await idOf(call, 'vee'), await idOf(call, 'wes')];
+    await repo.setVerifier(vee, true);
+    await repo.setVerifier(wes, true);
+    await connect(call, 'ann', 'nat');
+    await connect(call, 'ann', 'ben');
+    const [annId, natId] = [await idOf(call, 'ann'), await idOf(call, 'nat')];
+    const created = await call('ann', 'POST', '/requests', requestBody(natId));
+    const id = created.body.request.id;
+    let nat = await call('nat', 'GET', '/home');
+    assert.ok(nat.body.needsYou.some((n) => n.kind === 'contact_decision' && n.requestId === id));
+    await call('nat', 'POST', `/requests/${id}/contact-decision`, { decision: 'accept' });
+    const v = await call('vee', 'GET', '/home');
+    assert.ok(v.body.needsYou.some((n) => n.kind === 'verify' && n.requestId === id));
+    assert.ok(!(await call('ann', 'GET', '/home')).body.needsYou.some((n) => n.kind === 'verify'));
+    await call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    assert.ok(!(await call('vee', 'GET', '/home')).body.needsYou.some((n) => n.kind === 'verify'), 'already decided');
+    await call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+
+    const sent = await call('ben', 'POST', `/requests/${id}/contributions`, { amount: 300 });
+    const entryId = sent.body.contribution.id;
+    const ann = (await call('ann', 'GET', '/home')).body;
+    const item = ann.needsYou.find((n) => n.kind === 'confirm_contribution');
+    assert.equal(item.entryId, entryId);
+    assert.equal(item.requestId, id);
+    assert.equal(item.amountCents, 30000);
+    assert.equal(item.fromUserId, await idOf(call, 'ben'));
+    assert.equal(ann.myRequests.length, 1);
+    assert.equal((await call('ben', 'GET', '/home')).body.myLending.length, 1);
+
+    await call('ann', 'POST', `/contributions/${entryId}/not-received`);
+    assert.ok((await call('ben', 'GET', '/home')).body.needsYou.some((n) => n.kind === 'fix_contribution' && n.entryId === entryId));
+    await call('ben', 'PATCH', `/contributions/${entryId}`, { amount: 300 });
+    await call('ann', 'POST', `/contributions/${entryId}/confirm`);
+    await call('ann', 'POST', `/requests/${id}/close`);
+    const rep = await call('nat', 'POST', `/requests/${id}/repayments`, { lenderId: await idOf(call, 'ben'), amount: 100 });
+    const ben = (await call('ben', 'GET', '/home')).body;
+    assert.ok(ben.needsYou.some((n) => n.kind === 'confirm_repayment' && n.entryId === rep.body.repayment.id && n.fromUserId === natId));
+    await call('ben', 'POST', `/repayments/${rep.body.repayment.id}/not-received`);
+    assert.ok((await call('nat', 'GET', '/home')).body.needsYou.some((n) => n.kind === 'fix_repayment' && n.entryId === rep.body.repayment.id));
+    assert.ok(annId);
+  } finally { await close(); }
+});
+
+test('home: repick_contact when the contact declined; a stranger has an empty home', async () => {
+  const { call, close } = await setup();
+  try {
+    await connect(call, 'ann', 'nat');
+    const created = await call('ann', 'POST', '/requests', requestBody(await idOf(call, 'nat')));
+    await call('nat', 'POST', `/requests/${created.body.request.id}/contact-decision`, { decision: 'decline' });
+    const ann = (await call('ann', 'GET', '/home')).body;
+    assert.ok(ann.needsYou.some((n) => n.kind === 'repick_contact' && n.requestId === created.body.request.id));
+    await idOf(call, 'zed');
+    assert.deepEqual((await call('zed', 'GET', '/home')).body, { needsYou: [], myRequests: [], myLending: [] });
+  } finally { await close(); }
 });

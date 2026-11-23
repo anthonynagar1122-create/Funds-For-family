@@ -7,7 +7,7 @@ const { lend } = require('./helpers/lifecycle');
 // Fixed clock so date rules are deterministic.
 
 
-const EMPTY = { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { nominee: [], verifier: [] } };
+const EMPTY = { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { trustedContact: [], verifier: [] } };
 
 // Ann borrows. Nat, Lee, Vee and Wes are connected to Ann (follow her), so the ledger can see her requests.
 // Vee and Wes are verifiers. Sam has no connections.
@@ -109,6 +109,9 @@ test('repayments made and received are split by who recorded them', async () => 
     await lend(ctx.call, 'lee', 'ann', id, 500);
     const paid = await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { lenderId: ids.lee, amount: 100 });
     assert.equal(paid.status, 201, JSON.stringify(paid.body));
+    const nat0 = await ctx.call('nat', 'GET', '/activity');
+    assert.deepEqual(nat0.body.repayments.made, [], 'unconfirmed repayments are not counted');
+    await ctx.call('lee', 'POST', `/repayments/${paid.body.repayment.id}/confirm`);
 
     const nat = await ctx.call('nat', 'GET', '/activity');
     assert.equal(nat.body.repayments.made.length, 1);
@@ -123,17 +126,17 @@ test('repayments made and received are split by who recorded them', async () => 
   } finally { await ctx.close(); }
 });
 
-test('a nominee sees the request under roles.nominee', async () => {
+test('a trusted contact sees the request under roles.trustedContact', async () => {
   const ctx = await setup();
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
     const nat = await ctx.call('nat', 'GET', '/activity');
-    assert.equal(nat.body.roles.nominee.length, 1);
-    assert.equal(nat.body.roles.nominee[0].requestId, id);
-    assert.equal(nat.body.roles.nominee[0].myRole, 'nominee');
+    assert.equal(nat.body.roles.trustedContact.length, 1);
+    assert.equal(nat.body.roles.trustedContact[0].requestId, id);
+    assert.equal(nat.body.roles.trustedContact[0].myRole, 'trustedContact');
     const ann = await ctx.call('ann', 'GET', '/activity');
-    assert.deepEqual(ann.body.roles.nominee, []);
+    assert.deepEqual(ann.body.roles.trustedContact, []);
   } finally { await ctx.close(); }
 });
 
@@ -197,4 +200,15 @@ test('a lender sees a loan from a borrower outside their network', async () => {
     assert.equal(r.body.lending[0].requestId, id);
     assert.equal(r.body.lending[0].myAmountCents, 10000);
   } finally { await s.close(); }
+});
+
+test('ledger counts confirmed amounts only', async () => {
+  const ctx = await setup();
+  try {
+    const ids = await community(ctx);
+    const id = await openRequest(ctx, ids.nat);
+    await lend(ctx.call, 'lee', 'ann', id, 100, { confirm: false });
+    const r = await ctx.call('lee', 'GET', '/activity');
+    assert.deepEqual(r.body.lending, [], 'a sent but unconfirmed contribution is not lending yet');
+  } finally { await ctx.close(); }
 });

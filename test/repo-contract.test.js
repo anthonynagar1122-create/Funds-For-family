@@ -98,6 +98,16 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.deepEqual(await repo.listRequestsByBorrowers([]), []);
   });
 
+  test('contract: listRequestsByStatus returns only requests in that status', async () => {
+    const repo = await makeRepo();
+    const [b, c] = [await mk(repo, 'b'), await mk(repo, 'c')];
+    const open = await repo.createRequest(req(b, c, { status: 'open' }));
+    await repo.createRequest(req(b, c, { status: 'rejected' }));
+    const ids = (await repo.listRequestsByStatus('open')).map((x) => x.id);
+    assert.ok(ids.includes(open.id));
+    assert.ok((await repo.listRequestsByStatus('open')).every((x) => x.status === 'open'));
+  });
+
   test('contract: countActiveByBorrower counts open but not rejected', async () => {
     const repo = await makeRepo();
     const [b, c] = [await mk(repo, 'b'), await mk(repo, 'c')];

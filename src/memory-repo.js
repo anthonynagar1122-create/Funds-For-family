@@ -129,6 +129,9 @@ function createMemoryRepo() {
     async listRequestsByBorrowers(ids) {
       return [...requests.values()].filter((r) => ids.includes(r.borrowerId)).sort((a, b) => b.id - a.id).slice(0, 100).map(copy);
     },
+    async listRequestsByStatus(status) {
+      return [...requests.values()].filter((r) => r.status === status).sort((a, b) => b.id - a.id).map(copy);
+    },
     // Every request a member is part of: borrower, trusted contact, contributor, repayment payer or lender, or verifier.
     async listRequestsForMember(userId) {
       const ids = new Set();

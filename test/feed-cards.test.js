@@ -15,7 +15,7 @@ test('feed cards carry the amount raised so far', async () => {
     await s.repo.setVerifier(vee.id, true);
     await s.repo.setVerifier(wes.id, true);
     await s.call('ben', 'GET', '/me');
-    await s.call('ben', 'POST', '/follows', { userId: ann.id });
+    await connect(s.call, 'ann', 'ben');
     const id = await startRequest(s.call, 'ann', 'nat');
     await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });

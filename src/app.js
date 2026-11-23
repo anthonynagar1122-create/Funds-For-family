@@ -4,6 +4,8 @@ const rules = require('./rules');
 const invites = require('./invites');
 const { formatInr, parseRupees } = require('../public/app/money');
 
+const UPI_PATTERN = /^[A-Za-z0-9._-]{2,256}@[A-Za-z]{2,64}$/;
+
 const INVITE_ONLY = {
   error: 'Funds For Family is invite only. Ask someone who uses it to send you an invite.',
   code: 'invite_only',
@@ -118,14 +120,42 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
 
   api.get('/me', (req, res) => res.json({ user: publicUser(req.user, req.user.id) }));
 
-  // Empty query returns your connections (used for the nominee picker). Two or more characters searches all members.
+  api.patch('/me', async (req, res) => {
+    const patch = {};
+    if (req.body?.name !== undefined) {
+      const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+      if (name.length < 1 || name.length > 120) return fail(res, 400, 'Your name must be 1 to 120 characters', 'name');
+      patch.name = name;
+    }
+    if (req.body?.upiId !== undefined) {
+      const upi = typeof req.body.upiId === 'string' ? req.body.upiId.trim() : null;
+      if (upi === null || (upi !== '' && !UPI_PATTERN.test(upi))) {
+        return fail(res, 400, 'Enter a valid UPI ID, like name@bank', 'upiId');
+      }
+      patch.upiId = upi === '' ? null : upi;
+    }
+    const updated = Object.keys(patch).length ? await repo.updateUser(req.user.id, patch) : req.user;
+    res.json({ user: publicUser(updated, req.user.id) });
+  });
+
+  api.post('/me/accept-terms', async (req, res) => {
+    const updated = await repo.updateUser(req.user.id, { termsAcceptedAt: now().toISOString() });
+    res.json({ user: publicUser(updated, req.user.id) });
+  });
+
+  api.post('/me/welcomed', async (req, res) => {
+    const updated = await repo.updateUser(req.user.id, { welcomedAt: now().toISOString() });
+    res.json({ user: publicUser(updated, req.user.id) });
+  });
+
+  // Empty query returns your mutual connections (used for the trusted-contact picker). Two or more characters searches all members.
   api.get('/users', async (req, res) => {
     const q = String(req.query.q ?? '').trim();
     if (q.length === 0) {
-      const { following, followers } = await repo.connections(req.user.id);
-      const ids = [...new Set([...following, ...followers])];
-      const users = await Promise.all(ids.map((id) => repo.getUser(id)));
-      return res.json({ users: users.filter(Boolean).map((u) => publicUser(u, req.user.id)) });
+      const conn = await repo.connections(req.user.id);
+      const ids = conn.following.filter((id) => rules.isMutual(conn, id));
+      const users = await repo.getUsers(ids);
+      return res.json({ users: users.map((u) => publicUser(u, req.user.id)) });
     }
     if (q.length < 2) return res.json({ users: [] });
     const users = await repo.searchUsers(q, req.user.id);
@@ -204,16 +234,65 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ ok: true });
   });
 
+  // Your own requests (any status) plus those of mutual connections once open, funded or repaid.
   api.get('/feed', async (req, res) => {
-    const { following, followers } = await repo.connections(req.user.id);
-    const ids = [...new Set([...following, ...followers, req.user.id])];
-    // Interim filter; Task 9 rewrites the feed.
-    const rows = (await repo.listRequestsByBorrowers(ids)).filter((r) => ['open', 'funded', 'repaid'].includes(r.status));
-    const withRaised = await Promise.all(rows.map(async (r) => {
-      const { confirmedCents: raisedCents } = rules.fundingTotals(await repo.listContributions(r.id));
-      return { ...summarise(r, now(), req.user.id), raisedCents };
+    const conn = await repo.connections(req.user.id);
+    const mutualIds = conn.following.filter((id) => rules.isMutual(conn, id));
+    const rows = (await repo.listRequestsByBorrowers([...new Set([...mutualIds, req.user.id])]))
+      .filter((r) => r.borrowerId === req.user.id || ['open', 'funded', 'repaid'].includes(r.status));
+    const items = await Promise.all(rows.map(async (r) => {
+      const totals = rules.fundingTotals(await repo.listContributions(r.id));
+      return { ...summarise(r, now(), req.user.id), totals, raisedCents: totals.confirmedCents };
     }));
-    res.json({ requests: withRaised });
+    res.json({ requests: items });
+  });
+
+  // What needs the caller's attention, plus their requests and their lending.
+  api.get('/home', async (req, res) => {
+    const me = req.user.id;
+    const asOf = now();
+    const mine = await repo.listRequestsForMember(me);
+    const seen = new Set(mine.map((r) => r.id));
+    const needsYou = [];
+    const myRequests = [];
+    const myLending = [];
+    for (const r of mine) {
+      const [contribs, repays, verifs] = await Promise.all([repo.listContributions(r.id), repo.listRepayments(r.id), repo.listVerifications(r.id)]);
+      const totals = rules.fundingTotals(contribs);
+      const need = (kind, extra = {}) => needsYou.push({ kind, requestId: r.id, ...extra });
+      if (r.borrowerId === me) {
+        myRequests.push({ ...summarise(r, asOf, me), totals, raisedCents: totals.confirmedCents });
+        if (r.status === 'contact_declined') need('repick_contact');
+        if (r.status === 'open') {
+          for (const c of contribs.filter((x) => x.status === 'sent')) {
+            need('confirm_contribution', { entryId: c.id, amountCents: c.amountCents, fromUserId: c.contributorId });
+          }
+        }
+      }
+      if (r.trustedContactId === me && r.status === 'awaiting_contact') need('contact_decision');
+      if (r.status === 'pending_verification' && req.user.isVerifier && r.borrowerId !== me && r.trustedContactId !== me
+        && !verifs.some((v) => v.verifierId === me)) need('verify');
+      for (const c of contribs.filter((x) => x.contributorId === me && x.status === 'not_received')) {
+        need('fix_contribution', { entryId: c.id, amountCents: c.amountCents });
+      }
+      for (const p of repays) {
+        if (p.lenderId === me && p.status === 'sent') need('confirm_repayment', { entryId: p.id, amountCents: p.amountCents, fromUserId: p.payerId });
+        if (p.payerId === me && p.status === 'not_received') need('fix_repayment', { entryId: p.id, amountCents: p.amountCents });
+      }
+      if (contribs.some((c) => c.contributorId === me)) {
+        const owed = rules.owedByLender(contribs.map((c) => ({ ...c, lenderId: c.contributorId })), repays).get(me)
+          ?? { lentCents: 0, repaidCents: 0, pendingRepayCents: 0, owedCents: 0 };
+        myLending.push({ ...summarise(r, asOf, me), totals, myLentCents: owed.lentCents, myRepaidCents: owed.repaidCents, myOwedCents: owed.owedCents });
+      }
+    }
+    // A verifier also sees requests waiting for a decision they have not made.
+    if (req.user.isVerifier) {
+      for (const r of await repo.listRequestsByStatus('pending_verification')) {
+        if (seen.has(r.id) || r.borrowerId === me || r.trustedContactId === me) continue;
+        needsYou.push({ kind: 'verify', requestId: r.id });
+      }
+    }
+    res.json({ needsYou, myRequests, myLending });
   });
 
   // The member's ledger. Built from requests they borrowed plus requests raised by their connections
@@ -238,17 +317,19 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       myRole,
       myAmountCents,
     });
-    const out = { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { nominee: [], verifier: [] } };
+    const out = { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { trustedContact: [], verifier: [] } };
     for (const { r, verifs, contribs, repays } of details) {
-      const myPaid = total(repays.filter((p) => p.payerId === me));
-      const myLent = total(contribs.filter((c) => c.contributorId === me));
+      const confirmedRepays = repays.filter((p) => p.status === 'confirmed');
+      const myPaid = total(confirmedRepays.filter((p) => p.payerId === me));
+      const myLent = total(contribs.filter((c) => c.contributorId === me && c.status === 'confirmed'));
+      const myReceived = total(confirmedRepays.filter((p) => p.lenderId === me));
       if (r.borrowerId === me) out.borrowing.push(row(r, 'borrower', myPaid));
       if (myLent > 0) {
         out.lending.push(row(r, 'lender', myLent));
-        if (repays.length > 0) out.repayments.received.push(row(r, 'lender', total(repays)));
+        if (myReceived > 0) out.repayments.received.push(row(r, 'lender', myReceived));
       }
       if (myPaid > 0) out.repayments.made.push(row(r, 'payer', myPaid));
-      if (r.trustedContactId === me) out.roles.nominee.push(row(r, 'nominee', 0));
+      if (r.trustedContactId === me) out.roles.trustedContact.push(row(r, 'trustedContact', 0));
       if (verifs.some((v) => v.verifierId === me)) out.roles.verifier.push(row(r, 'verifier', 0));
     }
     res.json(out);
@@ -686,8 +767,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   // Email is shown only to its owner. Other members see a name and verifier status.
   function publicUser(u, viewerId) {
     if (!u) return null;
-    const out = { id: u.id, name: u.name, isVerifier: !!u.isVerifier };
-    if (viewerId !== undefined && u.id === viewerId) { out.email = u.email; out.isAdmin = !!u.isAdmin; }
+    const out = { id: u.id, name: u.name, avatarUrl: u.avatarUrl ?? null, isVerifier: !!u.isVerifier };
+    if (viewerId !== undefined && u.id === viewerId) {
+      out.email = u.email;
+      out.upiId = u.upiId ?? null;
+      out.isAdmin = !!u.isAdmin;
+      out.welcomedAt = u.welcomedAt ?? null;
+      out.termsAcceptedAt = u.termsAcceptedAt ?? null;
+    }
     return out;
   }
 
@@ -710,15 +797,34 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return out;
   }
 
+  // UPI IDs the viewer may pay: the borrower's (to lenders, and to mutuals while open) and lenders' (to borrower and contact).
+  async function payTargets(r, viewerId, contribs, owed) {
+    const lenderIds = [...new Set(contribs.map((c) => c.contributorId))];
+    const owners = [r.borrowerId, ...owed.keys()].filter((id, i, all) => id !== viewerId && all.indexOf(id) === i);
+    if (owners.length === 0) return [];
+    const conn = await repo.connections(viewerId);
+    const users = await repo.getUsers(owners);
+    return owners.map((id) => users.find((u) => u.id === id)).filter((u) => u?.upiId && rules.paymentTargetVisible({
+      viewerId, ownerId: u.id, request: r, lenderIds, isMutualWithOwner: rules.isMutual(conn, u.id),
+    })).map((u) => ({ userId: u.id, name: u.name, upiId: u.upiId }));
+  }
+
   async function detail(r, viewerId) {
     const asOf = now();
     const [verifs, contribs, repays] = await Promise.all([repo.listVerifications(r.id), repo.listContributions(r.id), repo.listRepayments(r.id)]);
-    const { confirmedCents: raisedCents, pendingCents } = rules.fundingTotals(contribs);
+    const totals = rules.fundingTotals(contribs);
+    const { confirmedCents: raisedCents, pendingCents } = totals;
+    const owed = rules.owedByLender(contribs.map((c) => ({ ...c, lenderId: c.contributorId })), repays);
+    const lenders = [...owed].map(([userId, e]) => ({ userId, ...e }));
+    const payTo = await payTargets(r, viewerId, contribs, owed);
     const paidCents = repays.filter((p) => p.status === 'confirmed').reduce((s, p) => s + p.amountCents, 0);
     return {
       ...summarise(r, asOf, viewerId),
       raisedCents,
       pendingCents,
+      totals,
+      lenders,
+      payTo,
       remainingCents: r.status === 'open' ? Math.max(0, r.principalCents - raisedCents - pendingCents) : 0,
       daysOverdue: rules.daysOverdue(r.repaymentDate, asOf),
       amountDueCents: r.principalCents,
