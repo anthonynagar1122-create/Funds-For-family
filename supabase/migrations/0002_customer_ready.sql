@@ -15,7 +15,7 @@ alter table public.users add column if not exists terms_accepted_at timestamptz;
 alter table public.users add column if not exists deleted_at        timestamptz;
 alter table public.users drop constraint if exists users_upi_id_check;
 alter table public.users add constraint users_upi_id_check
-  check (upi_id is null or upi_id ~ '^[A-Za-z0-9._-]{2,256}@[A-Za-z]{2,64}$');
+  check (upi_id is null or (upi_id ~ '^[A-Za-z0-9._-]{2,}@[A-Za-z]{2,64}$' and char_length(split_part(upi_id, '@', 1)) <= 256));
 
 -- invites: new rows store only the SHA-256 hash of the token
 alter table public.invites alter column token drop not null;
