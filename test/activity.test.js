@@ -107,7 +107,7 @@ test('repayments made and received are split by who recorded them', async () => 
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
     await lend(ctx.call, 'lee', 'ann', id, 500);
-    const paid = await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { amount: 100 });
+    const paid = await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { lenderId: ids.lee, amount: 100 });
     assert.equal(paid.status, 201, JSON.stringify(paid.body));
 
     const nat = await ctx.call('nat', 'GET', '/activity');
@@ -170,7 +170,7 @@ test('ledger rows never include email addresses', async () => {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
     await lend(ctx.call, 'lee', 'ann', id, 300);
-    await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { amount: 100 });
+    await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { lenderId: ids.lee, amount: 100 });
     for (const who of ['ann', 'nat', 'lee', 'vee']) {
       const r = await ctx.call(who, 'GET', '/activity');
       const text = JSON.stringify(r.body);

@@ -241,27 +241,162 @@ test('withdraw and close email lenders whose entry is only marked sent', async (
   } finally { await ctx2.close(); }
 });
 
-test('repayment by the trusted contact closes the request once the principal is repaid (no interest)', async () => {
-  const { repo, call, close } = await setup();
+// Ann borrows 1000; Nat is the trusted contact; Bea lent 600 and Cal lent 400 (both confirmed). Request is funded.
+async function fundedThousand(ctx) {
+  const id = await openThousand(ctx);
+  await lend(ctx.call, 'bea', 'ann', id, 600);
+  await lend(ctx.call, 'cal', 'ann', id, 400);
+  assert.equal((await ctx.call('ann', 'GET', `/requests/${id}`)).body.request.status, 'funded');
+  return id;
+}
+const repay = (ctx, who, id, lender, amount, extra = {}) => ctx.call(who, 'POST', `/requests/${id}/repayments`, { lenderId: lender, amount, ...extra });
+
+test('repayments: instalments to each lender, lender confirms, request is repaid when all are repaid', async () => {
+  const ctx = await setup();
   try {
-    const nat = (await call('nat', 'GET', '/me')).body.user;
-    await call('ann', 'GET', '/me');
-    const vee = (await call('vee', 'GET', '/me')).body.user;
-    const wes = (await call('wes', 'GET', '/me')).body.user;
-    await repo.setVerifier(vee.id, true);
-    await repo.setVerifier(wes.id, true);
-    const id = await startRequest(call, 'ann', 'nat');
-    await call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
-    await call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
-    await lend(call, 'nat', 'ann', id, 500);
+    const id = await fundedThousand(ctx);
+    const bea = await idOf(ctx.call, 'bea');
+    const cal = await idOf(ctx.call, 'cal');
+    for (let i = 0; i < 3; i += 1) {
+      const sent = await repay(ctx, 'ann', id, bea, 200, { utr: 'UTR12345' + i });
+      assert.equal(sent.status, 201, JSON.stringify(sent.body));
+      assert.equal(sent.body.repayment.status, 'sent');
+      assert.equal(sent.body.repayment.lenderId, bea);
+      assert.equal(sent.body.repayment.amountCents, 20000);
+      const done = await ctx.call('bea', 'POST', `/repayments/${sent.body.repayment.id}/confirm`);
+      assert.equal(done.status, 200, JSON.stringify(done.body));
+      assert.equal(done.body.repayment.status, 'confirmed');
+      assert.ok(done.body.repayment.confirmedAt);
+      assert.equal(done.body.request.status, 'funded');
+    }
+    const extra = await repay(ctx, 'ann', id, bea, 1);
+    assert.equal(extra.status, 409, 'Bea is fully repaid');
+    const mail = ctx.sent.find((m) => m.to === 'bea@example.com' && /ann says they repaid you ₹200\.00\. Please confirm\./.test(m.subject));
+    assert.ok(mail, 'lender is emailed on create');
 
-    const stranger = await call('vee', 'POST', `/requests/${id}/repayments`, { amount: 500 });
-    assert.equal(stranger.status, 403);
+    const last = await repay(ctx, 'nat', id, cal, 400);
+    assert.equal(last.status, 201, JSON.stringify(last.body));
+    assert.equal(last.body.repayment.payerId, await idOf(ctx.call, 'nat'));
+    const done = await ctx.call('cal', 'POST', `/repayments/${last.body.repayment.id}/confirm`);
+    assert.equal(done.status, 200);
+    assert.equal(done.body.request.status, 'repaid');
+    const stored = await ctx.repo.getRequest(id);
+    assert.ok(stored.repaidAt, 'repaidAt is set');
+    const confirmMail = ctx.sent.find((m) => m.to === 'ann@example.com' && /cal confirmed your repayment of ₹400\.00/.test(m.subject));
+    assert.ok(confirmMail, 'borrower is emailed on confirm');
+    assert.ok(ctx.sent.find((m) => m.to === 'nat@example.com' && /cal confirmed your repayment of ₹400\.00/.test(m.subject)), 'payer too');
+  } finally { await ctx.close(); }
+});
 
-    const pay = await call('nat', 'POST', `/requests/${id}/repayments`, { amount: 500 });
-    assert.equal(pay.status, 201);
-    assert.equal(pay.body.request.status, 'repaid');
-  } finally { await close(); }
+test('repayments: confirming twice is a no-op 200; the request is not repaid until the lender confirms', async () => {
+  const ctx = await setup();
+  try {
+    const id = await fundedThousand(ctx);
+    const bea = await idOf(ctx.call, 'bea');
+    const cal = await idOf(ctx.call, 'cal');
+    const a = (await repay(ctx, 'ann', id, bea, 600)).body.repayment;
+    const b = (await repay(ctx, 'ann', id, cal, 400)).body.repayment;
+    assert.equal((await ctx.repo.getRequest(id)).status, 'funded', 'sent alone does not repay');
+    assert.equal((await ctx.call('bea', 'POST', `/repayments/${a.id}/confirm`)).status, 200);
+    const again = await ctx.call('bea', 'POST', `/repayments/${a.id}/confirm`);
+    assert.equal(again.status, 200);
+    assert.equal(again.body.repayment.status, 'confirmed');
+    assert.equal((await ctx.repo.getRequest(id)).status, 'funded');
+    await ctx.call('cal', 'POST', `/repayments/${b.id}/confirm`);
+    assert.equal((await ctx.repo.getRequest(id)).status, 'repaid');
+  } finally { await ctx.close(); }
+});
+
+test('repayments: bad lender, state, amount and role are refused with the right status', async () => {
+  const ctx = await setup();
+  try {
+    const id = await fundedThousand(ctx);
+    const bea = await idOf(ctx.call, 'bea');
+    const cal = await idOf(ctx.call, 'cal');
+    const dee = await idOf(ctx.call, 'dee');
+    assert.equal((await repay(ctx, 'ann', id, dee, 100)).status, 409, 'dee never lent');
+    assert.equal((await repay(ctx, 'zed', id, bea, 100)).status, 404, 'a stranger cannot see the request');
+    assert.equal((await repay(ctx, 'dee', id, bea, 100)).status, 403, 'a mutual who is not the payer');
+    assert.equal((await repay(ctx, 'cal', id, bea, 100)).status, 403, 'a lender is not the payer');
+    const badAmount = await repay(ctx, 'ann', id, bea, '1.234');
+    assert.equal(badAmount.status, 400);
+    assert.equal(badAmount.body.field, 'amount');
+    const badUtr = await repay(ctx, 'ann', id, bea, 100, { utr: 'ab' });
+    assert.equal(badUtr.status, 400);
+    assert.equal(badUtr.body.field, 'utr');
+    const noLender = await ctx.call('ann', 'POST', `/requests/${id}/repayments`, { amount: 100 });
+    assert.equal(noLender.status, 400);
+    assert.equal(noLender.body.field, 'lenderId');
+    assert.equal((await repay(ctx, 'ann', id, bea, 600.01)).status, 409, 'more than owed');
+    assert.equal((await repay(ctx, 'ann', id, cal, 100)).status, 201);
+    assert.doesNotMatch(JSON.stringify(badAmount.body) + JSON.stringify(noLender.body), /nominee/i);
+  } finally { await ctx.close(); }
+});
+
+test('repayments: not-received, correct, and remove follow the contribution rules', async () => {
+  const ctx = await setup();
+  try {
+    const id = await fundedThousand(ctx);
+    const bea = await idOf(ctx.call, 'bea');
+    const rep = (await repay(ctx, 'ann', id, bea, 300, { utr: 'UTR123456' })).body.repayment;
+    assert.equal((await ctx.call('ann', 'POST', `/repayments/${rep.id}/not-received`)).status, 403, 'only the lender');
+    assert.equal((await ctx.call('ann', 'PATCH', `/repayments/${rep.id}`, { amount: 100 })).status, 409, 'not yet marked not received');
+    const nr = await ctx.call('bea', 'POST', `/repayments/${rep.id}/not-received`);
+    assert.equal(nr.status, 200, JSON.stringify(nr.body));
+    assert.equal(nr.body.repayment.status, 'not_received');
+    assert.ok(ctx.sent.find((m) => m.to === 'ann@example.com' && /bea has not received your repayment of ₹300\.00/.test(m.subject)));
+    assert.equal((await ctx.call('bea', 'PATCH', `/repayments/${rep.id}`, { amount: 100 })).status, 403, 'only the payer');
+    assert.equal((await ctx.call('ann', 'PATCH', `/repayments/${rep.id}`, { amount: 700 })).status, 409, 'over what is owed');
+    assert.equal((await ctx.call('ann', 'PATCH', `/repayments/${rep.id}`, { amount: '1.234' })).body.field, 'amount');
+    const fixed = await ctx.call('ann', 'PATCH', `/repayments/${rep.id}`, { amount: 250, utr: 'NEWUTR123' });
+    assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
+    assert.equal(fixed.body.repayment.status, 'sent');
+    assert.equal(fixed.body.repayment.amountCents, 25000);
+    assert.equal((await ctx.call('bea', 'DELETE', `/repayments/${rep.id}`)).status, 403);
+    assert.equal((await ctx.call('ann', 'DELETE', `/repayments/${rep.id}`)).status, 200);
+    assert.equal((await ctx.call('ann', 'DELETE', `/repayments/${rep.id}`)).status, 404);
+    const conf = (await repay(ctx, 'ann', id, bea, 100)).body.repayment;
+    await ctx.call('bea', 'POST', `/repayments/${conf.id}/confirm`);
+    assert.equal((await ctx.call('ann', 'DELETE', `/repayments/${conf.id}`)).status, 409, 'confirmed cannot be removed');
+    assert.equal((await ctx.call('bea', 'POST', `/repayments/${conf.id}/not-received`)).status, 409);
+  } finally { await ctx.close(); }
+});
+
+test('repayments: a repayment on a request you cannot see is a 404, and a failing email never fails a saved change', async () => {
+  const ctx = await setup();
+  try {
+    const id = await fundedThousand(ctx);
+    const bea = await idOf(ctx.call, 'bea');
+    const rep = (await repay(ctx, 'ann', id, bea, 100)).body.repayment;
+    assert.equal((await ctx.call('zed', 'POST', `/repayments/${rep.id}/confirm`)).status, 404);
+    assert.equal((await ctx.call('zed', 'DELETE', `/repayments/${rep.id}`)).status, 404);
+    assert.equal((await ctx.call('ann', 'POST', '/repayments/9999/confirm')).status, 404);
+    const original = ctx.repo.getUser;
+    ctx.repo.getUser = async () => { throw new Error('db down'); };
+    let res;
+    try { res = await ctx.call('bea', 'POST', `/repayments/${rep.id}/confirm`); } finally { ctx.repo.getUser = original; }
+    assert.equal(res.status, 200, 'saved change is not undone by a mail lookup failure');
+    assert.equal((await ctx.repo.getRepayment(rep.id)).status, 'confirmed');
+  } finally { await ctx.close(); }
+});
+
+test('verify: a failing borrower lookup after the decision is saved never returns a 500', async () => {
+  const ctx = await setup();
+  try {
+    for (const n of ['ann', 'nat', 'vee', 'wes']) await ctx.call(n, 'GET', '/me');
+    await ctx.repo.setVerifier(await idOf(ctx.call, 'vee'), true);
+    await ctx.repo.setVerifier(await idOf(ctx.call, 'wes'), true);
+    const id = await startRequest(ctx.call, 'ann', 'nat');
+    await ctx.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    const annId = await idOf(ctx.call, 'ann');
+    const original = ctx.repo.getUser;
+    ctx.repo.getUser = async (uid) => { if (uid === annId) throw new Error('db down'); return original(uid); };
+    let res;
+    try { res = await ctx.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' }); } finally { ctx.repo.getUser = original; }
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal((await ctx.repo.getRequest(id)).status, 'open');
+    assert.ok(ctx.logged.length > 0, 'the failure is logged');
+  } finally { await ctx.close(); }
 });
 
 test('feed shows connected members requests only once approved', async () => {

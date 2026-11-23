@@ -370,14 +370,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
         patch.rejectionReason = reason;
       }
       await repo.updateRequest(r.id, patch);
-      const borrower = await repo.getUser(r.borrowerId);
-      await safeMail({
-        to: borrower.email,
-        subject: approved ? 'Your Funds For Family request was approved' : 'Your Funds For Family request was not approved',
-        html: approved
+      // The decision is saved. A failed lookup or email must not turn it into a 500.
+      await mailLender(r.borrowerId,
+        approved ? 'Your Funds For Family request was approved' : 'Your Funds For Family request was not approved',
+        approved
           ? `<p>Your request for ${formatInr(r.principalCents)} was <strong>approved and is open for funding</strong>.</p>`
-          : `<p>Your request for ${formatInr(r.principalCents)} was <strong>not approved</strong> by the verification team.</p><p>Reason: ${escapeHtml(reason)}</p>`,
-      });
+          : `<p>Your request for ${formatInr(r.principalCents)} was <strong>not approved</strong> by the verification team.</p><p>Reason: ${escapeHtml(reason)}</p>`);
     }
     res.json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
@@ -558,20 +556,134 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ ok: true, request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
+  // ---- Repayments: the payer marks "sent" to one lender, that lender confirms "received" ----
+  const repaymentJson = (p) => ({
+    id: p.id, requestId: p.requestId, payerId: p.payerId, lenderId: p.lenderId, amountCents: p.amountCents,
+    utr: p.utr ?? null, status: p.status, createdAt: p.createdAt, confirmedAt: p.confirmedAt ?? null,
+  });
+
+  // What each lender is still owed. Contributions name their lender as contributorId.
+  async function owedFor(requestId) {
+    const [contribs, repays] = await Promise.all([repo.listContributions(requestId), repo.listRepayments(requestId)]);
+    return rules.owedByLender(contribs.map((c) => ({ ...c, lenderId: c.contributorId })), repays);
+  }
+
+  // Load a repayment on a request the caller can see (404 otherwise). Returns { p, r } or null after responding.
+  async function loadRepayment(req, res) {
+    const id = Number(req.params.id);
+    const p = Number.isInteger(id) ? await repo.getRepayment(id) : null;
+    if (!p) { fail(res, 404, 'Repayment not found'); return null; }
+    const r = await visibleRequest(req, res, p.requestId);
+    if (!r) return null;
+    return { p, r };
+  }
+
+  const repayLink = () => `<a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>`;
+
   api.post('/requests/:id/repayments', async (req, res) => {
-    const r = await repo.getRequest(Number(req.params.id));
-    if (!r) return fail(res, 404, 'Request not found');
+    const r = await visibleRequest(req, res);
+    if (!r) return;
     if (req.user.id !== r.borrowerId && req.user.id !== r.trustedContactId) {
-      return fail(res, 403, 'Only the borrower or nominee can record repayments');
+      return fail(res, 403, 'Only the borrower or trusted contact can record a repayment');
     }
     if (r.status !== 'funded') return fail(res, 409, 'Repayments can be recorded only for funded requests');
-    const amountCents = toCents(req.body?.amount);
-    if (amountCents === null) return fail(res, 400, 'Amount must be a positive number with at most 2 decimals', 'amount');
-    await repo.addRepayment({ requestId: r.id, payerId: req.user.id, amountCents, status: 'confirmed', createdAt: now().toISOString() });
-    const paid = (await repo.listRepayments(r.id)).reduce((s, p) => s + p.amountCents, 0);
-    const due = r.principalCents;
-    if (paid >= due) await repo.updateRequest(r.id, { status: 'repaid', repaidAt: now().toISOString() });
-    res.status(201).json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
+    const lenderId = Number(req.body?.lenderId);
+    if (req.body?.lenderId === undefined || req.body?.lenderId === null || !Number.isInteger(lenderId)) {
+      return fail(res, 400, 'Choose who you are repaying', 'lenderId');
+    }
+    const parsed = parseRupees(req.body?.amount);
+    if (parsed.error) return fail(res, 400, parsed.error, 'amount');
+    const u = readUtr(req.body);
+    if (u.error) return fail(res, 400, u.error, 'utr');
+    const check = rules.checkRepayment({
+      amountCents: parsed.paise, payerId: req.user.id, borrowerId: r.borrowerId, trustedContactId: r.trustedContactId,
+      lenderId, owed: (await owedFor(r.id)).get(lenderId), status: r.status,
+    });
+    if (!check.ok) return fail(res, 409, check.reason);
+    const created = await repo.addRepayment({
+      requestId: r.id, payerId: req.user.id, lenderId, amountCents: parsed.paise, utr: u.utr,
+      status: 'sent', createdAt: now().toISOString(),
+    });
+    await mailLender(lenderId, `${req.user.name} says they repaid you ${formatInr(parsed.paise)}. Please confirm.`,
+      `<p>${escapeHtml(req.user.name)} says they repaid you ${formatInr(parsed.paise)}.</p>`
+      + `<p>Once the money reaches you, please confirm it in the app: ${repayLink()}.</p>`);
+    res.status(201).json({ repayment: repaymentJson(created), request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.post('/repayments/:id/confirm', async (req, res) => {
+    const loaded = await loadRepayment(req, res);
+    if (!loaded) return;
+    const { p, r } = loaded;
+    if (p.lenderId !== req.user.id) return fail(res, 403, 'Only the person who was repaid can confirm it');
+    if (p.status === 'confirmed') {
+      return res.json({ repayment: repaymentJson(p), request: await detail(r, req.user.id) });
+    }
+    if (p.status !== 'sent') return fail(res, 409, 'Only a repayment marked as sent can be confirmed');
+    const updated = await repo.updateRepayment(p.id, { status: 'confirmed', confirmedAt: now().toISOString(), updatedAt: now().toISOString() });
+    // Recompute from fresh rows so two quick confirmations cannot both miss the total.
+    const current = await repo.getRequest(r.id);
+    if (current.status === 'funded' && rules.isFullyRepaid(await owedFor(r.id))) {
+      await repo.updateRequest(r.id, { status: 'repaid', repaidAt: now().toISOString() });
+    }
+    const subject = `${req.user.name} confirmed your repayment of ${formatInr(p.amountCents)}`;
+    const html = `<p>${escapeHtml(req.user.name)} confirmed they received your repayment of ${formatInr(p.amountCents)}.</p>`;
+    for (const uid of new Set([r.borrowerId, p.payerId])) await mailLender(uid, subject, html);
+    res.json({ repayment: repaymentJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.post('/repayments/:id/not-received', async (req, res) => {
+    const loaded = await loadRepayment(req, res);
+    if (!loaded) return;
+    const { p, r } = loaded;
+    if (p.lenderId !== req.user.id) return fail(res, 403, 'Only the person who was repaid can say it did not arrive');
+    if (p.status !== 'sent') return fail(res, 409, 'Only a repayment marked as sent can be marked not received');
+    const updated = await repo.updateRepayment(p.id, { status: 'not_received', updatedAt: now().toISOString() });
+    await mailLender(p.payerId, `${req.user.name} has not received your repayment of ${formatInr(p.amountCents)}`,
+      `<p>${escapeHtml(req.user.name)} says your repayment of ${formatInr(p.amountCents)} has not arrived.</p>`
+      + `<p>Please check the amount and UPI reference and correct them in the app, or remove the entry: ${repayLink()}.</p>`);
+    res.json({ repayment: repaymentJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.patch('/repayments/:id', async (req, res) => {
+    const loaded = await loadRepayment(req, res);
+    if (!loaded) return;
+    const { p, r } = loaded;
+    if (p.payerId !== req.user.id) return fail(res, 403, 'Only the person who sent this can change it');
+    if (p.status !== 'not_received') return fail(res, 409, 'You can correct a repayment only after it was marked not received');
+    const hasAmount = req.body?.amount !== undefined;
+    const hasUtr = req.body?.utr !== undefined;
+    if (!hasAmount && !hasUtr) return fail(res, 400, 'Give a new amount or UPI reference', 'amount');
+    const patch = { status: 'sent', updatedAt: now().toISOString() };
+    let amountCents = p.amountCents;
+    if (hasAmount) {
+      const parsed = parseRupees(req.body.amount);
+      if (parsed.error) return fail(res, 400, parsed.error, 'amount');
+      amountCents = parsed.paise;
+      patch.amountCents = amountCents;
+    }
+    if (hasUtr) {
+      const u = readUtr(req.body);
+      if (u.error) return fail(res, 400, u.error, 'utr');
+      patch.utr = u.utr;
+    }
+    // This entry is not_received, so it is not in the owed figures yet; checking it as new is correct.
+    const check = rules.checkRepayment({
+      amountCents, payerId: p.payerId, borrowerId: r.borrowerId, trustedContactId: r.trustedContactId,
+      lenderId: p.lenderId, owed: (await owedFor(r.id)).get(p.lenderId), status: r.status,
+    });
+    if (!check.ok) return fail(res, 409, check.reason);
+    const updated = await repo.updateRepayment(p.id, patch);
+    res.json({ repayment: repaymentJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.delete('/repayments/:id', async (req, res) => {
+    const loaded = await loadRepayment(req, res);
+    if (!loaded) return;
+    const { p, r } = loaded;
+    if (p.payerId !== req.user.id) return fail(res, 403, 'Only the person who sent this can remove it');
+    if (p.status === 'confirmed') return fail(res, 409, 'The lender already confirmed this, so it cannot be removed');
+    await repo.deleteRepayment(p.id);
+    res.json({ ok: true, request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   app.use('/api', api);
@@ -615,7 +727,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const asOf = now();
     const [verifs, contribs, repays] = await Promise.all([repo.listVerifications(r.id), repo.listContributions(r.id), repo.listRepayments(r.id)]);
     const { confirmedCents: raisedCents, pendingCents } = rules.fundingTotals(contribs);
-    const paidCents = repays.reduce((s, p) => s + p.amountCents, 0);
+    const paidCents = repays.filter((p) => p.status === 'confirmed').reduce((s, p) => s + p.amountCents, 0);
     return {
       ...summarise(r, asOf, viewerId),
       raisedCents,
@@ -636,18 +748,16 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
         if (viewerId !== c.contributorId && viewerId !== r.borrowerId) out.utr = null;
         return out;
       }),
-      repayments: repays.map((p) => ({ payerId: p.payerId, amountCents: p.amountCents, createdAt: p.createdAt })),
+      // The UPI reference is for the payer and the lender only.
+      repayments: repays.map((p) => {
+        const out = repaymentJson(p);
+        if (viewerId !== p.payerId && viewerId !== p.lenderId) out.utr = null;
+        return out;
+      }),
     };
   }
 
   return app;
-}
-
-function toCents(raw) {
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  const cents = Math.round(n * 100);
-  return Math.abs(cents - n * 100) < 1e-6 ? cents : null;
 }
 
 function escapeHtml(s) {

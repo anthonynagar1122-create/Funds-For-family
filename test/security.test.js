@@ -138,7 +138,7 @@ test('access: a stranger cannot record a repayment on someone else\'s loan', asy
     const nat = (await s.call('nat', 'GET', '/me')).body.user;
     const id = await startRequest(s.call, 'ann', 'nat');
     const r = await s.call('zed', 'POST', `/requests/${id}/repayments`, { amount: 10 });
-    assert.equal(r.status, 403);
+    assert.equal(r.status, 404, 'a request you cannot see reads as missing');
   } finally { await s.close(); }
 });
 
@@ -285,5 +285,32 @@ test('access: contribution routes check role (403) and visibility (404)', async 
     assert.equal((await s.call('ann', 'POST', '/contributions/abc/confirm')).status, 404);
     assert.equal(other > 0, true);
     assert.equal((await s.repo.getContribution(cid)).status, 'sent', 'nothing changed');
+  } finally { await s.close(); }
+});
+
+test('access: B cannot confirm A\'s repayment, and a stranger cannot touch it (IDOR)', async () => {
+  const s = await setup();
+  try {
+    for (const n of ['ann', 'nat', 'vee', 'wes', 'bea', 'cal', 'zed']) await s.call(n, 'GET', '/me');
+    await s.repo.setVerifier((await s.call('vee', 'GET', '/me')).body.user.id, true);
+    await s.repo.setVerifier((await s.call('wes', 'GET', '/me')).body.user.id, true);
+    const id = await startRequest(s.call, 'ann', 'nat', { amount: 1000 });
+    await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    const { connect, lend } = require('./helpers/lifecycle');
+    await connect(s.call, 'ann', 'bea');
+    await connect(s.call, 'ann', 'cal');
+    await lend(s.call, 'bea', 'ann', id, 600);
+    await lend(s.call, 'cal', 'ann', id, 400);
+    const bea = (await s.call('bea', 'GET', '/me')).body.user.id;
+    const rep = await s.call('ann', 'POST', `/requests/${id}/repayments`, { lenderId: bea, amount: 100 });
+    assert.equal(rep.status, 201, JSON.stringify(rep.body));
+    const rid = rep.body.repayment.id;
+    assert.equal((await s.call('cal', 'POST', `/repayments/${rid}/confirm`)).status, 403, 'another lender');
+    assert.equal((await s.call('cal', 'POST', `/repayments/${rid}/not-received`)).status, 403);
+    assert.equal((await s.call('nat', 'POST', `/repayments/${rid}/confirm`)).status, 403, 'the payer cannot confirm their own');
+    assert.equal((await s.call('cal', 'DELETE', `/repayments/${rid}`)).status, 403);
+    assert.equal((await s.call('zed', 'POST', `/repayments/${rid}/confirm`)).status, 404, 'invisible request');
+    assert.equal((await s.repo.getRepayment(rid)).status, 'sent');
   } finally { await s.close(); }
 });
