@@ -1,6 +1,12 @@
 'use strict';
 const express = require('express');
 const rules = require('./rules');
+const invites = require('./invites');
+
+const INVITE_ONLY = {
+  error: 'Funds For Family is invite only. Ask someone who uses it to send you an invite.',
+  code: 'invite_only',
+};
 
 /**
  * Build the Express API.
@@ -10,10 +16,12 @@ const rules = require('./rules');
  *   mailer      async ({ to, subject, html }) => void            (Resend in production)
  *   now         () => Date
  *   appUrl      string, used in email links
+ *   ownerEmail  string; the member with this email is admitted as admin and verifier
+ *   admit       async (identity) => boolean; extra admission rule, default none (invite only)
  *   requiredApprovals number, default rules.DEFAULT_REQUIRED_APPROVALS
  */
 function createApp({ repo, identify, mailer = async () => {}, now = () => new Date(), appUrl = 'http://localhost:3000',
-  requiredApprovals = rules.DEFAULT_REQUIRED_APPROVALS, logger = console }) {
+  requiredApprovals = rules.DEFAULT_REQUIRED_APPROVALS, logger = console, ownerEmail = '', admit = async () => false }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '32kb' }));
@@ -24,14 +32,68 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     try { await mailer(msg); } catch (err) { logger.error('mail failed', err?.message); }
   };
 
-  // Resolve the signed-in user. Creates the local profile on first use.
+  // Why a new person may join, or null. Never trusts the repo for expiry: inviteState uses the injected clock.
+  async function admissionFor(req, identity) {
+    const email = String(identity.email ?? '').trim().toLowerCase();
+    if (ownerEmail && email && email === ownerEmail.trim().toLowerCase()) return { via: 'owner' };
+    const asOf = now();
+    const raw = req.get('x-invite-token');
+    if (raw) {
+      const byToken = await repo.findInviteByHash(invites.hashToken(raw));
+      if (byToken && invites.inviteState(byToken, asOf) === 'open') return { via: 'invite', invite: byToken };
+    }
+    if (email) {
+      const usable = (await repo.findOpenInvitesByEmail(email)).filter((i) => invites.inviteState(i, asOf) === 'open');
+      if (usable.length) return { via: 'invite', invite: usable.sort((x, y) => x.id - y.id)[0] };
+    }
+    if (await admit(identity)) return { via: 'admit' };
+    return null;
+  }
+
+  // Runs only when a NEW member was created by an invite.
+  async function acceptInvite(invite, user, email) {
+    const asOf = now();
+    await repo.updateInvite(invite.id, { acceptedAt: asOf.toISOString(), acceptedUserId: user.id });
+    if (await repo.getUser(invite.inviterId)) {
+      await repo.addFollow(invite.inviterId, user.id);
+      await repo.addFollow(user.id, invite.inviterId);
+    }
+    if (email) {
+      for (const other of await repo.findOpenInvitesByEmail(email)) {
+        if (other.id !== invite.id && invites.inviteState(other, asOf) === 'open') {
+          await repo.updateInvite(other.id, { supersededAt: asOf.toISOString() });
+        }
+      }
+    }
+  }
+
+  // Resolve the signed-in user. Joining is invite only: a new person is created only when admissionFor allows it.
   async function requireUser(req, res, next) {
     try {
       const identity = await identify(req);
       if (!identity?.clerkId) return fail(res, 401, 'Sign in required');
-      // Interim: implicit sign-up stays until Task 5 makes joining invite-only.
-      req.user = (await repo.findUserByClerkId(identity.clerkId))
-        ?? (await repo.createUser({ clerkId: identity.clerkId, name: identity.name || 'Member', email: identity.email }));
+      let user = await repo.findUserByClerkId(identity.clerkId);
+      if (!user) {
+        const admission = await admissionFor(req, identity);
+        if (!admission) return res.status(403).json(INVITE_ONLY);
+        const owner = admission.via === 'owner';
+        let created = true;
+        try {
+          user = await repo.createUser({
+            clerkId: identity.clerkId, name: identity.name || 'Member', email: identity.email,
+            avatarUrl: identity.avatarUrl ?? null, isAdmin: owner, isVerifier: owner,
+          });
+        } catch (err) {
+          // A concurrent first request may have created the row (unique clerk_id). Use it if it is there.
+          user = await repo.findUserByClerkId(identity.clerkId);
+          if (!user) throw err;
+          created = false;
+        }
+        if (created && admission.via === 'invite') {
+          await acceptInvite(admission.invite, user, String(identity.email ?? '').trim().toLowerCase());
+        }
+      }
+      req.user = user;
       next();
     } catch (err) {
       next(err);
@@ -98,21 +160,45 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   api.post('/invites', async (req, res) => {
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email', 'email');
-    const token = require('crypto').randomBytes(24).toString('base64url');
-    // Interim: Task 5 rewrites invites. Only the token's SHA-256 hex is stored.
-    const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
-    await repo.createInvite({
+    if (email === String(req.user.email ?? '').toLowerCase() || (await repo.findUserByEmail(email))) {
+      return fail(res, 409, 'This person is already a member', 'email');
+    }
+    const limit = req.user.inviteLimit ?? invites.DEFAULT_MONTHLY_INVITES;
+    const used = await repo.countInvitesSince(req.user.id, invites.monthStartIst(now()));
+    if (used >= limit) return fail(res, 429, 'You have used all your invites this month');
+    const { token, tokenHash } = invites.newToken();
+    const created = await repo.createInvite({
       inviterId: req.user.id, email, tokenHash,
-      expiresAt: new Date(now().getTime() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+      expiresAt: new Date(now().getTime() + invites.INVITE_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: now().toISOString(),
     });
-    const link = `${appUrl}/?invite=${token}`;
+    const link = `${appUrl.replace(/\/+$/, '')}/app/#join=${token}`;
+    const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(`${req.user.name} invited you to join Funds For Family: ${link}`)}`;
     await safeMail({
       to: email,
       subject: `${req.user.name} invited you to Funds For Family`,
-      html: `<p>${escapeHtml(req.user.name)} invited you to join Funds For Family.</p><p><a href="${link}">Accept the invitation</a></p>`,
+      html: `<p>${escapeHtml(req.user.name)} invited you to join Funds For Family.</p><p><a href="${escapeHtml(link)}">Accept the invitation</a></p>`,
     });
-    res.status(201).json({ ok: true });
+    res.status(201).json({
+      invite: { id: created.id, email, expiresAt: created.expiresAt },
+      link, whatsappUrl, remainingThisMonth: limit - used - 1,
+    });
+  });
+
+  api.get('/invites', async (req, res) => {
+    const asOf = now();
+    const mine = await repo.listInvitesByInviter(req.user.id);
+    res.json({ invites: mine.map((i) => ({
+      id: i.id, email: i.email, createdAt: i.createdAt, expiresAt: i.expiresAt, state: invites.inviteState(i, asOf),
+    })) });
+  });
+
+  api.delete('/invites/:id', async (req, res) => {
+    const invite = await repo.getInvite(Number(req.params.id));
+    if (!invite || invite.inviterId !== req.user.id) return fail(res, 404, 'Invite not found');
+    if (invite.acceptedAt) return fail(res, 409, 'This invite has already been used');
+    if (!invite.revokedAt) await repo.updateInvite(invite.id, { revokedAt: now().toISOString() });
+    res.json({ ok: true });
   });
 
   api.get('/feed', async (req, res) => {
@@ -261,7 +347,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   function publicUser(u, viewerId) {
     if (!u) return null;
     const out = { id: u.id, name: u.name, isVerifier: !!u.isVerifier };
-    if (viewerId !== undefined && u.id === viewerId) out.email = u.email;
+    if (viewerId !== undefined && u.id === viewerId) { out.email = u.email; out.isAdmin = !!u.isAdmin; }
     return out;
   }
 

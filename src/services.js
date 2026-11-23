@@ -23,7 +23,7 @@ function buildProductionApp(env = process.env) {
     const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || 'Member';
     const email = u.primaryEmailAddress?.emailAddress;
     if (!email) return null;
-    return { clerkId: u.id, name, email };
+    return { clerkId: u.id, name, email, avatarUrl: u.imageUrl || null };
   };
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -38,6 +38,7 @@ function buildProductionApp(env = process.env) {
     repo,
     identify,
     mailer,
+    ownerEmail: env.OWNER_EMAIL || '',
     appUrl: env.APP_URL || 'http://localhost:3000',
     requiredApprovals: env.REQUIRED_APPROVALS ? Number(env.REQUIRED_APPROVALS) : undefined,
   });

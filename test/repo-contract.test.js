@@ -28,6 +28,15 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.equal((await repo.getUsers([u.id])).length, 1);
   });
 
+  test('contract: findUserByEmail is case-insensitive and treats % and _ literally', async () => {
+    const repo = await makeRepo();
+    const u = await mk(repo, 'em');
+    assert.equal((await repo.findUserByEmail(u.email.toUpperCase())).id, u.id);
+    assert.equal(await repo.findUserByEmail(`${prefix}nobody_${uniq()}@c.test`), null);
+    assert.equal(await repo.findUserByEmail('%'), null);
+    assert.equal(await repo.findUserByEmail(u.email.replace(/^./, '_')), null);
+  });
+
   test('contract: countInvitesSince excludes revoked and superseded invites', async () => {
     const repo = await makeRepo();
     const inviter = await mk(repo, 'inv');

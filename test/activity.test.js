@@ -1,39 +1,10 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createApp } = require('../src/app');
-const { createMemoryRepo } = require('../src/memory-repo');
+const { setup } = require('./helpers/harness');
 
 // Fixed clock so date rules are deterministic.
-const NOW = new Date('2026-11-20T12:00:00Z');
 
-async function setup() {
-  const repo = createMemoryRepo();
-  const app = createApp({
-    repo,
-    now: () => NOW,
-    mailer: async () => {},
-    // Test identity: header "x-test-user: <name>" maps to a fixed Clerk-style id and email.
-    identify: async (req) => {
-      const name = req.headers['x-test-user'];
-      return name ? { clerkId: `clerk_${name}`, name, email: `${name}@example.com` } : null;
-    },
-    logger: { error() {} },
-  });
-  const server = app.listen(0);
-  const base = `http://127.0.0.1:${server.address().port}/api`;
-  const call = async (user, method, path, body) => {
-    const headers = { 'content-type': 'application/json' };
-    if (user) headers['x-test-user'] = user;
-    const r = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
-    return { status: r.status, body: await r.json() };
-  };
-  const close = () => {
-    server.closeAllConnections();
-    return new Promise((res) => server.close(res));
-  };
-  return { repo, call, close };
-}
 
 const EMPTY = { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { nominee: [], verifier: [] } };
 

@@ -99,6 +99,8 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
   return {
     // ---- users ----
     findUserByClerkId: (clerkId) => maybe(db.from('users').select().eq('clerk_id', clerkId), USER),
+    // Case-insensitive exact match: ilike with LIKE wildcards escaped.
+    findUserByEmail: (email) => maybe(db.from('users').select().ilike('email', likeEscape(String(email ?? ''))).limit(1), USER),
     async createUser({ clerkId, name, email, avatarUrl, isAdmin, isVerifier }) {
       const row = USER.toRow({ clerkId, name: name || 'Member', email, avatarUrl, isAdmin, isVerifier });
       return USER.toObj(check(await db.from('users').insert(row).select().single()));

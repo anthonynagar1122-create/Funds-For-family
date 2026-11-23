@@ -47,6 +47,10 @@ function createMemoryRepo() {
   return {
     // ---- users ----
     async findUserByClerkId(clerkId) { return copy([...users.values()].find((u) => u.clerkId === clerkId)); },
+    async findUserByEmail(email) {
+      const e = String(email ?? '').toLowerCase();
+      return copy([...users.values()].find((u) => String(u.email ?? '').toLowerCase() === e));
+    },
     async createUser({ clerkId, name, email, avatarUrl = null, isAdmin = false, isVerifier = false }) {
       const id = nextId();
       const u = { id, clerkId, name, email, avatarUrl, upiId: null, isAdmin, isVerifier, inviteLimit: null,

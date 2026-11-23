@@ -4,42 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createApp } = require('../src/app');
-const { createMemoryRepo } = require('../src/memory-repo');
+const { setup } = require('./helpers/harness');
 
 const ROOT = path.join(__dirname, '..');
-const NOW = new Date('2026-11-20T12:00:00Z');
 
-async function setup() {
-  const repo = createMemoryRepo();
-  const sent = [];
-  const logged = [];
-  const app = createApp({
-    repo,
-    now: () => NOW,
-    mailer: async (m) => { sent.push(m); },
-    identify: async (req) => {
-      const name = req.headers['x-test-user'];
-      return name ? { clerkId: `clerk_${name}`, name, email: `${name}@example.com` } : null;
-    },
-    logger: { error: (...a) => logged.push(a) },
-  });
-  const server = app.listen(0, '127.0.0.1');
-  await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${server.address().port}/api`;
-  const call = async (user, method, p, body, raw) => {
-    const headers = { 'content-type': 'application/json' };
-    if (user) headers['x-test-user'] = user;
-    const payload = method === 'GET' ? undefined : (raw ?? (body ? JSON.stringify(body) : undefined));
-    const r = await fetch(base + p, { method, headers, body: payload });
-    const text = await r.text();
-    let json = null;
-    try { json = JSON.parse(text); } catch { /* non-JSON */ }
-    return { status: r.status, body: json, text };
-  };
-  const close = () => new Promise((res) => { server.close(res); server.closeAllConnections(); });
-  return { repo, sent, logged, call, close, port: server.address().port };
-}
 
 const validRequest = (nomineeId, extra = {}) => ({
   amount: 500,
