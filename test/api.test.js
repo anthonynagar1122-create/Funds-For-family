@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { setup } = require('./helpers/harness');
-const { connect, startRequest, idOf, requestBody } = require('./helpers/lifecycle');
+const { connect, startRequest, idOf, requestBody, lend } = require('./helpers/lifecycle');
 
 // Fixed clock so date rules are deterministic.
 
@@ -81,36 +81,163 @@ test('two verifier approvals open the request; non-verifiers are refused', async
   } finally { await close(); }
 });
 
-test('contributions are capped, fund the request, and reject self-funding', async () => {
-  const { repo, call, close } = await setup();
+// Ann borrows ₹1,000 (verified, open). Bea, Cal and Dee are mutual with Ann; Zed is a stranger.
+async function openThousand(ctx) {
+  for (const n of ['ann', 'nat', 'vee', 'wes', 'bea', 'cal', 'dee', 'zed']) await ctx.call(n, 'GET', '/me');
+  await ctx.repo.setVerifier(await idOf(ctx.call, 'vee'), true);
+  await ctx.repo.setVerifier(await idOf(ctx.call, 'wes'), true);
+  const id = await startRequest(ctx.call, 'ann', 'nat', { amount: 1000 });
+  await ctx.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+  await ctx.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+  for (const n of ['bea', 'cal', 'dee']) await connect(ctx.call, 'ann', n);
+  return id;
+}
+const sendMoney = (ctx, who, id, amount, extra = {}) => ctx.call(who, 'POST', `/requests/${id}/contributions`, { amount, ...extra });
+
+test('lending: borrower and non-mutual members cannot lend, sent entries are capped', async () => {
+  const ctx = await setup();
   try {
-    await call('ann', 'GET', '/me');
-    const nat = (await call('nat', 'GET', '/me')).body.user;
-    const vee = (await call('vee', 'GET', '/me')).body.user;
-    const wes = (await call('wes', 'GET', '/me')).body.user;
-    await call('ann', 'GET', '/me');
-    await repo.setVerifier(vee.id, true);
-    await repo.setVerifier(wes.id, true);
-    const annUser = (await call('ann', 'GET', '/me')).body.user;
+    const id = await openThousand(ctx);
+    assert.equal((await sendMoney(ctx, 'ann', id, 10)).status, 409, 'borrower cannot fund own request');
+    const stranger = await sendMoney(ctx, 'zed', id, 100);
+    assert.equal(stranger.status, 409, 'non-mutual member cannot lend');
+    assert.equal((await sendMoney(ctx, 'bea', id, 1100)).status, 409, 'cannot exceed the principal');
 
-    const id = await startRequest(call, 'ann', 'nat');
-    await call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
-    await call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    const a = await sendMoney(ctx, 'bea', id, 600, { utr: 'ABC123456' });
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    assert.equal(a.body.contribution.status, 'sent');
+    assert.equal(a.body.contribution.utr, 'ABC123456');
+    assert.equal(a.body.contribution.amountCents, 60000);
+    assert.equal(a.body.request.status, 'open');
+    assert.equal(a.body.request.raisedCents, 0, 'sent is not counted as raised');
+    assert.equal(a.body.request.remainingCents, 40000);
+    assert.equal((await sendMoney(ctx, 'cal', id, 400)).status, 201);
+    const third = await sendMoney(ctx, 'dee', id, 1);
+    assert.equal(third.status, 409, 'sent plus sent already reaches the principal');
+    const mail = ctx.sent.find((m) => /says they sent ₹600\.00\. Please confirm\./.test(m.subject));
+    assert.ok(mail, 'borrower is emailed');
+    assert.equal(mail.to, 'ann@example.com');
+  } finally { await ctx.close(); }
+});
 
-    assert.equal((await call('ann', 'POST', `/requests/${id}/contributions`, { amount: 10 })).status, 409, 'borrower cannot fund own request');
+test('lending: a bad UTR or amount is a 400 on its field', async () => {
+  const ctx = await setup();
+  try {
+    const id = await openThousand(ctx);
+    const badUtr = await sendMoney(ctx, 'bea', id, 100, { utr: 'ab' });
+    assert.equal(badUtr.status, 400);
+    assert.equal(badUtr.body.field, 'utr');
+    const badAmount = await sendMoney(ctx, 'bea', id, '1.234');
+    assert.equal(badAmount.status, 400);
+    assert.equal(badAmount.body.field, 'amount');
+    assert.equal((await sendMoney(ctx, 'bea', id, '₹1,500.50')).status, 409, 'valid Indian-style amount, but over the principal');
+    assert.equal((await sendMoney(ctx, 'bea', id, ' 100 ')).status, 201);
+  } finally { await ctx.close(); }
+});
 
-    const over = await call('nat', 'POST', `/requests/${id}/contributions`, { amount: 600 });
-    assert.equal(over.status, 409, 'cannot exceed the requested total');
+test('confirming both sent entries funds the request; confirming twice changes nothing', async () => {
+  const ctx = await setup();
+  try {
+    const id = await openThousand(ctx);
+    const c1 = (await sendMoney(ctx, 'bea', id, 600)).body.contribution.id;
+    const c2 = (await sendMoney(ctx, 'cal', id, 400)).body.contribution.id;
+    const first = await ctx.call('ann', 'POST', `/contributions/${c1}/confirm`);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.contribution.status, 'confirmed');
+    assert.ok(first.body.contribution.confirmedAt);
+    assert.equal(first.body.request.status, 'open');
+    assert.equal(first.body.request.raisedCents, 60000);
+    assert.ok(ctx.sent.some((m) => m.to === 'bea@example.com' && m.subject === 'ann confirmed your ₹600.00'));
 
-    const part = await call('nat', 'POST', `/requests/${id}/contributions`, { amount: 300 });
-    assert.equal(part.status, 201);
-    assert.equal(part.body.request.status, 'open');
-    assert.equal(part.body.request.remainingCents, 20000);
+    const again = await ctx.call('ann', 'POST', `/contributions/${c1}/confirm`);
+    assert.equal(again.status, 200);
+    assert.equal(again.body.request.raisedCents, 60000, 'the total is unchanged');
+    assert.equal(again.body.contribution.confirmedAt, first.body.contribution.confirmedAt);
 
-    const rest = await call('wes', 'POST', `/requests/${id}/contributions`, { amount: 200 });
-    assert.equal(rest.body.request.status, 'funded');
-    assert.equal(annUser.id !== nat.id, true);
-  } finally { await close(); }
+    const last = await ctx.call('ann', 'POST', `/contributions/${c2}/confirm`);
+    assert.equal(last.body.request.status, 'funded');
+    assert.equal(last.body.request.fundedCents, 100000);
+    const repeat = await ctx.call('ann', 'POST', `/contributions/${c2}/confirm`);
+    assert.equal(repeat.status, 200);
+    assert.equal(repeat.body.request.status, 'funded');
+    assert.equal(repeat.body.request.raisedCents, 100000);
+  } finally { await ctx.close(); }
+});
+
+test('not received: the lender corrects it back to sent, or deletes it; confirmed cannot be deleted', async () => {
+  const ctx = await setup();
+  try {
+    const id = await openThousand(ctx);
+    const c1 = (await sendMoney(ctx, 'bea', id, 600)).body.contribution.id;
+    const nr = await ctx.call('ann', 'POST', `/contributions/${c1}/not-received`);
+    assert.equal(nr.status, 200, JSON.stringify(nr.body));
+    assert.equal(nr.body.contribution.status, 'not_received');
+    assert.ok(ctx.sent.some((m) => m.to === 'bea@example.com' && m.subject === 'ann has not received your ₹600.00'));
+    assert.equal((await ctx.call('ann', 'POST', `/contributions/${c1}/not-received`)).status, 409, 'only from sent');
+    assert.equal((await ctx.call('ann', 'POST', `/contributions/${c1}/confirm`)).status, 409, 'not_received cannot be confirmed');
+
+    assert.equal((await ctx.call('bea', 'PATCH', `/contributions/${c1}`, { amount: 'abc' })).body.field, 'amount');
+    assert.equal((await ctx.call('bea', 'PATCH', `/contributions/${c1}`, { utr: 'ab' })).body.field, 'utr');
+    const fixed = await ctx.call('bea', 'PATCH', `/contributions/${c1}`, { amount: 500, utr: 'REF987654' });
+    assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
+    assert.equal(fixed.body.contribution.status, 'sent');
+    assert.equal(fixed.body.contribution.amountCents, 50000);
+    assert.equal(fixed.body.contribution.utr, 'REF987654');
+    assert.equal((await ctx.call('bea', 'PATCH', `/contributions/${c1}`, { amount: 400 })).status, 409, 'only while not_received');
+
+    await ctx.call('ann', 'POST', `/contributions/${c1}/not-received`);
+    const gone = await ctx.call('bea', 'DELETE', `/contributions/${c1}`);
+    assert.equal(gone.status, 200);
+    assert.equal(await ctx.repo.getContribution(c1), null);
+
+    const c2 = (await sendMoney(ctx, 'cal', id, 300)).body.contribution.id;
+    await ctx.call('ann', 'POST', `/contributions/${c2}/confirm`);
+    assert.equal((await ctx.call('cal', 'DELETE', `/contributions/${c2}`)).status, 409);
+  } finally { await ctx.close(); }
+});
+
+test('a correction cannot push sent plus confirmed over the principal', async () => {
+  const ctx = await setup();
+  try {
+    const id = await openThousand(ctx);
+    const c1 = (await sendMoney(ctx, 'bea', id, 300)).body.contribution.id;
+    await sendMoney(ctx, 'cal', id, 600);
+    await ctx.call('ann', 'POST', `/contributions/${c1}/not-received`);
+    const over = await ctx.call('bea', 'PATCH', `/contributions/${c1}`, { amount: 500 });
+    assert.equal(over.status, 409);
+    assert.equal((await ctx.repo.getContribution(c1)).status, 'not_received');
+  } finally { await ctx.close(); }
+});
+
+test('confirm on a withdrawn request is 409', async () => {
+  const ctx = await setup();
+  try {
+    const id = await openThousand(ctx);
+    const c1 = (await sendMoney(ctx, 'bea', id, 300)).body.contribution.id;
+    assert.equal((await ctx.call('ann', 'POST', `/requests/${id}/withdraw`)).status, 200);
+    assert.equal((await ctx.call('ann', 'POST', `/contributions/${c1}/confirm`)).status, 409);
+  } finally { await ctx.close(); }
+});
+
+test('withdraw and close email lenders whose entry is only marked sent', async () => {
+  const ctx = await setup();
+  try {
+    const id = await openThousand(ctx);
+    await sendMoney(ctx, 'bea', id, 300);
+    await ctx.call('ann', 'POST', `/requests/${id}/withdraw`);
+    const w = ctx.sent.find((m) => m.subject === 'A request you sent money to was withdrawn');
+    assert.ok(w); assert.equal(w.to, 'bea@example.com');
+    assert.match(w.html, /₹300\.00/); assert.match(w.html, /not counted/);
+  } finally { await ctx.close(); }
+  const ctx2 = await setup();
+  try {
+    const id = await openThousand(ctx2);
+    await lend(ctx2.call, 'bea', 'ann', id, 300);
+    await sendMoney(ctx2, 'cal', id, 200);
+    assert.equal((await ctx2.call('ann', 'POST', `/requests/${id}/close`)).status, 200);
+    const mails = ctx2.sent.filter((m) => m.subject === 'A request you sent money to was closed');
+    assert.deepEqual(mails.map((m) => m.to), ['cal@example.com'], 'only the lender with a sent entry');
+  } finally { await ctx2.close(); }
 });
 
 test('repayment by the trusted contact closes the request once the principal is repaid (no interest)', async () => {
@@ -125,7 +252,7 @@ test('repayment by the trusted contact closes the request once the principal is 
     const id = await startRequest(call, 'ann', 'nat');
     await call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
-    await call('nat', 'POST', `/requests/${id}/contributions`, { amount: 500 });
+    await lend(call, 'nat', 'ann', id, 500);
 
     const stranger = await call('vee', 'POST', `/requests/${id}/repayments`, { amount: 500 });
     assert.equal(stranger.status, 403);
@@ -324,8 +451,7 @@ async function openWithContribution(ctx, amount) {
   await ctx.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
   if (amount) {
     await connect(ctx.call, 'ann', 'bea');
-    const c = await ctx.call('bea', 'POST', `/requests/${id}/contributions`, { amount });
-    assert.equal(c.status, 201, JSON.stringify(c.body));
+    await lend(ctx.call, 'bea', 'ann', id, amount);
   }
   return id;
 }

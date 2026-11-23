@@ -2,7 +2,7 @@
 const express = require('express');
 const rules = require('./rules');
 const invites = require('./invites');
-const { formatInr } = require('../public/app/money');
+const { formatInr, parseRupees } = require('../public/app/money');
 
 const INVITE_ONLY = {
   error: 'Funds For Family is invite only. Ask someone who uses it to send you an invite.',
@@ -106,7 +106,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   // Express 4 does not catch promise rejections from async handlers. Route them to the error handler,
   // so a failing dependency returns a generic 500 instead of hanging the request.
   const wrapAsync = (fn) => (req, res, next) => { Promise.resolve().then(() => fn(req, res, next)).catch(next); };
-  for (const method of ['get', 'post', 'delete']) {
+  for (const method of ['get', 'post', 'patch', 'delete']) {
     const original = api[method].bind(api);
     api[method] = (routePath, ...handlers) => original(routePath, ...handlers.map((h) =>
       h.constructor.name === 'AsyncFunction' ? wrapAsync(h) : h));
@@ -208,7 +208,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     // Interim filter; Task 9 rewrites the feed.
     const rows = (await repo.listRequestsByBorrowers(ids)).filter((r) => ['open', 'funded', 'repaid'].includes(r.status));
     const withRaised = await Promise.all(rows.map(async (r) => {
-      const raisedCents = (await repo.listContributions(r.id)).reduce((sum, c) => sum + c.amountCents, 0);
+      const { confirmedCents: raisedCents } = rules.fundingTotals(await repo.listContributions(r.id));
       return { ...summarise(r, now(), req.user.id), raisedCents };
     }));
     res.json({ requests: withRaised });
@@ -253,8 +253,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   // Load a request and refuse (404) unless the caller may see it. Returns null after responding.
-  async function visibleRequest(req, res) {
-    const id = Number(req.params.id);
+  async function visibleRequest(req, res, rawId = req.params.id) {
+    const id = Number(rawId);
     const r = Number.isInteger(id) ? await repo.getRequest(id) : null;
     if (!r) { fail(res, 404, 'Request not found'); return null; }
     const me = req.user;
@@ -392,6 +392,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const { confirmedCents } = rules.fundingTotals(await repo.listContributions(r.id));
     if (confirmedCents > 0) return fail(res, 409, 'Someone has already lent money on this request, so it cannot be withdrawn');
     await repo.updateRequest(r.id, { status: 'withdrawn', withdrawnAt: now().toISOString() });
+    await mailSentLenders(r, 'withdrawn');
     res.json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
@@ -403,28 +404,158 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const { confirmedCents } = rules.fundingTotals(await repo.listContributions(r.id));
     if (confirmedCents <= 0) return fail(res, 409, 'Nothing has been lent yet. Withdraw the request instead.');
     await repo.updateRequest(r.id, { status: 'funded', fundedCents: confirmedCents, fundedAt: now().toISOString() });
+    await mailSentLenders(r, 'closed');
     res.json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
-  api.post('/requests/:id/contributions', async (req, res) => {
-    const r = await repo.getRequest(Number(req.params.id));
-    if (!r) return fail(res, 404, 'Request not found');
-    const amountCents = toCents(req.body?.amount);
-    if (amountCents === null) return fail(res, 400, 'Amount must be a positive number with at most 2 decimals', 'amount');
-    const totals = rules.fundingTotals((await repo.listContributions(r.id)).map((c) => ({ ...c, status: c.status || 'confirmed' })));
-    const raisedCents = totals.confirmedCents;
-    const check = rules.checkContribution({ amountCents, principalCents: r.principalCents, totals, contributorId: req.user.id, borrowerId: r.borrowerId, isMutual: true, status: r.status });
-    if (!check.ok) return fail(res, 409, check.reason);
-    await repo.addContribution({ requestId: r.id, contributorId: req.user.id, amountCents, status: 'confirmed', createdAt: now().toISOString() });
-    if (raisedCents + amountCents >= r.principalCents) {
-      await repo.updateRequest(r.id, { status: 'funded', fundedAt: now().toISOString() });
+  // ---- Contributions: the lender marks "sent", the borrower confirms "received" ----
+  const contributionJson = (c) => ({
+    id: c.id, requestId: c.requestId, contributorId: c.contributorId, amountCents: c.amountCents,
+    utr: c.utr ?? null, status: c.status, createdAt: c.createdAt, confirmedAt: c.confirmedAt ?? null,
+  });
+
+  // Parses an optional UTR from a body. Returns { utr } (null when empty) or { error }.
+  function readUtr(body) {
+    const raw = body?.utr;
+    if (raw === undefined || raw === null || raw === '') return { utr: null };
+    const text = typeof raw === 'string' ? raw.trim() : raw;
+    return rules.validateUtr(text) ? { utr: text } : { error: 'A UPI reference is 6 to 35 letters or digits' };
+  }
+
+  // Load a contribution on a request the caller can see (404 otherwise). Returns { c, r } or null after responding.
+  async function loadContribution(req, res) {
+    const id = Number(req.params.id);
+    const c = Number.isInteger(id) ? await repo.getContribution(id) : null;
+    if (!c) { fail(res, 404, 'Contribution not found'); return null; }
+    const r = await visibleRequest(req, res, c.requestId);
+    if (!r) return null;
+    return { c, r };
+  }
+
+  async function mailLender(lenderId, subject, html) {
+    const lender = await repo.getUser(lenderId);
+    if (lender?.email) await safeMail({ to: lender.email, subject, html });
+  }
+
+  // Tell every lender with a "sent" entry that it is not counted (request withdrawn or closed).
+  async function mailSentLenders(r, verb) {
+    const sentRows = (await repo.listContributions(r.id)).filter((c) => c.status === 'sent');
+    for (const c of sentRows) {
+      await mailLender(c.contributorId, `A request you sent money to was ${verb}`,
+        `<p>The request you sent ${formatInr(c.amountCents)} to was ${verb}. Your ${formatInr(c.amountCents)} marked as sent is not counted.</p>`
+        + `<p>You can remove it in the app: <a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>.</p>`);
     }
-    await safeMail({
-      to: req.user.email,
-      subject: 'Thank you for your contribution',
-      html: `<p>You contributed ${formatInr(amountCents)} to request #${r.id}. Thank you.</p>`,
+  }
+
+  api.post('/requests/:id/contributions', async (req, res) => {
+    const id = Number(req.params.id);
+    const r = Number.isInteger(id) ? await repo.getRequest(id) : null;
+    if (!r) return fail(res, 404, 'Request not found');
+    const conn = await repo.connections(req.user.id);
+    const mutual = rules.isMutual(conn, r.borrowerId);
+    // Hide requests nobody outside the circle may see. An open request answers a non-mutual lender with 409.
+    if (r.status !== 'open' && !(await visibleRequest(req, res))) return;
+    const parsed = parseRupees(req.body?.amount);
+    if (parsed.error) return fail(res, 400, parsed.error, 'amount');
+    const u = readUtr(req.body);
+    if (u.error) return fail(res, 400, u.error, 'utr');
+    const totals = rules.fundingTotals(await repo.listContributions(r.id));
+    const check = rules.checkContribution({
+      amountCents: parsed.paise, principalCents: r.principalCents, totals,
+      contributorId: req.user.id, borrowerId: r.borrowerId, isMutual: mutual, status: r.status,
     });
-    res.status(201).json({ request: await detail(await repo.getRequest(r.id), req.user.id) });
+    if (!check.ok) return fail(res, 409, check.reason);
+    const created = await repo.addContribution({
+      requestId: r.id, contributorId: req.user.id, amountCents: parsed.paise, utr: u.utr,
+      status: 'sent', createdAt: now().toISOString(),
+    });
+    const borrower = await repo.getUser(r.borrowerId);
+    if (borrower?.email) {
+      await safeMail({
+        to: borrower.email,
+        subject: `${req.user.name} says they sent ${formatInr(parsed.paise)}. Please confirm.`,
+        html: `<p>${escapeHtml(req.user.name)} says they sent you ${formatInr(parsed.paise)}.</p>`
+          + `<p>Once the money reaches you, please confirm it in the app: <a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>.</p>`,
+      });
+    }
+    res.status(201).json({ contribution: contributionJson(created), request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.post('/contributions/:id/confirm', async (req, res) => {
+    const loaded = await loadContribution(req, res);
+    if (!loaded) return;
+    const { c, r } = loaded;
+    if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can confirm that money arrived');
+    if (c.status === 'confirmed') {
+      return res.json({ contribution: contributionJson(c), request: await detail(r, req.user.id) });
+    }
+    if (c.status !== 'sent') return fail(res, 409, 'Only an entry marked as sent can be confirmed');
+    if (r.status !== 'open') return fail(res, 409, 'This request is no longer open');
+    const updated = await repo.updateContribution(c.id, { status: 'confirmed', confirmedAt: now().toISOString(), updatedAt: now().toISOString() });
+    // Recompute from fresh rows so two quick confirmations cannot both miss the total.
+    const { confirmedCents } = rules.fundingTotals(await repo.listContributions(r.id));
+    const current = await repo.getRequest(r.id);
+    if (confirmedCents >= current.principalCents && current.status === 'open') {
+      await repo.updateRequest(r.id, { status: 'funded', fundedCents: current.principalCents, fundedAt: now().toISOString() });
+    }
+    await mailLender(c.contributorId, `${req.user.name} confirmed your ${formatInr(c.amountCents)}`,
+      `<p>${escapeHtml(req.user.name)} confirmed they received your ${formatInr(c.amountCents)}. Thank you for helping.</p>`);
+    res.json({ contribution: contributionJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.post('/contributions/:id/not-received', async (req, res) => {
+    const loaded = await loadContribution(req, res);
+    if (!loaded) return;
+    const { c, r } = loaded;
+    if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can say money did not arrive');
+    if (c.status !== 'sent') return fail(res, 409, 'Only an entry marked as sent can be marked not received');
+    const updated = await repo.updateContribution(c.id, { status: 'not_received', updatedAt: now().toISOString() });
+    await mailLender(c.contributorId, `${req.user.name} has not received your ${formatInr(c.amountCents)}`,
+      `<p>${escapeHtml(req.user.name)} says your ${formatInr(c.amountCents)} has not arrived.</p>`
+      + `<p>Please check the amount and UPI reference and correct them in the app, or remove the entry: <a href="${escapeHtml(appUrl.replace(/\/+$/, '') + '/app/')}">open Funds For Family</a>.</p>`);
+    res.json({ contribution: contributionJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.patch('/contributions/:id', async (req, res) => {
+    const loaded = await loadContribution(req, res);
+    if (!loaded) return;
+    const { c, r } = loaded;
+    if (c.contributorId !== req.user.id) return fail(res, 403, 'Only the person who sent this can change it');
+    if (c.status !== 'not_received') return fail(res, 409, 'You can correct an entry only after the borrower marked it not received');
+    const hasAmount = req.body?.amount !== undefined;
+    const hasUtr = req.body?.utr !== undefined;
+    if (!hasAmount && !hasUtr) return fail(res, 400, 'Give a new amount or UPI reference', 'amount');
+    const patch = { status: 'sent', updatedAt: now().toISOString() };
+    let amountCents = c.amountCents;
+    if (hasAmount) {
+      const parsed = parseRupees(req.body.amount);
+      if (parsed.error) return fail(res, 400, parsed.error, 'amount');
+      amountCents = parsed.paise;
+      patch.amountCents = amountCents;
+    }
+    if (hasUtr) {
+      const u = readUtr(req.body);
+      if (u.error) return fail(res, 400, u.error, 'utr');
+      patch.utr = u.utr;
+    }
+    const check = rules.checkContribution({
+      amountCents, principalCents: r.principalCents, totals: rules.fundingTotals(await repo.listContributions(r.id)),
+      contributorId: req.user.id, borrowerId: r.borrowerId,
+      isMutual: rules.isMutual(await repo.connections(req.user.id), r.borrowerId), status: r.status,
+    });
+    if (!check.ok) return fail(res, 409, check.reason);
+    const updated = await repo.updateContribution(c.id, patch);
+    res.json({ contribution: contributionJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
+  });
+
+  api.delete('/contributions/:id', async (req, res) => {
+    const loaded = await loadContribution(req, res);
+    if (!loaded) return;
+    const { c, r } = loaded;
+    if (c.contributorId !== req.user.id) return fail(res, 403, 'Only the person who sent this can remove it');
+    if (c.status === 'confirmed') return fail(res, 409, 'The borrower already confirmed this, so it cannot be removed');
+    await repo.deleteContribution(c.id);
+    res.json({ ok: true, request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
   api.post('/requests/:id/repayments', async (req, res) => {
@@ -483,12 +614,13 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   async function detail(r, viewerId) {
     const asOf = now();
     const [verifs, contribs, repays] = await Promise.all([repo.listVerifications(r.id), repo.listContributions(r.id), repo.listRepayments(r.id)]);
-    const raisedCents = contribs.reduce((s, c) => s + c.amountCents, 0);
+    const { confirmedCents: raisedCents, pendingCents } = rules.fundingTotals(contribs);
     const paidCents = repays.reduce((s, p) => s + p.amountCents, 0);
     return {
       ...summarise(r, asOf, viewerId),
       raisedCents,
-      remainingCents: Math.max(0, r.principalCents - raisedCents),
+      pendingCents,
+      remainingCents: Math.max(0, r.principalCents - raisedCents - pendingCents),
       daysOverdue: rules.daysOverdue(r.repaymentDate, asOf),
       amountDueCents: r.principalCents,
       paidCents,
@@ -498,7 +630,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
         note: v.decision === 'reject' && viewerId !== r.borrowerId && viewerId !== v.verifierId ? '' : v.note,
       })),
       verificationOutcome: rules.verificationOutcome(verifs, requiredApprovals),
-      contributions: contribs.map((c) => ({ contributorId: c.contributorId, amountCents: c.amountCents, createdAt: c.createdAt })),
+      // The UPI reference is for the lender and the borrower only.
+      contributions: contribs.map((c) => {
+        const out = contributionJson(c);
+        if (viewerId !== c.contributorId && viewerId !== r.borrowerId) out.utr = null;
+        return out;
+      }),
       repayments: repays.map((p) => ({ payerId: p.payerId, amountCents: p.amountCents, createdAt: p.createdAt })),
     };
   }

@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { setup } = require('./helpers/harness');
-const { startRequest } = require('./helpers/lifecycle');
+const { startRequest, connect, lend } = require('./helpers/lifecycle');
 
 
 test('feed cards carry the amount raised so far', async () => {
@@ -20,7 +20,8 @@ test('feed cards carry the amount raised so far', async () => {
     await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('zed', 'GET', '/me');
-    await s.call('zed', 'POST', `/requests/${id}/contributions`, { amount: 120 });
+    await connect(s.call, 'ann', 'zed');
+    await lend(s.call, 'zed', 'ann', id, 120);
     const feed = await s.call('ben', 'GET', '/feed');
     assert.equal(feed.status, 200);
     assert.equal(feed.body.requests[0].raisedCents, 12000);

@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { setup } = require('./helpers/harness');
+const { lend } = require('./helpers/lifecycle');
 
 // Fixed clock so date rules are deterministic.
 
@@ -19,6 +20,7 @@ async function community({ repo, call }) {
   await repo.setVerifier(ids.wes, true);
   for (const name of ['nat', 'lee', 'vee', 'wes']) {
     await call(name, 'POST', '/follows', { userId: ids.ann });
+    await call('ann', 'POST', '/follows', { userId: ids[name] });
   }
   return ids;
 }
@@ -89,8 +91,7 @@ test('a contributor sees the request under lending with their own total', async 
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
-    const c = await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 300 });
-    assert.equal(c.status, 201, JSON.stringify(c.body));
+    await lend(ctx.call, 'lee', 'ann', id, 300);
     const r = await ctx.call('lee', 'GET', '/activity');
     assert.equal(r.body.lending.length, 1);
     assert.equal(r.body.lending[0].requestId, id);
@@ -105,7 +106,7 @@ test('repayments made and received are split by who recorded them', async () => 
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
-    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 500 });
+    await lend(ctx.call, 'lee', 'ann', id, 500);
     const paid = await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { amount: 100 });
     assert.equal(paid.status, 201, JSON.stringify(paid.body));
 
@@ -156,7 +157,7 @@ test('a stranger sees no rows for a request they had no part in', async () => {
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
-    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 100 });
+    await lend(ctx.call, 'lee', 'ann', id, 100);
     const r = await ctx.call('sam', 'GET', '/activity');
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, EMPTY);
@@ -168,7 +169,7 @@ test('ledger rows never include email addresses', async () => {
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
-    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 300 });
+    await lend(ctx.call, 'lee', 'ann', id, 300);
     await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { amount: 100 });
     for (const who of ['ann', 'nat', 'lee', 'vee']) {
       const r = await ctx.call(who, 'GET', '/activity');
@@ -186,9 +187,10 @@ test('a lender sees a loan from a borrower outside their network', async () => {
     const id = await createRequest(s, ids.nat);
     await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
-    // Sam has no connection to Ann; he is only a lender here.
-    const funded = await s.call('sam', 'POST', `/requests/${id}/contributions`, { amount: 100 });
-    assert.equal(funded.status, 201);
+    // Sam is connected to Ann only (not to Nat or the verifiers); he is a lender here.
+    await s.call('sam', 'POST', '/follows', { userId: ids.ann });
+    await s.call('ann', 'POST', '/follows', { userId: ids.sam });
+    await lend(s.call, 'sam', 'ann', id, 100);
     const r = await s.call('sam', 'GET', '/activity');
     assert.equal(r.status, 200);
     assert.equal(r.body.lending.length, 1, 'the loan appears in the lender ledger');

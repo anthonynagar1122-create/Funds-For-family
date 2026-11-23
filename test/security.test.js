@@ -107,7 +107,8 @@ test('auth: every protected endpoint refuses an anonymous caller', async () => {
     const routes = [
       ['GET', '/me'], ['GET', '/users?q=ab'], ['GET', '/connections'], ['GET', '/feed'],
       ['POST', '/requests'], ['GET', '/requests/1'], ['POST', '/requests/1/verify'],
-      ['POST', '/requests/1/contributions'], ['POST', '/requests/1/repayments'],
+      ['POST', '/requests/1/contributions'], ['POST', '/contributions/1/confirm'],
+      ['POST', '/contributions/1/not-received'], ['PATCH', '/contributions/1'], ['DELETE', '/contributions/1'], ['POST', '/requests/1/repayments'],
       ['POST', '/follows'], ['POST', '/invites'],
     ];
     for (const [m, p] of routes) {
@@ -251,4 +252,38 @@ test('headers: HSTS and clickjacking protection on every page; CSP on the landin
   assert.match(landing['Content-Security-Policy'] || '', /default-src 'self'/);
   assert.match(landing['Content-Security-Policy'] || '', /frame-ancestors 'none'/);
   assert.match(landing['Content-Security-Policy'] || '', /object-src 'none'/);
+});
+
+test('access: contribution routes check role (403) and visibility (404)', async () => {
+  const { connect, startRequest, idOf } = require('./helpers/lifecycle');
+  const s = await setup();
+  try {
+    for (const n of ['ann', 'nat', 'vee', 'wes', 'bea', 'cal', 'zed']) await s.call(n, 'GET', '/me');
+    await s.repo.setVerifier(await idOf(s.call, 'vee'), true);
+    await s.repo.setVerifier(await idOf(s.call, 'wes'), true);
+    const id = await startRequest(s.call, 'ann', 'nat', { amount: 1000 });
+    await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    await connect(s.call, 'ann', 'bea');
+    await connect(s.call, 'ann', 'cal');
+    const sent = await s.call('bea', 'POST', `/requests/${id}/contributions`, { amount: 300 });
+    assert.equal(sent.status, 201, JSON.stringify(sent.body));
+    const cid = sent.body.contribution.id;
+    const other = (await s.call('cal', 'POST', `/requests/${id}/contributions`, { amount: 100 })).body.contribution.id;
+
+    assert.equal((await s.call('bea', 'POST', `/contributions/${cid}/confirm`)).status, 403, 'the lender cannot confirm their own');
+    assert.equal((await s.call('nat', 'POST', `/contributions/${cid}/confirm`)).status, 403, 'the trusted contact is not the borrower');
+    assert.equal((await s.call('cal', 'POST', `/contributions/${cid}/not-received`)).status, 403);
+    assert.equal((await s.call('cal', 'PATCH', `/contributions/${cid}`, { amount: 100 })).status, 403, 'another lender cannot edit');
+    assert.equal((await s.call('cal', 'DELETE', `/contributions/${cid}`)).status, 403);
+    assert.equal((await s.call('ann', 'DELETE', `/contributions/${cid}`)).status, 403, 'the borrower cannot delete a lender entry');
+
+    assert.equal((await s.call('zed', 'POST', `/contributions/${cid}/confirm`)).status, 404, 'a stranger sees nothing');
+    assert.equal((await s.call('zed', 'PATCH', `/contributions/${cid}`, { amount: 100 })).status, 404);
+    assert.equal((await s.call('zed', 'DELETE', `/contributions/${cid}`)).status, 404);
+    assert.equal((await s.call('ann', 'POST', '/contributions/9999/confirm')).status, 404);
+    assert.equal((await s.call('ann', 'POST', '/contributions/abc/confirm')).status, 404);
+    assert.equal(other > 0, true);
+    assert.equal((await s.repo.getContribution(cid)).status, 'sent', 'nothing changed');
+  } finally { await s.close(); }
 });

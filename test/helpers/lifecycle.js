@@ -33,4 +33,16 @@ async function startRequest(call, borrower, contact, extra = {}) {
   return id;
 }
 
-module.exports = { requestBody, idOf, connect, startRequest };
+/** A lender records "sent". With confirm, the borrower then marks it received. Returns the contribution id. */
+async function lend(call, lender, borrower, requestId, amount, { confirm = true } = {}) {
+  const sent = await call(lender, 'POST', `/requests/${requestId}/contributions`, { amount });
+  assert.equal(sent.status, 201, JSON.stringify(sent.body));
+  const id = sent.body.contribution.id;
+  if (confirm) {
+    const done = await call(borrower, 'POST', `/contributions/${id}/confirm`);
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+  }
+  return id;
+}
+
+module.exports = { requestBody, idOf, connect, startRequest, lend };
