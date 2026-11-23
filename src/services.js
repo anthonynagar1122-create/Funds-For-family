@@ -39,7 +39,6 @@ function buildProductionApp(env = process.env) {
     identify,
     mailer,
     appUrl: env.APP_URL || 'http://localhost:3000',
-    annualRate: env.INTEREST_RATE_ANNUAL ? Number(env.INTEREST_RATE_ANNUAL) : undefined,
     requiredApprovals: env.REQUIRED_APPROVALS ? Number(env.REQUIRED_APPROVALS) : undefined,
   });
 

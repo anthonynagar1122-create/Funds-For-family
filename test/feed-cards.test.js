@@ -39,7 +39,7 @@ test('feed cards carry the amount raised so far', async () => {
     await s.repo.setVerifier(wes.id, true);
     await s.call('ben', 'GET', '/me');
     await s.call('ben', 'POST', '/follows', { userId: ann.id });
-    const id = (await s.call('ann', 'POST', '/requests', { amount: 500, purpose: 'School fees for the second term at the college', repaymentDate: '2027-02-01', nomineeId: nat.id })).body.request.id;
+    const id = (await s.call('ann', 'POST', '/requests', { amount: 500, purpose: 'School fees for the second term at the college', repaymentDate: '2027-02-01', category: 'education', trustedContactId: nat.id })).body.request.id;
     await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('zed', 'GET', '/me');

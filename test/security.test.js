@@ -45,7 +45,8 @@ const validRequest = (nomineeId, extra = {}) => ({
   amount: 500,
   purpose: 'School fees for the second term at the local college',
   repaymentDate: '2027-02-01',
-  nomineeId,
+  category: 'education',
+  trustedContactId: nomineeId,
   ...extra,
 });
 

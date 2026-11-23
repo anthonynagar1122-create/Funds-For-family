@@ -10,11 +10,10 @@ const rules = require('./rules');
  *   mailer      async ({ to, subject, html }) => void            (Resend in production)
  *   now         () => Date
  *   appUrl      string, used in email links
- *   annualRate  number, default rules.DEFAULT_ANNUAL_RATE
  *   requiredApprovals number, default rules.DEFAULT_REQUIRED_APPROVALS
  */
 function createApp({ repo, identify, mailer = async () => {}, now = () => new Date(), appUrl = 'http://localhost:3000',
-  annualRate = rules.DEFAULT_ANNUAL_RATE, requiredApprovals = rules.DEFAULT_REQUIRED_APPROVALS, logger = console }) {
+  requiredApprovals = rules.DEFAULT_REQUIRED_APPROVALS, logger = console }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '32kb' }));
@@ -110,10 +109,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
 
   api.get('/feed', async (req, res) => {
     const { following, followers } = await repo.connections(req.user.id);
-    const ids = rules.FEED_MODE === 'mutual'
-      ? following.filter((id) => followers.includes(id))
-      : [...new Set([...following, ...followers, req.user.id])];
-    const rows = (await repo.listFeed(ids)).filter((r) => rules.isFeedStatus(r.status));
+    const ids = [...new Set([...following, ...followers, req.user.id])];
+    // Interim filter; Task 9 rewrites the feed.
+    const rows = (await repo.listFeed(ids)).filter((r) => ['open', 'funded', 'repaid'].includes(r.status));
     const withRaised = await Promise.all(rows.map(async (r) => {
       const raisedCents = (await repo.listContributions(r.id)).reduce((sum, c) => sum + c.amountCents, 0);
       return { ...summarise(r, now()), raisedCents };
@@ -163,10 +161,10 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const { errors, value } = rules.validateRequest(req.body, { borrowerId: req.user.id, now: now() });
     const first = Object.keys(errors)[0];
     if (first) return fail(res, 400, errors[first], first);
-    if (!(await repo.getUser(value.nomineeId))) return fail(res, 400, 'Nominee must be an existing member', 'nomineeId');
+    if (!(await repo.getUser(value.trustedContactId))) return fail(res, 400, 'Choose a trusted contact', 'trustedContactId');
     const created = await repo.createRequest({
       borrowerId: req.user.id,
-      nomineeId: value.nomineeId,
+      nomineeId: value.trustedContactId,
       purpose: value.purpose,
       principalCents: value.principalCents,
       repaymentDate: value.repaymentDate,
@@ -186,7 +184,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (!r) return fail(res, 404, 'Request not found');
     const decision = req.body?.decision;
     if (decision !== 'approve' && decision !== 'reject') return fail(res, 400, 'decision must be approve or reject', 'decision');
-    const check = rules.canVerify({ verifier: req.user, requestBorrowerId: r.borrowerId, requestNomineeId: r.nomineeId, requestStatus: r.status });
+    const check = rules.canVerify({ verifier: req.user, borrowerId: r.borrowerId, trustedContactId: r.nomineeId, status: r.status });
     if (!check.ok) return fail(res, 403, check.reason);
     const note = String(req.body?.note ?? '').slice(0, 1000);
     await repo.addVerification({ requestId: r.id, verifierId: req.user.id, decision, note, createdAt: now().toISOString() });
@@ -235,7 +233,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (amountCents === null) return fail(res, 400, 'Amount must be a positive number with at most 2 decimals', 'amount');
     await repo.addRepayment({ requestId: r.id, payerId: req.user.id, amountCents, createdAt: now().toISOString() });
     const paid = (await repo.listRepayments(r.id)).reduce((s, p) => s + p.amountCents, 0);
-    const due = rules.amountDueCents(r.principalCents, r.repaymentDate, now(), annualRate);
+    const due = r.principalCents;
     if (paid >= due) await repo.setRequestStatus(r.id, { status: 'repaid', repaidAt: now().toISOString() });
     res.status(201).json({ request: await detail(await repo.getRequest(r.id)) });
   });
@@ -276,14 +274,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const [verifs, contribs, repays] = await Promise.all([repo.listVerifications(r.id), repo.listContributions(r.id), repo.listRepayments(r.id)]);
     const raisedCents = contribs.reduce((s, c) => s + c.amountCents, 0);
     const paidCents = repays.reduce((s, p) => s + p.amountCents, 0);
-    const interest = rules.interestCents(r.principalCents, r.repaymentDate, asOf, annualRate);
     return {
       ...summarise(r, asOf),
       raisedCents,
       remainingCents: Math.max(0, r.principalCents - raisedCents),
       daysOverdue: rules.daysOverdue(r.repaymentDate, asOf),
-      interestCents: interest,
-      amountDueCents: r.principalCents + interest,
+      amountDueCents: r.principalCents,
       paidCents,
       verifications: verifs.map((v) => ({ verifierId: v.verifierId, decision: v.decision, note: v.note })),
       verificationOutcome: rules.verificationOutcome(verifs, requiredApprovals),

@@ -37,7 +37,8 @@ const validRequest = (nomineeId) => ({
   amount: 500,
   purpose: 'School fees for the second term at the local college',
   repaymentDate: '2027-02-01',
-  nomineeId,
+  category: 'education',
+  trustedContactId: nomineeId,
 });
 
 test('requests without a signed-in user are rejected', async () => {
@@ -60,13 +61,13 @@ test('a member creates a request; it starts pending verification and is hidden f
   } finally { await close(); }
 });
 
-test('nominee must exist and cannot be the borrower', async () => {
+test('trusted contact must exist and cannot be the borrower', async () => {
   const { call, close } = await setup();
   try {
     await call('ann', 'GET', '/me');
     const self = await call('ann', 'POST', '/requests', validRequest(1));
     assert.equal(self.status, 400);
-    assert.equal(self.body.field, 'nomineeId');
+    assert.equal(self.body.field, 'trustedContactId');
     const missing = await call('ann', 'POST', '/requests', validRequest(999));
     assert.equal(missing.status, 400);
   } finally { await close(); }
@@ -131,7 +132,7 @@ test('contributions are capped, fund the request, and reject self-funding', asyn
   } finally { await close(); }
 });
 
-test('repayment by the nominee closes the request once the amount due is paid; interest accrues after the due date', async () => {
+test('repayment by the trusted contact closes the request once the principal is repaid (no interest)', async () => {
   const { repo, call, close } = await setup();
   try {
     const nat = (await call('nat', 'GET', '/me')).body.user;

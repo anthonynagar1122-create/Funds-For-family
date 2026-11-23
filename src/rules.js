@@ -1,16 +1,20 @@
 'use strict';
 // Pure business rules. No I/O: safe to unit-test and to reuse on server and client.
 
+const { parseRupees } = require('../public/app/money');
+
 const PURPOSE_MIN_LENGTH = 20;
 const PURPOSE_MAX_LENGTH = 2000;
-const AMOUNT_MAX = 1000000;        // dollars; keeps cents well inside the 32-bit integer column
-const DEFAULT_ANNUAL_RATE = 0.12;   // ⚠ assumption, see docs/01-idea.md
+const AMOUNT_MIN_PAISE = 10000;     // Rs 100
+const AMOUNT_MAX_PAISE = 5000000;   // Rs 50,000
+const CATEGORIES = ['education', 'medical', 'home', 'family_event', 'work', 'emergency', 'other'];
+const ACTIVE_STATUSES = ['awaiting_contact', 'contact_declined', 'pending_verification', 'open', 'funded'];
+const MAX_ACTIVE_AS_CONTACT = 3;
+const REASON_MIN_LENGTH = 10;
+const REASON_MAX_LENGTH = 500;
 const DEFAULT_REQUIRED_APPROVALS = 2;
 const MS_PER_DAY = 86400000;
-
-// Feed visibility mode. 'followings_and_followers' matches the handwritten notes
-// ("followings and followers"); 'mutual' would show only people who follow each other.
-const FEED_MODE = 'followings_and_followers';
+const IST_OFFSET_MS = 330 * 60000;  // Asia/Kolkata, UTC+05:30, no daylight saving
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -24,24 +28,25 @@ function dayNumber(dateStr) {
   return Math.floor(Date.parse(`${dateStr}T00:00:00Z`) / MS_PER_DAY);
 }
 
-function todayUtc(now) {
-  return now.toISOString().slice(0, 10);
+/** Calendar date in India, 'YYYY-MM-DD'. */
+function todayIst(now) {
+  return new Date(now.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Add whole months to a 'YYYY-MM-DD' date, clamped to the month end (2026-01-31 + 1 = 2026-02-28). */
+function addMonths(date, n) {
+  const [y, m, d] = date.split('-').map(Number);
+  const total = y * 12 + (m - 1) + n;
+  const year = Math.floor(total / 12);
+  const month = total % 12;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const pad = (v, w) => String(v).padStart(w, '0');
+  return `${pad(year, 4)}-${pad(month + 1, 2)}-${pad(Math.min(d, lastDay), 2)}`;
 }
 
 /** Whole days the repayment is late. 0 on or before the due date. */
 function daysOverdue(dueDate, now) {
-  return Math.max(0, dayNumber(todayUtc(now)) - dayNumber(dueDate));
-}
-
-/** Simple interest, accrued daily after the due date. Integer cents. */
-function interestCents(principalCents, dueDate, now, annualRate = DEFAULT_ANNUAL_RATE) {
-  const days = daysOverdue(dueDate, now);
-  if (days === 0) return 0;
-  return Math.round((principalCents * annualRate * days) / 365);
-}
-
-function amountDueCents(principalCents, dueDate, now, annualRate = DEFAULT_ANNUAL_RATE) {
-  return principalCents + interestCents(principalCents, dueDate, now, annualRate);
+  return Math.max(0, dayNumber(todayIst(now)) - dayNumber(dueDate));
 }
 
 /**
@@ -52,15 +57,11 @@ function validateRequest(input, { borrowerId, now }) {
   const errors = {};
   const value = {};
 
-  const amount = Number(input?.amount);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    errors.amount = 'Amount must be a positive number';
-  } else if (amount > AMOUNT_MAX) {
-    errors.amount = `Amount cannot exceed ${AMOUNT_MAX}`;
-  } else if (Math.round(amount * 100) !== amount * 100) {
-    errors.amount = 'Amount can have at most 2 decimal places';
+  const parsed = parseRupees(input?.amount);
+  if (parsed.error || parsed.paise < AMOUNT_MIN_PAISE || parsed.paise > AMOUNT_MAX_PAISE) {
+    errors.amount = 'Enter an amount from ₹100 to ₹50,000';
   } else {
-    value.principalCents = Math.round(amount * 100);
+    value.principalCents = parsed.paise;
   }
 
   const purpose = typeof input?.purpose === 'string' ? input.purpose.trim() : '';
@@ -72,22 +73,71 @@ function validateRequest(input, { borrowerId, now }) {
     value.purpose = purpose;
   }
 
+  if (!CATEGORIES.includes(input?.category)) {
+    errors.category = 'Choose a category';
+  } else {
+    value.category = input.category;
+  }
+
+  const today = todayIst(now);
   if (!isIsoDate(input?.repaymentDate)) {
     errors.repaymentDate = 'Repayment date must be a valid YYYY-MM-DD date';
-  } else if (input.repaymentDate <= todayUtc(now)) {
+  } else if (input.repaymentDate <= today) {
     errors.repaymentDate = 'Repayment date must be after today';
+  } else if (input.repaymentDate > addMonths(today, 12)) {
+    errors.repaymentDate = 'Choose a date within 12 months';
   } else {
     value.repaymentDate = input.repaymentDate;
   }
 
-  if (!input?.nomineeId) {
-    errors.nomineeId = 'Choose a nominee who will repay if the borrower cannot';
-  } else if (input.nomineeId === borrowerId) {
-    errors.nomineeId = 'The nominee cannot be the borrower';
+  if (!input?.trustedContactId) {
+    errors.trustedContactId = 'Choose a trusted contact';
+  } else if (input.trustedContactId === borrowerId) {
+    errors.trustedContactId = 'Choose a trusted contact';
   } else {
-    value.nomineeId = input.nomineeId;
+    value.trustedContactId = input.trustedContactId;
   }
 
+  return { errors, value };
+}
+
+/** A borrower may have one active request at a time. */
+function checkCanCreateRequest({ borrowerActiveCount }) {
+  if (borrowerActiveCount >= 1) {
+    return { ok: false, reason: 'You already have an active request. Finish or withdraw it first.' };
+  }
+  return { ok: true };
+}
+
+/** A trusted contact must be a mutual connection and carry a limited load. */
+function checkTrustedContact({ borrowerId, contactId, isMutual, contactActiveCount }) {
+  if (!contactId || contactId === borrowerId) return { ok: false, reason: 'Choose a trusted contact' };
+  if (!isMutual) return { ok: false, reason: 'Your trusted contact must be someone you follow who follows you back' };
+  if (contactActiveCount >= MAX_ACTIVE_AS_CONTACT) {
+    return { ok: false, reason: `This person is already the trusted contact on ${MAX_ACTIVE_AS_CONTACT} requests` };
+  }
+  return { ok: true };
+}
+
+/** Validate a verifier's decision. A reason is required to reject. Returns { errors, value }. */
+function validateVerification({ decision, reason } = {}) {
+  const errors = {};
+  const value = {};
+  if (decision !== 'approve' && decision !== 'reject') {
+    errors.decision = 'Decision must be approve or reject';
+    return { errors, value };
+  }
+  value.decision = decision;
+  const text = typeof reason === 'string' ? reason.trim() : '';
+  if (decision === 'reject') {
+    if (text.length < REASON_MIN_LENGTH || text.length > REASON_MAX_LENGTH) {
+      errors.reason = `Give a reason of ${REASON_MIN_LENGTH} to ${REASON_MAX_LENGTH} characters`;
+    } else {
+      value.reason = text;
+    }
+  } else if (text) {
+    value.reason = text.slice(0, REASON_MAX_LENGTH);
+  }
   return { errors, value };
 }
 
@@ -102,12 +152,12 @@ function verificationOutcome(verifications, requiredApprovals = DEFAULT_REQUIRED
 }
 
 /** Whether a verifier may decide on a request. */
-function canVerify({ verifier, requestBorrowerId, requestNomineeId, requestStatus }) {
+function canVerify({ verifier, borrowerId, trustedContactId, status }) {
   if (!verifier?.isVerifier) return { ok: false, reason: 'Only verification team members can verify' };
-  if (verifier.id === requestBorrowerId || verifier.id === requestNomineeId) {
+  if (verifier.id === borrowerId || verifier.id === trustedContactId) {
     return { ok: false, reason: 'You cannot verify your own request' };
   }
-  if (requestStatus !== 'pending_verification') {
+  if (status !== 'pending_verification') {
     return { ok: false, reason: 'This request is no longer awaiting verification' };
   }
   return { ok: true };
@@ -129,30 +179,29 @@ function checkContribution({ amountCents, principalCents, raisedCents, contribut
 
 /** Stored status plus derived 'overdue'. */
 function effectiveStatus(request, now) {
-  if (request.status === 'funded' && daysOverdue(request.repaymentDate, now) > 0) return 'overdue';
+  if (request.status === 'funded' && todayIst(now) > request.repaymentDate) return 'overdue';
   return request.status;
-}
-
-/** Which statuses appear in the public feed. */
-function isFeedStatus(status) {
-  return status === 'open' || status === 'funded' || status === 'repaid';
 }
 
 module.exports = {
   PURPOSE_MIN_LENGTH,
   PURPOSE_MAX_LENGTH,
-  AMOUNT_MAX,
-  DEFAULT_ANNUAL_RATE,
+  AMOUNT_MIN_PAISE,
+  AMOUNT_MAX_PAISE,
+  CATEGORIES,
+  ACTIVE_STATUSES,
+  MAX_ACTIVE_AS_CONTACT,
   DEFAULT_REQUIRED_APPROVALS,
-  FEED_MODE,
   isIsoDate,
+  todayIst,
+  addMonths,
   daysOverdue,
-  interestCents,
-  amountDueCents,
   validateRequest,
+  checkCanCreateRequest,
+  checkTrustedContact,
+  validateVerification,
   verificationOutcome,
   canVerify,
   checkContribution,
   effectiveStatus,
-  isFeedStatus,
 };
