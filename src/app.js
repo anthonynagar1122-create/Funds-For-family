@@ -305,22 +305,22 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       const need = (kind, extra = {}) => needsYou.push({ kind, requestId: r.id, ...extra });
       if (r.borrowerId === me) {
         myRequests.push({ ...summarise(r, asOf, me), totals, raisedCents: totals.confirmedCents });
-        if (r.status === 'contact_declined') need('repick_contact');
+        if (r.status === 'contact_declined') need('repick_contact', { otherUserId: r.trustedContactId });
         if (r.status === 'open') {
           for (const c of contribs.filter((x) => x.status === 'sent')) {
-            need('confirm_contribution', { entryId: c.id, amountCents: c.amountCents, fromUserId: c.contributorId });
+            need('confirm_contribution', { entryId: c.id, amountCents: c.amountCents, fromUserId: c.contributorId, otherUserId: c.contributorId });
           }
         }
       }
-      if (r.trustedContactId === me && r.status === 'awaiting_contact') need('contact_decision');
+      if (r.trustedContactId === me && r.status === 'awaiting_contact') need('contact_decision', { otherUserId: r.borrowerId });
       if (r.status === 'pending_verification' && req.user.isVerifier && r.borrowerId !== me && r.trustedContactId !== me
-        && !verifs.some((v) => v.verifierId === me)) need('verify');
+        && !verifs.some((v) => v.verifierId === me)) need('verify', { otherUserId: r.borrowerId });
       for (const c of contribs.filter((x) => x.contributorId === me && x.status === 'not_received')) {
-        need('fix_contribution', { entryId: c.id, amountCents: c.amountCents });
+        need('fix_contribution', { entryId: c.id, amountCents: c.amountCents, otherUserId: r.borrowerId });
       }
       for (const p of repays) {
-        if (p.lenderId === me && p.status === 'sent') need('confirm_repayment', { entryId: p.id, amountCents: p.amountCents, fromUserId: p.payerId });
-        if (p.payerId === me && p.status === 'not_received') need('fix_repayment', { entryId: p.id, amountCents: p.amountCents });
+        if (p.lenderId === me && p.status === 'sent') need('confirm_repayment', { entryId: p.id, amountCents: p.amountCents, fromUserId: p.payerId, otherUserId: p.payerId });
+        if (p.payerId === me && p.status === 'not_received') need('fix_repayment', { entryId: p.id, amountCents: p.amountCents, otherUserId: p.lenderId });
       }
       if (contribs.some((c) => c.contributorId === me)) {
         const owed = rules.owedByLender(contribs.map((c) => ({ ...c, lenderId: c.contributorId })), repays).get(me)
@@ -332,22 +332,17 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (req.user.isVerifier) {
       for (const r of await repo.listRequestsByStatus('pending_verification')) {
         if (seen.has(r.id) || r.borrowerId === me || r.trustedContactId === me) continue;
-        needsYou.push({ kind: 'verify', requestId: r.id });
+        needsYou.push({ kind: 'verify', requestId: r.id, otherUserId: r.borrowerId });
       }
     }
-    // The other member's first name only, so the home page can say who each item is about. No email or UPI.
+    // The counterparty's display name only (otherUserId is who the item is about), so the home page can say who. No email or UPI.
     const nameCache = new Map();
     const nameOf = async (id) => {
       if (id === null || id === undefined) return null;
       if (!nameCache.has(id)) nameCache.set(id, (await repo.getUser(id).catch(() => null))?.name ?? null);
       return nameCache.get(id);
     };
-    const reqById = new Map(mine.map((r) => [r.id, r]));
-    for (const n of needsYou) {
-      const r = reqById.get(n.requestId) ?? (await repo.getRequest(n.requestId).catch(() => null));
-      const otherId = n.fromUserId ?? (n.kind === 'repick_contact' ? r?.trustedContactId : r?.borrowerId);
-      n.otherName = await nameOf(otherId);
-    }
+    for (const n of needsYou) n.otherName = await nameOf(n.otherUserId);
     res.json({ needsYou, myRequests, myLending });
   });
 

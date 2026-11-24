@@ -871,7 +871,18 @@ test('home: confirm_contribution, fix_*, confirm_repayment, contact_decision, ve
     const ben = (await call('ben', 'GET', '/home')).body;
     assert.ok(ben.needsYou.some((n) => n.kind === 'confirm_repayment' && n.entryId === rep.body.repayment.id && n.fromUserId === natId));
     await call('ben', 'POST', `/repayments/${rep.body.repayment.id}/not-received`);
-    assert.ok((await call('nat', 'GET', '/home')).body.needsYou.some((n) => n.kind === 'fix_repayment' && n.entryId === rep.body.repayment.id));
+    const fixNat = (await call('nat', 'GET', '/home')).body.needsYou.find((n) => n.kind === 'fix_repayment' && n.entryId === rep.body.repayment.id);
+    assert.ok(fixNat);
+    assert.equal(fixNat.otherUserId, await idOf(call, 'ben'));
+    assert.equal(fixNat.otherName, (await call('ben', 'GET', '/me')).body.user.name, 'the lender, not the payer');
+    // The borrower records a repayment too: their fix_repayment names the lender, never themself.
+    const rep2 = await call('ann', 'POST', `/requests/${id}/repayments`, { lenderId: await idOf(call, 'ben'), amount: 100 });
+    assert.equal(rep2.status, 201);
+    await call('ben', 'POST', `/repayments/${rep2.body.repayment.id}/not-received`);
+    const fixAnn = (await call('ann', 'GET', '/home')).body.needsYou.find((n) => n.kind === 'fix_repayment' && n.entryId === rep2.body.repayment.id);
+    assert.ok(fixAnn);
+    assert.equal(fixAnn.otherName, (await call('ben', 'GET', '/me')).body.user.name);
+    assert.notEqual(fixAnn.otherName, (await call('ann', 'GET', '/me')).body.user.name);
     assert.ok(annId);
   } finally { await close(); }
 });
