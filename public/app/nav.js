@@ -46,7 +46,7 @@
     const nav = document.getElementById('primary-nav');
     if (!nav) return;
     const tabs = [...MEMBER_TABS];
-    if (me && (me.isAdmin === true || me.isVerifier === true)) tabs.push({ id: 'workspace', label: 'Workspace', cls: 'tab-workspace' });
+    if (me && (me.isAdmin === true || me.isVerifier === true)) tabs.push({ id: 'workspace', label: me.isAdmin ? 'Admin' : 'Verify', cls: 'tab-workspace' });
     const active = TAB_FOR[route.name];
     nav.hidden = !me || me.welcomedAt === null || me.termsAcceptedAt === null;
     nav.innerHTML = tabs.map((t) => {
