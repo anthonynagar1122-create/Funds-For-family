@@ -84,116 +84,11 @@
   }
 
   // ---- Request detail ----
-  // Minimal markup: the Phase B redesign replaces this page.
   async function renderDetail(id) {
     show('view-detail');
-    const { request: r } = await api(`/requests/${id}`);
-    const confirmed = r.totals?.confirmedCents ?? 0;
-    const pending = r.totals?.pendingCents ?? 0;
-    const pct = r.principalCents > 0 ? Math.min(100, Math.floor((confirmed * 100) / r.principalCents)) : 0;
-    const lenders = r.lenders || [];
-    const contributions = r.contributions || [];
-    const repayments = r.repayments || [];
-    const ids = new Set([r.borrowerId, r.trustedContactId, ...lenders.map((l) => l.userId), ...contributions.map((c) => c.contributorId), ...repayments.flatMap((p) => [p.payerId, p.lenderId])]);
-    const names = new Map(await Promise.all([...ids].map(async (uid) => [uid, await userName(uid)])));
-    const name = (uid) => names.get(uid) ?? 'Member';
-    // Every role-based decision comes from the card model, so the page and the cards cannot disagree.
-    const card = CardModel.requestCard(r, me);
-    const can = (aid) => card.actions.some((a) => a.id === aid);
-    const isBorrower = me.id === r.borrowerId;
-    const repayable = can('repay');
-    const utr = (x) => (x.utr ? ` · UTR ${esc(x.utr)}` : '');
-
-    const contributionRow = (c) => `<li>${esc(name(c.contributorId))} · ${money(c.amountCents)} · ${esc(c.status)}${utr(c)}
-        ${isBorrower && c.status === 'sent' ? `<span class="row-actions">
-          <button class="btn btn-sm btn-primary" type="button" data-confirm-contribution="${esc(c.id)}">Confirm</button>
-          <button class="btn btn-sm btn-ghost" type="button" data-notreceived-contribution="${esc(c.id)}">Not received</button></span>` : ''}</li>`;
-    const repaymentRow = (p) => `<li>${esc(name(p.payerId))} to ${esc(name(p.lenderId))} · ${money(p.amountCents)} · ${esc(p.status)}${utr(p)}
-        ${me.id === p.lenderId && p.status === 'sent' ? `<span class="row-actions">
-          <button class="btn btn-sm btn-primary" type="button" data-confirm-repayment="${esc(p.id)}">Confirm</button>
-          <button class="btn btn-sm btn-ghost" type="button" data-notreceived-repayment="${esc(p.id)}">Not received</button></span>` : ''}</li>`;
-    const lenderRow = (l) => `<li class="lender-row"><strong>${esc(name(l.userId))}</strong>
-        <span class="muted">lent ${money(l.lentCents)} · repaid ${money(l.repaidCents)}${l.pendingRepayCents > 0 ? ` · ${money(l.pendingRepayCents)} awaiting confirmation` : ''} · still owed ${money(l.owedCents)}</span>
-        ${repayable && l.owedCents > 0 ? `<form class="repay-form form" data-lender="${esc(l.userId)}">
-          <label for="p-amount-${esc(l.userId)}">Repay ${esc(name(l.userId))} (₹)</label>
-          <input id="p-amount-${esc(l.userId)}" name="amount" type="text" inputmode="decimal" autocomplete="off" required>
-          <label for="p-utr-${esc(l.userId)}">UTR (optional)</label>
-          <input id="p-utr-${esc(l.userId)}" name="utr" type="text" autocomplete="off">
-          <p class="error" role="alert"></p>
-          <button class="btn btn-primary" type="submit">Repay</button></form>` : ''}</li>`;
-
-    $('#detail').innerHTML = `
-      <p><a href="#/home">← Back to home</a></p>
-      <h1 id="detail-title">${esc(r.purpose)}</h1>
-      <div class="meta">${statusBadge(r.status)}<span>Requested by ${esc(name(r.borrowerId))}</span><span>Trusted contact: ${esc(name(r.trustedContactId))}</span></div>
-      <div class="meta"><span>Amount ${money(r.principalCents)}</span><span>Repay by ${esc(r.repaymentDate)}</span>
-        ${r.daysOverdue > 0 ? `<span>${r.daysOverdue} days overdue</span>` : ''}</div>
-      ${r.rejectionReason ? `<p class="error">${esc(r.rejectionReason)}</p>` : ''}
-      ${['open', 'funded', 'overdue', 'repaid'].includes(r.status) ? `
-        <div class="progress" role="progressbar" aria-label="Funding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
-        <p class="muted">${money(confirmed)} confirmed · ${money(pending)} pending · of ${money(r.principalCents)}</p>` : ''}
-      ${can('contact-accept') ? `
-        <div class="row-actions" style="margin-top:16px">
-          <button class="btn btn-primary" type="button" data-contact="accept">Accept</button>
-          <button class="btn btn-secondary" type="button" data-contact="decline">Decline</button></div>` : ''}
-      <h2>Verification</h2>
-      <ul class="list">${r.verifications.length ? r.verifications.map((v) => `<li>${v.decision === 'approve' ? 'Approved' : 'Rejected'}${v.note ? ': ' + esc(v.note) : ''}</li>`).join('') : '<li class="muted">No decisions yet. Two approvals are needed.</li>'}</ul>
-      ${can('verify-approve') ? `
-        <form id="verify-form" class="form" style="margin-top:16px">
-          <div class="field"><label for="v-note">Note (optional)</label><textarea id="v-note" rows="2" maxlength="1000"></textarea></div>
-          <div class="row-actions">
-            <button class="btn btn-primary" name="decision" value="approve" type="submit">Approve purpose</button>
-            <button class="btn btn-secondary" name="decision" value="reject" type="submit">Reject</button>
-          </div>
-        </form>` : ''}
-      ${can('contribute') ? `
-        ${(r.payTo || []).length ? `<h2>Send the money by UPI</h2><ul class="list">${r.payTo.map((t) => `<li>${esc(t.name)}: ${esc(t.upiId)}</li>`).join('')}</ul>` : ''}
-        <form id="fund-form" class="form" style="margin-top:16px">
-          <div class="field"><label for="c-amount">Amount you sent (₹, up to ${money(r.remainingCents)})</label>
-            <input id="c-amount" type="text" inputmode="decimal" autocomplete="off" required>
-            <label for="c-utr">UTR (optional)</label>
-            <input id="c-utr" type="text" autocomplete="off">
-            <p class="error" id="e-fund" role="alert"></p></div>
-          <button class="btn btn-primary" type="submit">I've sent it</button>
-        </form>` : ''}
-      ${lenders.length ? `<h2>Lenders</h2><ul class="list">${lenders.map(lenderRow).join('')}</ul>` : ''}
-      ${contributions.length ? `<h2>Contributions</h2><ul class="list">${contributions.map(contributionRow).join('')}</ul>` : ''}
-      ${repayments.length ? `<h2>Repayments</h2><ul class="list">${repayments.map(repaymentRow).join('')}</ul>` : ''}
-      <p class="muted" style="margin-top:24px">Payments are recorded here for transparency. No money moves through this app. A payment counts once the person receiving it confirms.</p>`;
-
-    const act = async (path, body, message) => {
-      try { await api(path, { method: 'POST', body: body ?? {} }); toast(message); renderDetail(id); }
-      catch (err) { toast(err.message); }
-    };
-    const detailEl = $('#detail');
-    detailEl.querySelectorAll('[data-contact]').forEach((b) => b.addEventListener('click', () => act(`/requests/${id}/contact-decision`, { decision: b.dataset.contact }, 'Answer recorded')));
-    detailEl.querySelectorAll('[data-confirm-contribution]').forEach((b) => b.addEventListener('click', () => act(`/contributions/${b.dataset.confirmContribution}/confirm`, null, 'Contribution confirmed')));
-    detailEl.querySelectorAll('[data-notreceived-contribution]').forEach((b) => b.addEventListener('click', () => act(`/contributions/${b.dataset.notreceivedContribution}/not-received`, null, 'Marked as not received')));
-    detailEl.querySelectorAll('[data-confirm-repayment]').forEach((b) => b.addEventListener('click', () => act(`/repayments/${b.dataset.confirmRepayment}/confirm`, null, 'Repayment confirmed')));
-    detailEl.querySelectorAll('[data-notreceived-repayment]').forEach((b) => b.addEventListener('click', () => act(`/repayments/${b.dataset.notreceivedRepayment}/not-received`, null, 'Marked as not received')));
-
-    $('#verify-form')?.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const decision = ev.submitter.value;
-      act(`/requests/${id}/verify`, { decision, note: $('#v-note').value }, 'Decision recorded');
-    });
-    $('#fund-form')?.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const input = $('#c-amount');
-      const body = { amount: input.value.trim() };
-      const code = $('#c-utr').value.trim();
-      if (code) body.utr = code;
-      try { await api(`/requests/${id}/contributions`, { method: 'POST', body }); toast('Thank you. The borrower will confirm it.'); renderDetail(id); }
-      catch (err) { $('#e-fund').textContent = err.message; input.setAttribute('aria-invalid', 'true'); input.focus(); }
-    });
-    detailEl.querySelectorAll('.repay-form').forEach((form) => form.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const input = form.elements.amount;
-      try {
-        await api(`/requests/${id}/repayments`, { method: 'POST', body: { lenderId: Number(form.dataset.lender), amount: input.value.trim(), utr: form.elements.utr.value.trim() } });
-        toast('Repayment recorded. The lender will confirm it.'); renderDetail(id);
-      } catch (err) { form.querySelector('.error').textContent = err.message; input.setAttribute('aria-invalid', 'true'); input.focus(); }
-    }));
+    try { await RequestPage.render($('#detail'), { id, me, userName, toast, rerender: () => renderDetail(id) }); }
+    catch (err) { $('#detail').innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`; }
+    $('#detail-title')?.focus();
   }
 
   // ---- My activity (loop A) ----

@@ -4,8 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
-const detail = js.slice(js.indexOf('async function renderDetail'), js.indexOf('// ---- People'));
+const detail = fs.readFileSync(path.join(__dirname, '..', 'public', 'app', 'pages', 'request.js'), 'utf8');
 
 test('the detail page builds its actions from the card model', () => {
   assert.match(detail, /CardModel\.requestCard\(/);
