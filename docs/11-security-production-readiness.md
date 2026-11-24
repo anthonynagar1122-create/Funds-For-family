@@ -13,6 +13,7 @@ Scope: current Clerk + Express + Supabase Postgres + Vercel application
 5. Never run schema changes against production until the migration has been reviewed and tested against an isolated preview database.
 6. Money is represented as integer paise. Financial mutations must be atomic, idempotent and auditable.
 7. A successful redirect, UI toast or client-supplied amount is never proof of a payment. Current v1 records direct transfers; it does not process money.
+8. **Interest is disabled in v1.** The product records principal only; no interest, late fee, penalty or compounding calculation may be charged or shown as payable. Revisit only after owner approval and qualified legal/compliance review.
 
 ## Verified baseline
 
@@ -25,6 +26,7 @@ Scope: current Clerk + Express + Supabase Postgres + Vercel application
 - Existing tests cover anonymous access, role checks, IDOR, input validation, secret patterns and generic error responses.
 - The database currently has RLS enabled on seven tables and no direct policies. This is default-deny for API roles when no grants/policies exist; do not add permissive browser policies merely to silence an informational linter warning.
 - The live database schema is still at the initial migration and does not match the current repository contract. The additive migration `0002_align_current_application_schema.sql` is prepared but NOT applied.
+- The public landing page already states “No interest”; preserve that statement and ensure app/API calculations remain principal-only.
 
 ## 27-control implementation register
 
@@ -87,9 +89,10 @@ A release is not production-ready until:
 - production deployment branch and rollback target are confirmed;
 - no unresolved P0 security or ledger issue remains.
 
-## Known decisions awaiting owner approval
+## Owner decisions — confirmed
 
-- Interest policy: product idea notes describe 12% annual simple interest accruing daily after the due date, but this is an explicit assumption and needs owner/legal review before being treated as a binding financial rule.
-- Preview database: create/identify a non-production Supabase project and configure its credentials in Vercel Preview.
-- Rate limiting: approve Upstash (or select an existing distributed rate-limit service).
+- **Interest policy: review; disabled until approval.** No interest or late-fee calculations are active in v1. The prior 12% annual simple-interest note is an unapproved proposal only and must not be implemented as a financial rule.
+- **Navigation: separate Member and Admin/Verifier workspaces.** Member navigation stays focused on personal borrowing/lending and circle activity. Admin/Verifier tools are a distinct workspace and require server-confirmed roles on every route and API action.
+- Preview database: identify or provision a non-production Supabase project and configure its credentials in Vercel Preview.
+- Rate limiting: Upstash is recommended but not connected or approved for paid usage yet.
 - Production deployment: requires explicit approval after Preview acceptance.
