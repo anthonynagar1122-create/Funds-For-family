@@ -1,6 +1,6 @@
 # Funds For Family
 
-A community web app where members request small, purpose-checked loans from their trusted circle. Anyone in the network can fund a request in any amount. A verification team checks the purpose, a nominee stands behind the repayment, and interest starts after the due date.
+A community web app where members request small, purpose-checked loans from their trusted circle. A verification team checks the purpose, members record transfers directly, and both sides confirm receipts. Interest is disabled while the policy is under review; the app does not move money.
 
 **Stack:** Vercel (hosting) · Supabase (Postgres) · Clerk (sign-in) · Resend (email) · GitHub (source).
 
@@ -34,4 +34,4 @@ The database schema is in `supabase/migrations/0001_init.sql`. Apply it to your 
 See [docs/05-integration.md](docs/05-integration.md#deployment-order). In short: migrate Supabase, set Clerk and Resend keys, import the repo into Vercel, then promote a verifier with `node scripts/make-verifier.js <email>`.
 
 ## Project status
-Pre-launch. Interest rate (12%/yr), verification threshold (2 approvals) and the feed rule (followings and followers) are assumptions to confirm. See `docs/01-idea.md`.
+Pre-launch. Interest is disabled pending owner and legal/compliance review. Verification threshold (2 approvals) and feed rule (followings and followers) remain product rules to validate. See `docs/01-idea.md`.
