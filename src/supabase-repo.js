@@ -123,12 +123,14 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     },
     async listUsers({ query = '', limit = 100 } = {}) {
       const cap = Math.min(Math.max(limit, 1), 200);
-      const base = () => db.from('users').select().order('id', { ascending: false }).limit(cap);
+      const base = () => db.from('users').select().is('deleted_at', null).order('id', { ascending: false }).limit(cap);
       if (!query) return list(check(await base()), USER);
-      const byName = await base().ilike('name', '%' + likeEscape(query) + '%');
-      const nameRows = check(byName);
-      if (nameRows.length) return list(nameRows, USER);
-      return list(check(await base().ilike('email', '%' + likeEscape(query) + '%')), USER);
+      const [byName, byEmail] = await Promise.all([
+        base().ilike('name', '%' + likeEscape(query) + '%'),
+        base().ilike('email', '%' + likeEscape(query) + '%'),
+      ]);
+      const combined = new Map([...check(byName), ...check(byEmail)].map((row) => [row.id, row]));
+      return list([...combined.values()].sort((a,b)=>b.id-a.id).slice(0, cap), USER);
     },
     async setMemberRoles({ actorId, targetUserId, isAdmin, isVerifier }) {
       const row = check(await db.rpc('admin_set_member_roles', {

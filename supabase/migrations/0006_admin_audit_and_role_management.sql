@@ -32,6 +32,10 @@ drop trigger if exists admin_audit_append_only on public.admin_audit_events;
 create trigger admin_audit_append_only
 before update or delete on public.admin_audit_events
 for each row execute function public.reject_admin_audit_mutation();
+drop trigger if exists admin_audit_no_truncate on public.admin_audit_events;
+create trigger admin_audit_no_truncate
+before truncate on public.admin_audit_events
+for each statement execute function public.reject_admin_audit_mutation();
 
 create or replace function public.admin_set_member_roles(
   p_actor_id bigint,
