@@ -59,6 +59,25 @@ test('PATCH /me with an invalid UPI returns 400 on field upiId', async () => {
   } finally { await s.close(); }
 });
 
+test('PATCH /me clears the UPI ID when upiId is null or an empty string', async () => {
+  const s = await setup();
+  try {
+    await s.call('asha', 'GET', '/me');
+    for (const clear of [null, '', '   ']) {
+      const set = await s.call('asha', 'PATCH', '/me', { upiId: 'asha@okbank' });
+      assert.equal(set.body.user.upiId, 'asha@okbank');
+      const r = await s.call('asha', 'PATCH', '/me', { upiId: clear });
+      assert.equal(r.status, 200, JSON.stringify(clear));
+      assert.equal(r.body.user.upiId, null);
+      assert.equal((await s.call('asha', 'GET', '/me')).body.user.upiId, null);
+    }
+    // Other non-string values are still rejected.
+    const bad = await s.call('asha', 'PATCH', '/me', { upiId: 42 });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.field, 'upiId');
+  } finally { await s.close(); }
+});
+
 // ---- Task 8: email preferences, trust, statement, account deletion ----
 const { idOf, connect, startRequest, lend } = require('./helpers/lifecycle');
 

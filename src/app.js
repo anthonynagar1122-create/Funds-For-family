@@ -171,7 +171,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       patch.name = name;
     }
     if (req.body?.upiId !== undefined) {
-      const upi = typeof req.body.upiId === 'string' ? req.body.upiId.trim() : null;
+      // null and an empty string both clear the UPI ID.
+      const raw = req.body.upiId;
+      const upi = raw === null ? '' : (typeof raw === 'string' ? raw.trim() : null);
       if (upi === null || (upi !== '' && !UPI_PATTERN.test(upi))) {
         return fail(res, 400, 'Enter a valid UPI ID, like name@bank', 'upiId');
       }
