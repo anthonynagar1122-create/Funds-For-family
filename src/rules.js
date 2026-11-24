@@ -198,6 +198,19 @@ function checkContribution({ amountCents, principalCents, totals, contributorId,
   return { ok: true, remainingCents };
 }
 
+/**
+ * After a write, whether the row `rowId` pushes the running total over the cap. Entries are taken in id order
+ * (first come, first served); only sent and confirmed amounts count, not_received is ignored. False if rowId is absent.
+ */
+function exceedsCapAtRow(entries, rowId, capCents) {
+  let running = 0;
+  for (const e of [...entries].sort((a, b) => a.id - b.id)) {
+    if (e.status === 'sent' || e.status === 'confirmed') running += e.amountCents;
+    if (e.id === rowId) return e.status !== 'not_received' && running > capCents;
+  }
+  return false;
+}
+
 /** Per-lender position. Lent and repaid count confirmed rows only; pendingRepay counts sent repayments. */
 function owedByLender(contributions, repayments) {
   const map = new Map();
@@ -205,10 +218,12 @@ function owedByLender(contributions, repayments) {
     if (!map.has(id)) map.set(id, { lentCents: 0, repaidCents: 0, pendingRepayCents: 0, owedCents: 0 });
     return map.get(id);
   };
+  const known = (id) => id !== null && id !== undefined;  // old repayments may have no lender_id: they belong to nobody
   for (const c of contributions) {
-    if (c.status === 'confirmed') entry(c.lenderId).lentCents += c.amountCents;
+    if (known(c.lenderId) && c.status === 'confirmed') entry(c.lenderId).lentCents += c.amountCents;
   }
   for (const p of repayments) {
+    if (!known(p.lenderId)) continue;
     if (p.status === 'confirmed') entry(p.lenderId).repaidCents += p.amountCents;
     else if (p.status === 'sent') entry(p.lenderId).pendingRepayCents += p.amountCents;
   }
@@ -223,6 +238,7 @@ function checkRepayment({ amountCents, payerId, borrowerId, trustedContactId, le
     return { ok: false, reason: 'Only the borrower or trusted contact can record a repayment' };
   }
   if (lenderId === undefined || lenderId === null || !owed) return { ok: false, reason: 'Unknown lender' };
+  if (payerId === lenderId) return { ok: false, reason: 'You cannot repay yourself' };
   if (!Number.isInteger(amountCents) || amountCents <= 0) {
     return { ok: false, reason: 'Repayment must be a positive amount' };
   }
@@ -231,10 +247,10 @@ function checkRepayment({ amountCents, payerId, borrowerId, trustedContactId, le
   return { ok: true };
 }
 
-/** Every lender fully repaid, and there is at least one lender. */
+/** Every lender fully repaid (nothing owed, or over-repaid), and there is at least one lender. */
 function isFullyRepaid(owedMap) {
   if (!owedMap || owedMap.size === 0) return false;
-  for (const e of owedMap.values()) if (e.owedCents !== 0) return false;
+  for (const e of owedMap.values()) if (e.owedCents > 0) return false;
   return true;
 }
 
@@ -301,6 +317,7 @@ module.exports = {
   checkContribution,
   owedByLender,
   checkRepayment,
+  exceedsCapAtRow,
   isFullyRepaid,
   isMutual,
   canSeeRequest,

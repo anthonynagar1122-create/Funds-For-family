@@ -2,6 +2,7 @@
 // Shared API test harness. Builds the app on the in-memory repo with a fixed clock and a header-driven identity.
 //   x-test-user: <name>   -> { clerkId: 'clerk_<name>', name, email: '<name>@example.com' }
 //   x-test-email: <email> -> overrides the email for that request
+//   x-test-no-email: 1    -> identity has no verified email (email: null)
 const { createApp } = require('../../src/app');
 const { createMemoryRepo } = require('../../src/memory-repo');
 
@@ -20,6 +21,7 @@ async function setup({ admitAll = true, ownerEmail = '', now = DEFAULT_NOW, repo
     identify: async (req) => {
       const name = req.headers['x-test-user'];
       if (!name) return null;
+      if (req.headers['x-test-no-email']) return { clerkId: `clerk_${name}`, name, email: null };
       return { clerkId: `clerk_${name}`, name, email: req.headers['x-test-email'] || `${name}@example.com` };
     },
     logger: { error: (...a) => logged.push(a) },

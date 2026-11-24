@@ -46,7 +46,7 @@ const CONTRIBUTION = mapper({ ...ENTRY_COMMON, contributorId: 'contributor_id' }
 const REPAYMENT = mapper({ ...ENTRY_COMMON, payerId: 'payer_id', lenderId: 'lender_id' });
 const VERIFICATION = mapper({ requestId: 'request_id', verifierId: 'verifier_id', decision: 'decision', note: 'note', createdAt: 'created_at' });
 
-const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt'];
+const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt', 'isAdmin', 'isVerifier'];
 const INVITE_PATCH = ['acceptedAt', 'acceptedUserId', 'revokedAt', 'supersededAt'];
 const REQUEST_PATCH = ['status', 'decidedAt', 'fundedAt', 'repaidAt', 'fundedCents', 'rejectionReason', 'repaymentDate',
   'originalRepaymentDate', 'withdrawnAt', 'contactDecidedAt', 'category', 'purpose', 'trustedContactId'];
@@ -55,12 +55,17 @@ const ENTRY_PATCH = ['status', 'utr', 'amountCents', 'confirmedAt', 'updatedAt',
 // Escape LIKE wildcards so user text is matched literally.
 const likeEscape = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
-function createSupabaseRepo({ url, serviceRoleKey }) {
+function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
   if (!url || !serviceRoleKey) throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
-  const db = createClient(url, serviceRoleKey, { auth: { persistSession: false } });
+  const db = createClient(url, serviceRoleKey, {
+    auth: { persistSession: false },
+    ...(customFetch ? { global: { fetch: customFetch } } : {}),
+  });
 
+  // Keeps the PostgREST code (e.g. '23505' unique violation) and details so callers can tell failures apart.
+  const fail = (error) => Object.assign(new Error(`Supabase: ${error.message}`), { code: error.code, details: error.details });
   const check = (res) => {
-    if (res.error) throw new Error(`Supabase: ${res.error.message}`);
+    if (res.error) throw fail(res.error);
     return res.data;
   };
   const maybe = async (query, m) => m.toObj(check(await query.maybeSingle()));
@@ -92,7 +97,7 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
 
   const countRequests = async (column, id) => {
     const res = await db.from('requests').select('id', { count: 'exact', head: true }).eq(column, id).in('status', ACTIVE);
-    if (res.error) throw new Error(`Supabase: ${res.error.message}`);
+    if (res.error) throw fail(res.error);
     return res.count ?? 0;
   };
 
@@ -158,10 +163,17 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
       if (Object.keys(row).length === 0) return maybe(db.from('invites').select().eq('id', id), INVITE);
       return maybe(db.from('invites').update(row).eq('id', id).select(), INVITE);
     },
+    // Single conditional UPDATE: only one caller can flip an open invite. Returns the invite, or null if it was not open.
+    async claimInvite(id, { acceptedAt, acceptedUserId } = {}) {
+      const patch = INVITE.toRow({ acceptedAt, acceptedUserId });
+      return maybe(db.from('invites').update(patch).eq('id', id)
+        .is('accepted_at', null).is('revoked_at', null).is('superseded_at', null)
+        .gt('expires_at', acceptedAt).select(), INVITE);
+    },
     async countInvitesSince(inviterId, isoDate) {
       const res = await db.from('invites').select('id', { count: 'exact', head: true })
         .eq('inviter_id', inviterId).gte('created_at', isoDate).is('revoked_at', null).is('superseded_at', null);
-      if (res.error) throw new Error(`Supabase: ${res.error.message}`);
+      if (res.error) throw fail(res.error);
       return res.count ?? 0;
     },
 

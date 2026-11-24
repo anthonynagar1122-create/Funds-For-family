@@ -6,6 +6,14 @@ const { formatInr, parseRupees } = require('../public/app/money');
 
 const UPI_PATTERN = /^[A-Za-z0-9._-]{2,256}@[A-Za-z]{2,64}$/;
 
+// Path ids must be plain digits that fit a safe integer. Anything else is "not found", never a database error.
+function parseId(raw) {
+  const text = String(raw ?? '');
+  if (!/^\d{1,15}$/.test(text)) return null;
+  const n = Number(text);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
 const INVITE_ONLY = {
   error: 'Funds For Family is invite only. Ask someone who uses it to send you an invite.',
   code: 'invite_only',
@@ -55,10 +63,10 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return null;
   }
 
-  // Runs only when a NEW member was created by an invite.
+  // Runs only when a NEW member was created by an invite (the invite itself was claimed before the member was made).
   async function acceptInvite(invite, user, email) {
     const asOf = now();
-    await repo.updateInvite(invite.id, { acceptedAt: asOf.toISOString(), acceptedUserId: user.id });
+    await repo.updateInvite(invite.id, { acceptedUserId: user.id });
     if (await repo.getUser(invite.inviterId)) {
       await repo.addFollow(invite.inviterId, user.id);
       await repo.addFollow(user.id, invite.inviterId);
@@ -77,25 +85,46 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     try {
       const identity = await identify(req);
       if (!identity?.clerkId) return fail(res, 401, 'Sign in required');
+      const verifiedEmail = String(identity.email ?? '').trim().toLowerCase();
+      const isOwnerEmail = Boolean(ownerEmail && verifiedEmail && verifiedEmail === ownerEmail.trim().toLowerCase());
       let user = await repo.findUserByClerkId(identity.clerkId);
+      if (user && isOwnerEmail && !user.isAdmin) {
+        user = (await repo.updateUser(user.id, { isAdmin: true, isVerifier: true })) ?? user;
+      }
       if (!user) {
         const admission = await admissionFor(req, identity);
         if (!admission) return res.status(403).json(INVITE_ONLY);
-        const owner = admission.via === 'owner';
-        let created = true;
-        try {
-          user = await repo.createUser({
-            clerkId: identity.clerkId, name: identity.name || 'Member', email: identity.email,
-            avatarUrl: identity.avatarUrl ?? null, isAdmin: owner, isVerifier: owner,
-          });
-        } catch (err) {
-          // A concurrent first request may have created the row (unique clerk_id). Use it if it is there.
-          user = await repo.findUserByClerkId(identity.clerkId);
-          if (!user) throw err;
-          created = false;
+        // The users table needs an email, and only a verified one is trusted.
+        if (!verifiedEmail) {
+          return res.status(403).json({ error: 'Verify your email address, then try again.', code: 'email_unverified' });
         }
-        if (created && admission.via === 'invite') {
-          await acceptInvite(admission.invite, user, String(identity.email ?? '').trim().toLowerCase());
+        const owner = admission.via === 'owner';
+        if (admission.via === 'invite') {
+          const claimed = await repo.claimInvite(admission.invite.id, { acceptedAt: now().toISOString() });
+          if (!claimed) {
+            // Lost the claim. If the same person's first request already created the row, carry on as that member.
+            user = await repo.findUserByClerkId(identity.clerkId);
+            if (!user) return res.status(403).json(INVITE_ONLY);
+          }
+        }
+        if (!user) {
+          let created = true;
+          try {
+            user = await repo.createUser({
+              clerkId: identity.clerkId, name: identity.name || 'Member', email: identity.email,
+              avatarUrl: identity.avatarUrl ?? null, isAdmin: owner, isVerifier: owner,
+            });
+          } catch (err) {
+            // A concurrent first request may have created the row (unique clerk_id). Use it if it is there.
+            user = await repo.findUserByClerkId(identity.clerkId);
+            if (!user) {
+              // Nobody was created: give the claimed invite back so it can still be used.
+              if (admission.via === 'invite') await repo.updateInvite(admission.invite.id, { acceptedAt: null }).catch(() => {});
+              throw err;
+            }
+            created = false;
+          }
+          if (created && admission.via === 'invite') await acceptInvite(admission.invite, user, verifiedEmail);
         }
       }
       req.user = user;
@@ -163,7 +192,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.get('/users/:id', async (req, res) => {
-    const u = await repo.getUser(Number(req.params.id));
+    const uid = parseId(req.params.id);
+    const u = uid === null ? null : await repo.getUser(uid);
     if (!u) return fail(res, 404, 'User not found');
     res.json({ user: publicUser(u, req.user.id) });
   });
@@ -178,7 +208,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.delete('/follows/:userId', async (req, res) => {
-    await repo.removeFollow(req.user.id, Number(req.params.userId));
+    const followeeId = parseId(req.params.userId);
+    if (followeeId === null) return fail(res, 404, 'User not found');
+    await repo.removeFollow(req.user.id, followeeId);
     res.json({ ok: true });
   });
 
@@ -227,7 +259,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.delete('/invites/:id', async (req, res) => {
-    const invite = await repo.getInvite(Number(req.params.id));
+    const inviteId = parseId(req.params.id);
+    const invite = inviteId === null ? null : await repo.getInvite(inviteId);
     if (!invite || invite.inviterId !== req.user.id) return fail(res, 404, 'Invite not found');
     if (invite.acceptedAt) return fail(res, 409, 'This invite has already been used');
     if (!invite.revokedAt) await repo.updateInvite(invite.id, { revokedAt: now().toISOString() });
@@ -298,8 +331,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ needsYou, myRequests, myLending });
   });
 
-  // The member's ledger. Built from requests they borrowed plus requests raised by their connections
-  // (the same discovery scope as the feed). Repo has no lookup by participant, so requests outside that scope are not listed.
+  // The member's ledger. Built from every request they take part in (listRequestsForMember): as borrower, trusted
+  // contact, lender, repayment payer or lender, or verifier.
   api.get('/activity', async (req, res) => {
     const me = req.user.id;
     const asOf = now();
@@ -340,8 +373,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
 
   // Load a request and refuse (404) unless the caller may see it. Returns null after responding.
   async function visibleRequest(req, res, rawId = req.params.id) {
-    const id = Number(rawId);
-    const r = Number.isInteger(id) ? await repo.getRequest(id) : null;
+    const id = parseId(rawId);
+    const r = id !== null ? await repo.getRequest(id) : null;
     if (!r) { fail(res, 404, 'Request not found'); return null; }
     const me = req.user;
     const [conn, contribs] = await Promise.all([repo.connections(me.id), repo.listContributions(r.id)]);
@@ -388,16 +421,23 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (!active.ok) return fail(res, 409, active.reason);
     const problem = await contactProblem(req.user.id, value.trustedContactId);
     if (problem) return fail(res, problem.status, problem.error, problem.field);
-    const created = await repo.createRequest({
-      borrowerId: req.user.id,
-      trustedContactId: value.trustedContactId,
-      purpose: value.purpose,
-      category: value.category,
-      principalCents: value.principalCents,
-      repaymentDate: value.repaymentDate,
-      status: 'awaiting_contact',
-      createdAt: now().toISOString(),
-    });
+    let created;
+    try {
+      created = await repo.createRequest({
+        borrowerId: req.user.id,
+        trustedContactId: value.trustedContactId,
+        purpose: value.purpose,
+        category: value.category,
+        principalCents: value.principalCents,
+        repaymentDate: value.repaymentDate,
+        status: 'awaiting_contact',
+        createdAt: now().toISOString(),
+      });
+    } catch (err) {
+      // The one-active-request unique index fired: a double submit. Answer as the normal rule would.
+      if (err?.code === '23505') return fail(res, 409, rules.checkCanCreateRequest({ borrowerActiveCount: 1 }).reason);
+      throw err;
+    }
     await mailTrustedContact(req.user, value.trustedContactId, created);
     res.status(201).json({ request: summarise(created, now(), req.user.id) });
   });
@@ -509,8 +549,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   // Load an entry (contribution or repayment) on a request the caller can see (404 otherwise).
   // Returns { entry, r } or null after responding.
   async function loadEntry(req, res, getter, label) {
-    const id = Number(req.params.id);
-    const entry = Number.isInteger(id) ? await getter(id) : null;
+    const id = parseId(req.params.id);
+    const entry = id !== null ? await getter(id) : null;
     if (!entry) { fail(res, 404, `${label} not found`); return null; }
     const r = await visibleRequest(req, res, entry.requestId);
     if (!r) return null;
@@ -557,6 +597,39 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     }
   }
 
+  // Race guard. Two requests can both pass the cap check before either writes. After writing, re-read the rows in
+  // id order (first come, first served); if our own row now sits over the cap it loses. Returns the 409 message or null.
+  async function contributionOverCap(r, rowId) {
+    const rows = await repo.listContributions(r.id);
+    if (!rules.exceedsCapAtRow(rows, rowId, r.principalCents)) return null;
+    const others = rules.fundingTotals(rows.filter((x) => x.id !== rowId));
+    return `Only ${formatInr(Math.max(0, r.principalCents - others.confirmedCents - others.pendingCents))} is still needed`;
+  }
+
+  async function repaymentOverCap(r, lenderId, rowId) {
+    const owed = (await owedFor(r.id)).get(lenderId);
+    const rows = (await repo.listRepayments(r.id)).filter((x) => x.lenderId === lenderId);
+    if (!rules.exceedsCapAtRow(rows, rowId, owed?.lentCents ?? 0)) return null;
+    const others = rows.filter((x) => x.id !== rowId && (x.status === 'sent' || x.status === 'confirmed')).reduce((t, x) => t + x.amountCents, 0);
+    return `Only ${formatInr(Math.max(0, (owed?.lentCents ?? 0) - others))} can still be repaid to this lender`;
+  }
+
+  // A confirmation can be retried after the request update failed, so every confirm re-checks the transition.
+  async function settleFunded(requestId) {
+    const { confirmedCents } = rules.fundingTotals(await repo.listContributions(requestId));
+    const current = await repo.getRequest(requestId);
+    if (confirmedCents >= current.principalCents && current.status === 'open') {
+      await repo.updateRequest(requestId, { status: 'funded', fundedCents: current.principalCents, fundedAt: now().toISOString() });
+    }
+  }
+
+  async function settleRepaid(requestId) {
+    const current = await repo.getRequest(requestId);
+    if (current.status === 'funded' && rules.isFullyRepaid(await owedFor(requestId))) {
+      await repo.updateRequest(requestId, { status: 'repaid', repaidAt: now().toISOString() });
+    }
+  }
+
   api.post('/requests/:id/contributions', async (req, res) => {
     const r = await visibleRequest(req, res);
     if (!r) return;
@@ -575,6 +648,11 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       requestId: r.id, contributorId: req.user.id, amountCents: parsed.paise, utr: u.utr,
       status: 'sent', createdAt: now().toISOString(),
     });
+    const overCap = await contributionOverCap(r, created.id);
+    if (overCap) {
+      await repo.deleteContribution(created.id);
+      return fail(res, 409, overCap);
+    }
     const borrower = await repo.getUser(r.borrowerId).catch(() => null);
     if (borrower?.email) {
       await safeMail({
@@ -593,17 +671,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const { entry: c, r } = loaded;
     if (r.borrowerId !== req.user.id) return fail(res, 403, 'Only the borrower can confirm that money arrived');
     if (c.status === 'confirmed') {
-      return res.json({ contribution: contributionJson(c), request: await detail(r, req.user.id) });
+      await settleFunded(r.id);
+      return res.json({ contribution: contributionJson(c), request: await detail(await repo.getRequest(r.id), req.user.id) });
     }
     if (c.status !== 'sent') return fail(res, 409, 'Only an entry marked as sent can be confirmed');
     if (r.status !== 'open') return fail(res, 409, 'This request is no longer open');
     const updated = await repo.updateContribution(c.id, { status: 'confirmed', confirmedAt: now().toISOString(), updatedAt: now().toISOString() });
     // Recompute from fresh rows so two quick confirmations cannot both miss the total.
-    const { confirmedCents } = rules.fundingTotals(await repo.listContributions(r.id));
-    const current = await repo.getRequest(r.id);
-    if (confirmedCents >= current.principalCents && current.status === 'open') {
-      await repo.updateRequest(r.id, { status: 'funded', fundedCents: current.principalCents, fundedAt: now().toISOString() });
-    }
+    await settleFunded(r.id);
     await mailLender(c.contributorId, `${req.user.name} confirmed your ${formatInr(c.amountCents)}`,
       `<p>${escapeHtml(req.user.name)} confirmed they received your ${formatInr(c.amountCents)}. Thank you for helping.</p>`);
     res.json({ contribution: contributionJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
@@ -638,6 +713,11 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     });
     if (!check.ok) return fail(res, 409, check.reason);
     const updated = await repo.updateContribution(c.id, patch);
+    const overCap = await contributionOverCap(r, c.id);
+    if (overCap) {
+      await repo.updateContribution(c.id, { status: 'not_received', amountCents: c.amountCents, utr: c.utr ?? null, updatedAt: now().toISOString() });
+      return fail(res, 409, overCap);
+    }
     res.json({ contribution: contributionJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
@@ -688,6 +768,11 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       requestId: r.id, payerId: req.user.id, lenderId, amountCents: parsed.paise, utr: u.utr,
       status: 'sent', createdAt: now().toISOString(),
     });
+    const overCap = await repaymentOverCap(r, lenderId, created.id);
+    if (overCap) {
+      await repo.deleteRepayment(created.id);
+      return fail(res, 409, overCap);
+    }
     await mailLender(lenderId, `${req.user.name} says they repaid you ${formatInr(parsed.paise)}. Please confirm.`,
       `<p>${escapeHtml(req.user.name)} says they repaid you ${formatInr(parsed.paise)}.</p>`
       + `<p>Once the money reaches you, please confirm it in the app: ${appLink()}.</p>`);
@@ -700,15 +785,13 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const { entry: p, r } = loaded;
     if (p.lenderId !== req.user.id) return fail(res, 403, 'Only the person who was repaid can confirm it');
     if (p.status === 'confirmed') {
-      return res.json({ repayment: repaymentJson(p), request: await detail(r, req.user.id) });
+      await settleRepaid(r.id);
+      return res.json({ repayment: repaymentJson(p), request: await detail(await repo.getRequest(r.id), req.user.id) });
     }
     if (p.status !== 'sent') return fail(res, 409, 'Only a repayment marked as sent can be confirmed');
     const updated = await repo.updateRepayment(p.id, { status: 'confirmed', confirmedAt: now().toISOString(), updatedAt: now().toISOString() });
     // Recompute from fresh rows so two quick confirmations cannot both miss the total.
-    const current = await repo.getRequest(r.id);
-    if (current.status === 'funded' && rules.isFullyRepaid(await owedFor(r.id))) {
-      await repo.updateRequest(r.id, { status: 'repaid', repaidAt: now().toISOString() });
-    }
+    await settleRepaid(r.id);
     const subject = `${req.user.name} confirmed your repayment of ${formatInr(p.amountCents)}`;
     const html = `<p>${escapeHtml(req.user.name)} confirmed they received your repayment of ${formatInr(p.amountCents)}.</p>`;
     for (const uid of new Set([r.borrowerId, p.payerId])) await mailLender(uid, subject, html);
@@ -744,6 +827,11 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     });
     if (!check.ok) return fail(res, 409, check.reason);
     const updated = await repo.updateRepayment(p.id, patch);
+    const overCap = await repaymentOverCap(r, p.lenderId, p.id);
+    if (overCap) {
+      await repo.updateRepayment(p.id, { status: 'not_received', amountCents: p.amountCents, utr: p.utr ?? null, updatedAt: now().toISOString() });
+      return fail(res, 409, overCap);
+    }
     res.json({ repayment: repaymentJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
 
@@ -801,8 +889,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
 
   // UPI IDs the viewer may pay: the borrower's (to lenders, and to mutuals while open) and lenders' (to borrower and contact).
   async function payTargets(r, viewerId, contribs, owed) {
-    const lenderIds = [...new Set(contribs.map((c) => c.contributorId))];
-    const owners = [r.borrowerId, ...owed.keys()].filter((id, i, all) => id !== viewerId && all.indexOf(id) === i);
+    const lenderIds = [...new Set(contribs.map((c) => c.contributorId))].filter((id) => id !== null && id !== undefined);
+    const owners = [r.borrowerId, ...owed.keys()].filter((id, i, all) => id !== null && id !== undefined && id !== viewerId && all.indexOf(id) === i);
     if (owners.length === 0) return [];
     const conn = await repo.connections(viewerId);
     const users = await repo.getUsers(owners);

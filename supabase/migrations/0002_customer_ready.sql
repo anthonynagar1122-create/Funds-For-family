@@ -3,6 +3,9 @@
 -- Additive and re-runnable: new columns use "if not exists"; the only constraint recreated is requests_status_check.
 -- Apply to staging first. Production only at the owner-approved release.
 
+begin;
+
+
 -- users
 alter table public.users add column if not exists avatar_url        text;
 alter table public.users add column if not exists email_reminders   boolean not null default true;
@@ -144,3 +147,5 @@ alter table public.notifications_sent  enable row level security;
 revoke all on public.date_changes, public.date_change_votes, public.help_messages,
               public.notes, public.notifications_sent
   from anon, authenticated;
+
+commit;

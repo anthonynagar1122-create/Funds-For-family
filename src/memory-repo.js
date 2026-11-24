@@ -12,7 +12,7 @@ const patchOnly = (patch, allowed) => {
   return out;
 };
 
-const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt'];
+const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt', 'isAdmin', 'isVerifier'];
 const INVITE_PATCH = ['acceptedAt', 'acceptedUserId', 'revokedAt', 'supersededAt'];
 const REQUEST_PATCH = ['status', 'decidedAt', 'fundedAt', 'repaidAt', 'fundedCents', 'rejectionReason', 'repaymentDate',
   'originalRepaymentDate', 'withdrawnAt', 'contactDecidedAt', 'category', 'purpose', 'trustedContactId'];
@@ -104,6 +104,15 @@ function createMemoryRepo() {
       const i = invites.get(id);
       if (!i) return null;
       Object.assign(i, patchOnly(patch, INVITE_PATCH));
+      return copy(i);
+    },
+    // Atomic in effect: one synchronous check-and-set. Returns the claimed invite, or null if it was not open.
+    async claimInvite(id, { acceptedAt, acceptedUserId } = {}) {
+      const i = invites.get(id);
+      if (!i || i.acceptedAt || i.revokedAt || i.supersededAt) return null;
+      if (!(new Date(i.expiresAt).getTime() > new Date(acceptedAt).getTime())) return null;
+      i.acceptedAt = acceptedAt;
+      if (acceptedUserId !== undefined) i.acceptedUserId = acceptedUserId;
       return copy(i);
     },
     async countInvitesSince(inviterId, isoDate) {

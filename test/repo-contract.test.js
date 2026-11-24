@@ -54,6 +54,39 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.equal((await repo.listInvitesByInviter(inviter.id)).length, 3);
   });
 
+  test('contract: claimInvite succeeds once, and only while the invite is open and unexpired', async () => {
+    const repo = await makeRepo();
+    const inviter = await mk(repo, 'ci');
+    const now = new Date().toISOString();
+    const future = new Date(Date.now() + 14 * 864e5).toISOString();
+    const past = new Date(Date.now() - 864e5).toISOString();
+    const mkInvite = (tag, expiresAt = future) => repo.createInvite({ inviterId: inviter.id, email: `${uniq()}@x.test`, tokenHash: `${prefix}${uniq()}${tag}`, expiresAt, createdAt: now });
+    const a = await mkInvite('a');
+    const first = await repo.claimInvite(a.id, { acceptedAt: now });
+    assert.equal(first.id, a.id);
+    assert.ok(first.acceptedAt);
+    assert.equal(await repo.claimInvite(a.id, { acceptedAt: now }), null, 'a second claim loses');
+    const u = await mk(repo, 'cu');
+    const b = await mkInvite('b');
+    assert.equal((await repo.claimInvite(b.id, { acceptedAt: now, acceptedUserId: u.id })).acceptedUserId, u.id);
+    const revoked = await mkInvite('r'); await repo.updateInvite(revoked.id, { revokedAt: now });
+    assert.equal(await repo.claimInvite(revoked.id, { acceptedAt: now }), null);
+    const superseded = await mkInvite('s'); await repo.updateInvite(superseded.id, { supersededAt: now });
+    assert.equal(await repo.claimInvite(superseded.id, { acceptedAt: now }), null);
+    const expired = await mkInvite('e', past);
+    assert.equal(await repo.claimInvite(expired.id, { acceptedAt: now }), null);
+    assert.equal((await repo.getInvite(expired.id)).acceptedAt, null);
+    assert.equal(await repo.claimInvite(2147483000, { acceptedAt: now }), null, 'unknown invite');
+  });
+
+  test('contract: updateUser can grant admin and verifier', async () => {
+    const repo = await makeRepo();
+    const u = await mk(repo, 'adm');
+    const up = await repo.updateUser(u.id, { isAdmin: true, isVerifier: true });
+    assert.equal(up.isAdmin, true);
+    assert.equal(up.isVerifier, true);
+  });
+
   test('contract: addContribution returns an id and status sent; updateContribution round-trips', async () => {
     const repo = await makeRepo();
     const [b, c, l] = [await mk(repo, 'b'), await mk(repo, 'c'), await mk(repo, 'l')];

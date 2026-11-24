@@ -7,6 +7,18 @@ const { createApp } = require('./app');
 const { createSupabaseRepo } = require('./supabase-repo');
 const config = require('./config');
 
+/**
+ * Clerk user -> app identity. The email is trusted (owner admission, email-matched invites) only when Clerk
+ * has verified it; otherwise it is null.
+ */
+function identityFromClerkUser(u) {
+  const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || 'Member';
+  const primary = u.primaryEmailAddress;
+  const verified = primary?.verification?.status === 'verified';
+  const email = verified && primary.emailAddress ? primary.emailAddress : null;
+  return { clerkId: u.id, name, email, avatarUrl: u.imageUrl || null };
+}
+
 function buildProductionApp(env = process.env) {
   // Every entry point (server.js and api/index.js) passes through here, so the same checks always run.
   const problems = [...config.validateServerConfig(env), ...config.isolationProblems(env)];
@@ -20,10 +32,7 @@ function buildProductionApp(env = process.env) {
     const { userId } = getAuth(req);
     if (!userId) return null;
     const u = await clerk.users.getUser(userId);
-    const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || 'Member';
-    const email = u.primaryEmailAddress?.emailAddress;
-    if (!email) return null;
-    return { clerkId: u.id, name, email, avatarUrl: u.imageUrl || null };
+    return identityFromClerkUser(u);
   };
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -62,4 +71,4 @@ function buildProductionApp(env = process.env) {
   return root;
 }
 
-module.exports = { buildProductionApp };
+module.exports = { buildProductionApp, identityFromClerkUser };
