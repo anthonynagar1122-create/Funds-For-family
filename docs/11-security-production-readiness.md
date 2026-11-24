@@ -25,7 +25,7 @@ Scope: current Clerk + Express + Supabase Postgres + Vercel application
 - `vercel.json` includes HSTS, X-Frame-Options, nosniff, Referrer-Policy and a restrictive root-page CSP.
 - Existing tests cover anonymous access, role checks, IDOR, input validation, secret patterns and generic error responses.
 - The database currently has RLS enabled on seven tables and no direct policies. This is default-deny for API roles when no grants/policies exist; do not add permissive browser policies merely to silence an informational linter warning.
-- The live database schema is still at the initial migration and does not match the current repository contract. The additive migration `0002_align_current_application_schema.sql` is prepared but NOT applied.
+- The isolated staging Supabase project (`sgtfdoiauximmktdhrxb`) has the current application schema (12 tables), with RLS enabled and no direct `anon`/`authenticated` policies. It has migrations `init_funds_for_family`, `customer_ready` and `fix_upi_check` applied. The redundant `0002_align_current_application_schema.sql` draft was removed rather than applied.
 - The public landing page already states “No interest”; preserve that statement and ensure app/API calculations remain principal-only.
 
 ## 27-control implementation register
@@ -68,7 +68,7 @@ Scope: current Clerk + Express + Supabase Postgres + Vercel application
 - Immutable ledger history: append settlement/reversal events; do not silently rewrite confirmed financial facts.
 - Verification immutability: preserve the first decision and explicit correction/reversal history rather than silently overwriting a verifier decision.
 - Schema contract: migration tests compare application mapper fields with the deployed database.
-- Preview isolation: preview deployments must use a separate Supabase project or isolated database, never production data.
+- Preview isolation: branch-specific Vercel Preview `SUPABASE_URL` points to `funds-for-family-staging` (`sgtfdoiauximmktdhrxb`); the staging secret key still needs to be added directly in Vercel Preview. Never use production database credentials in Preview.
 - Recovery: verify backups and perform a documented restore drill before public launch.
 
 ## Required integrations
@@ -81,7 +81,7 @@ Scope: current Clerk + Express + Supabase Postgres + Vercel application
 ## Release gates
 
 A release is not production-ready until:
-- migration applies cleanly to a non-production database;
+- application schema contract is reconciled with the isolated staging database;
 - integration tests pass against that database;
 - contribution/repayment concurrency tests prove no overfunding or over-repayment;
 - Clerk sign-in, invite admission, role checks and account lifecycle are tested in a real browser;
@@ -93,6 +93,6 @@ A release is not production-ready until:
 
 - **Interest policy: review; disabled until approval.** No interest or late-fee calculations are active in v1. The prior 12% annual simple-interest note is an unapproved proposal only and must not be implemented as a financial rule.
 - **Navigation: separate Member and Admin/Verifier workspaces.** Member navigation stays focused on personal borrowing/lending and circle activity. Admin/Verifier tools are a distinct workspace and require server-confirmed roles on every route and API action.
-- Preview database: identify or provision a non-production Supabase project and configure its credentials in Vercel Preview.
+- Preview database: staging project identified and schema verified; owner must add its server-side secret key to the branch-specific Vercel Preview environment.
 - Rate limiting: Upstash is recommended but not connected or approved for paid usage yet.
 - Production deployment: requires explicit approval after Preview acceptance.
