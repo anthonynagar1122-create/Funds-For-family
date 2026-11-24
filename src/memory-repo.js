@@ -27,6 +27,7 @@ function createMemoryRepo() {
   const contributions = new Map();
   const repayments = new Map();
   const helpMessages = new Map();
+  const financialIdempotency = new Map();
 
   const entryApi = (store, add, get, update, del, list) => ({
     async [add](row) {
@@ -201,9 +202,78 @@ function createMemoryRepo() {
     },
 
     // ---- contributions and repayments ----
+    // Synchronous check-and-write sections mirror the Postgres request-row lock semantics in tests.
+    async recordContribution({ requestId, contributorId, amountCents, utr = null, idempotencyKey }) {
+      const key = `contribution.create:${contributorId}:${idempotencyKey}`;
+      const hash = JSON.stringify({ requestId, contributorId, amountCents, utr });
+      if (financialIdempotency.has(key)) {
+        const saved = financialIdempotency.get(key);
+        if (saved.hash !== hash) throw Object.assign(new Error('This idempotency key was already used for a different contribution'), { code: '22023' });
+        return copy(saved.row);
+      }
+      const r = requests.get(requestId);
+      if (!r || r.status !== 'open') throw Object.assign(new Error('This request is not accepting contributions'), { code: 'P0001' });
+      if (contributorId === r.borrowerId) throw Object.assign(new Error('You cannot fund your own request'), { code: 'P0001' });
+      const mutual = follows.some((f) => f.followerId === contributorId && f.followeeId === r.borrowerId)
+        && follows.some((f) => f.followerId === r.borrowerId && f.followeeId === contributorId);
+      if (!mutual) throw Object.assign(new Error('Only mutual connections can fund this request'), { code: 'P0001' });
+      const reserved = [...contributions.values()].filter((c) => c.requestId === requestId && ['sent','confirmed'].includes(c.status)).reduce((n,c)=>n+c.amountCents,0);
+      if (reserved + amountCents > r.principalCents) throw Object.assign(new Error(`Only ${Math.max(0,r.principalCents-reserved)} paise is still needed`), { code: 'P0001' });
+      const row = { id: nextId(), requestId, contributorId, amountCents, utr, status: 'sent', createdAt: new Date().toISOString(), confirmedAt: null, updatedAt: null };
+      contributions.set(row.id, row);
+      financialIdempotency.set(key, { hash, row: copy(row) });
+      return copy(row);
+    },
+    async recordRepayment({ requestId, payerId, lenderId, amountCents, utr = null, idempotencyKey }) {
+      const key = `repayment.create:${payerId}:${idempotencyKey}`;
+      const hash = JSON.stringify({ requestId, payerId, lenderId, amountCents, utr });
+      if (financialIdempotency.has(key)) {
+        const saved = financialIdempotency.get(key);
+        if (saved.hash !== hash) throw Object.assign(new Error('This idempotency key was already used for a different repayment'), { code: '22023' });
+        return copy(saved.row);
+      }
+      const r = requests.get(requestId);
+      if (!r || r.status !== 'funded') throw Object.assign(new Error('Repayments can be recorded only for funded requests'), { code: 'P0001' });
+      if (payerId !== r.borrowerId && payerId !== r.trustedContactId) throw Object.assign(new Error('Only the borrower or trusted contact can record a repayment'), { code: 'P0001' });
+      if (!lenderId || lenderId === payerId) throw Object.assign(new Error('Choose a valid lender'), { code: 'P0001' });
+      const lent = [...contributions.values()].filter((c)=>c.requestId===requestId && c.contributorId===lenderId && c.status==='confirmed').reduce((n,c)=>n+c.amountCents,0);
+      const reserved = [...repayments.values()].filter((p)=>p.requestId===requestId && p.lenderId===lenderId && ['sent','confirmed'].includes(p.status)).reduce((n,p)=>n+p.amountCents,0);
+      if (!lent) throw Object.assign(new Error('Unknown lender'), { code: 'P0001' });
+      if (reserved + amountCents > lent) throw Object.assign(new Error(`Only ${Math.max(0,lent-reserved)} paise can still be repaid to this lender`), { code: 'P0001' });
+      const row = { id: nextId(), requestId, payerId, lenderId, amountCents, utr, status: 'sent', createdAt: new Date().toISOString(), confirmedAt: null, updatedAt: null };
+      repayments.set(row.id, row);
+      financialIdempotency.set(key, { hash, row: copy(row) });
+      return copy(row);
+    },
+    async reviseContribution({ entryId, actorId, amountCents, utr = null }) {
+      const row = contributions.get(entryId);
+      const r = row && requests.get(row.requestId);
+      if (!row || !r) throw Object.assign(new Error('Contribution not found'), { code: 'P0001' });
+      if (row.contributorId !== actorId) throw Object.assign(new Error('Only the person who sent this can change it'), { code: 'P0001' });
+      if (row.status !== 'not_received') throw Object.assign(new Error('You can correct an entry only after the borrower marked it not received'), { code: 'P0001' });
+      if (r.status !== 'open') throw Object.assign(new Error('This request is not accepting contributions'), { code: 'P0001' });
+      const reserved = [...contributions.values()].filter((c)=>c.requestId===r.id && c.id!==entryId && ['sent','confirmed'].includes(c.status)).reduce((n,c)=>n+c.amountCents,0);
+      if (reserved+amountCents>r.principalCents) throw Object.assign(new Error(`Only ${Math.max(0,r.principalCents-reserved)} paise is still needed`), { code: 'P0001' });
+      Object.assign(row, { amountCents, utr, status: 'sent', updatedAt: new Date().toISOString() });
+      return copy(row);
+    },
+    async reviseRepayment({ entryId, actorId, amountCents, utr = null }) {
+      const row = repayments.get(entryId);
+      const r = row && requests.get(row.requestId);
+      if (!row || !r) throw Object.assign(new Error('Repayment not found'), { code: 'P0001' });
+      if (row.payerId !== actorId) throw Object.assign(new Error('Only the person who sent this can change it'), { code: 'P0001' });
+      if (row.status !== 'not_received') throw Object.assign(new Error('You can correct a repayment only after it was marked not received'), { code: 'P0001' });
+      if (r.status !== 'funded') throw Object.assign(new Error('This request is not in repayment'), { code: 'P0001' });
+      const lent = [...contributions.values()].filter((c)=>c.requestId===r.id && c.contributorId===row.lenderId && c.status==='confirmed').reduce((n,c)=>n+c.amountCents,0);
+      const reserved = [...repayments.values()].filter((p)=>p.requestId===r.id && p.lenderId===row.lenderId && p.id!==entryId && ['sent','confirmed'].includes(p.status)).reduce((n,p)=>n+p.amountCents,0);
+      if (!lent) throw Object.assign(new Error('Unknown lender'), { code: 'P0001' });
+      if (reserved+amountCents>lent) throw Object.assign(new Error(`Only ${Math.max(0,lent-reserved)} paise can still be repaid to this lender`), { code: 'P0001' });
+      Object.assign(row, { amountCents, utr, status: 'sent', updatedAt: new Date().toISOString() });
+      return copy(row);
+    },
     ...entryApi(contributions, 'addContribution', 'getContribution', 'updateContribution', 'deleteContribution', 'listContributions'),
     ...entryApi(repayments, 'addRepayment', 'getRepayment', 'updateRepayment', 'deleteRepayment', 'listRepayments'),
-    _state: { users, follows, invites, requests, verifications, contributions, repayments },
+    _state: { users, follows, invites, requests, verifications, contributions, repayments, financialIdempotency },
   };
 }
 

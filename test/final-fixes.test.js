@@ -131,28 +131,21 @@ async function openRequest(call, repo) {
   return id;
 }
 
-test('a contribution that loses a cap race is removed and answered 409', async () => {
+test('concurrent contributions cannot exceed the request principal', async () => {
   const inner = createMemoryRepo();
-  let competitor = null;
-  const repo = racingRepo(inner, {
-    addContribution: (r) => async (row) => {
-      if (competitor) { const c = competitor; competitor = null; await r.addContribution(c); }
-      return r.addContribution(row);
-    },
-  });
-  const { call, close } = await setup({ repo });
+  const { call, close } = await setup({ repo: inner });
   try {
     const id = await openRequest(call, inner);
     await connect(call, 'lee', 'ann');
     await connect(call, 'mo', 'ann');
-    const lee = await idOf(call, 'lee'); const mo = await idOf(call, 'mo');
-    competitor = { requestId: id, contributorId: mo, amountCents: 40000, status: 'sent', createdAt: '2026-11-20T12:00:00Z' };
-    const r = await call('lee', 'POST', `/requests/${id}/contributions`, { amount: 300 }); // 500 total cap, 400 slipped in first
-    assert.equal(r.status, 409, JSON.stringify(r.body));
-    assert.match(r.body.error, /Only .* is still needed/);
+    const [a, b] = await Promise.all([
+      call('lee', 'POST', `/requests/${id}/contributions`, { amount: 300 }),
+      call('mo', 'POST', `/requests/${id}/contributions`, { amount: 300 }),
+    ]);
+    assert.deepEqual([a.status, b.status].sort(), [201, 409]);
     const rows = await inner.listContributions(id);
-    assert.deepEqual(rows.map((x) => x.contributorId), [mo], 'no row is left behind for the loser');
-    assert.ok(lee);
+    assert.equal(rows.length, 1, 'only the transaction that held the request lock leaves a row');
+    assert.equal(rows.reduce((sum, row) => sum + row.amountCents, 0), 30000);
   } finally { await close(); }
 });
 
@@ -160,9 +153,9 @@ test('a contribution correction that loses a cap race goes back to not_received 
   const inner = createMemoryRepo();
   let before = null;
   const repo = racingRepo(inner, {
-    updateContribution: (r) => async (id, patch) => {
-      if (before && patch.status === 'sent') { const f = before; before = null; await f(); }
-      return r.updateContribution(id, patch);
+    reviseContribution: (r) => async (input) => {
+      if (before) { const f = before; before = null; await f(); }
+      return r.reviseContribution(input);
     },
   });
   const { call, close } = await setup({ repo });
@@ -174,7 +167,7 @@ test('a contribution correction that loses a cap race goes back to not_received 
     const mk = (contributorId, amountCents) => inner.addContribution({ requestId: id, contributorId, amountCents, status: 'not_received', utr: null, createdAt: '2026-11-20T12:00:00Z' });
     const a = await mk(lee, 10000); const b = await mk(mo, 10000);
     // Both correct to 30000 (cap 50000). Lee's correction lands first, in the gap after mo's check.
-    before = () => inner.updateContribution(a.id, { status: 'sent', amountCents: 30000 });
+    before = () => inner.reviseContribution({ entryId: a.id, actorId: lee, amountCents: 30000, utr: null });
     const r = await call('mo', 'PATCH', `/contributions/${b.id}`, { amount: 300 });
     assert.equal(r.status, 409, JSON.stringify(r.body));
     assert.match(r.body.error, /Only .* is still needed/);
@@ -212,25 +205,20 @@ async function fundedRequest(call, repo, amounts) {
   return id;
 }
 
-test('a repayment that loses a cap race is removed and answered 409', async () => {
+test('concurrent repayments cannot exceed the confirmed amount owed to a lender', async () => {
   const inner = createMemoryRepo();
-  let before = null;
-  const repo = racingRepo(inner, {
-    addRepayment: (r) => async (row) => {
-      if (before) { const f = before; before = null; await f(); }
-      return r.addRepayment(row);
-    },
-  });
-  const { call, close } = await setup({ repo });
+  const { call, close } = await setup({ repo: inner });
   try {
     const id = await fundedRequest(call, inner, { lee: 200 });
-    const lee = await idOf(call, 'lee'); const ann = await idOf(call, 'ann'); const cat = await idOf(call, 'cat');
-    before = () => inner.addRepayment({ requestId: id, payerId: cat, lenderId: lee, amountCents: 15000, status: 'sent', createdAt: '2026-11-20T12:00:00Z' });
-    const r = await call('ann', 'POST', `/requests/${id}/repayments`, { lenderId: lee, amount: 100 }); // owed 200, 150 slipped in
-    assert.equal(r.status, 409, JSON.stringify(r.body));
-    assert.match(r.body.error, /can still be repaid/);
-    assert.deepEqual((await inner.listRepayments(id)).map((x) => x.payerId), [cat], 'no row left for the loser');
-    assert.ok(ann);
+    const lee = await idOf(call, 'lee');
+    const [a, b] = await Promise.all([
+      call('ann', 'POST', `/requests/${id}/repayments`, { lenderId: lee, amount: 150 }),
+      call('ann', 'POST', `/requests/${id}/repayments`, { lenderId: lee, amount: 150 }),
+    ]);
+    assert.deepEqual([a.status, b.status].sort(), [201, 409]);
+    const rows = await inner.listRepayments(id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows.reduce((sum, row) => sum + row.amountCents, 0), 15000);
   } finally { await close(); }
 });
 
@@ -238,9 +226,9 @@ test('a repayment correction that loses a cap race goes back to not_received wit
   const inner = createMemoryRepo();
   let before = null;
   const repo = racingRepo(inner, {
-    updateRepayment: (r) => async (id, patch) => {
-      if (before && patch.status === 'sent') { const f = before; before = null; await f(); }
-      return r.updateRepayment(id, patch);
+    reviseRepayment: (r) => async (input) => {
+      if (before) { const f = before; before = null; await f(); }
+      return r.reviseRepayment(input);
     },
   });
   const { call, close } = await setup({ repo });
@@ -249,7 +237,7 @@ test('a repayment correction that loses a cap race goes back to not_received wit
     const lee = await idOf(call, 'lee'); const ann = await idOf(call, 'ann'); const cat = await idOf(call, 'cat');
     const mk = (payerId, amountCents) => inner.addRepayment({ requestId: id, payerId, lenderId: lee, amountCents, status: 'not_received', createdAt: '2026-11-20T12:00:00Z' });
     const a = await mk(cat, 5000); const b = await mk(ann, 5000);
-    before = () => inner.updateRepayment(a.id, { status: 'sent', amountCents: 15000 });
+    before = () => inner.reviseRepayment({ entryId: a.id, actorId: cat, amountCents: 15000, utr: null });
     const r = await call('ann', 'PATCH', `/repayments/${b.id}`, { amount: 100 });
     assert.equal(r.status, 409, JSON.stringify(r.body));
     const back = await inner.getRepayment(b.id);
@@ -325,6 +313,26 @@ test('confirming an already-confirmed repayment still completes a missed repaid 
 });
 
 // ---- 4c. migrations are transactional ----
+test('migration 0004 installs transactional ledger RPCs, private idempotency, and append-only audit', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '0004_atomic_financial_ledger.sql'), 'utf8').toLowerCase();
+  assert.match(sql, /\bbegin;/);
+  assert.match(sql.trim(), /commit;$/);
+  for (const fn of ['record_contribution', 'record_repayment', 'revise_contribution', 'revise_repayment']) {
+    assert.ok(sql.includes(`create or replace function public.${fn}`));
+    assert.ok(sql.includes(`grant execute on function public.${fn}(`));
+    assert.ok(sql.includes(`revoke all on function public.${fn}(`));
+  }
+  assert.match(sql, /for update/);
+  assert.match(sql, /financial_idempotency/);
+  assert.match(sql, /financial_audit_events/);
+  assert.match(sql, /before update or delete on public\.financial_audit_events/);
+  assert.doesNotMatch(sql, /security definer/);
+  const attribution = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '0005_financial_audit_actor_attribution.sql'), 'utf8').toLowerCase();
+  assert.match(attribution, /current_setting\('app\.financial_actor_id'/);
+  assert.match(attribution, /select borrower_id into v_actor_id/);
+  assert.match(attribution, /v_actor_id := nullif\(v_row->>'lender_id'/);
+});
+
 test('migrations 0002 and 0003 run inside a transaction', () => {
   for (const f of ['0002_customer_ready.sql', '0003_fix_upi_check.sql']) {
     const sql = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', f), 'utf8')

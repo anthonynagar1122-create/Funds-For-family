@@ -3,6 +3,7 @@
   const esc = window.Format.esc;
   const money = (c) => window.Money.formatInr(c);
   const UTR_RE = /^[A-Za-z0-9]{6,35}$/;
+  const newIdempotencyKey = () => window.crypto?.randomUUID?.() || `ff-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const UTR_MSG = 'A UPI reference is 6 to 35 letters or digits';
 
   const STATUS = {
@@ -201,8 +202,15 @@
         if (code && !UTR_RE.test(code)) { err.textContent = UTR_MSG; root.querySelector('#c-utr').setAttribute('aria-invalid', 'true'); root.querySelector('#c-utr').focus(); return; }
         const body = { amount: amountInput.value.trim() };
         if (code) body.utr = code;
-        try { await window.Api.post(`/requests/${id}/contributions`, body); toast('Thank you. The borrower will confirm it.'); rerender(); }
-        catch (e) { err.textContent = e.message; amountInput.setAttribute('aria-invalid', 'true'); amountInput.focus(); }
+        const key = fundForm.dataset.idempotencyKey || (fundForm.dataset.idempotencyKey = newIdempotencyKey());
+        try {
+          await window.Api.post(`/requests/${id}/contributions`, body, { headers: { 'Idempotency-Key': key } });
+          delete fundForm.dataset.idempotencyKey;
+          toast('Thank you. The borrower will confirm it.'); rerender();
+        } catch (e) {
+          if (e.status && e.status < 500) delete fundForm.dataset.idempotencyKey;
+          err.textContent = e.message; amountInput.setAttribute('aria-invalid', 'true'); amountInput.focus();
+        }
       });
     }
 
@@ -224,10 +232,15 @@
       const err = form.querySelector('.error');
       const code = form.elements.utr.value.trim();
       if (code && !UTR_RE.test(code)) { err.textContent = UTR_MSG; form.elements.utr.setAttribute('aria-invalid', 'true'); form.elements.utr.focus(); return; }
+      const key = form.dataset.idempotencyKey || (form.dataset.idempotencyKey = newIdempotencyKey());
       try {
-        await window.Api.post(`/requests/${id}/repayments`, { lenderId: Number(form.dataset.lender), amount: input.value.trim(), utr: code });
+        await window.Api.post(`/requests/${id}/repayments`, { lenderId: Number(form.dataset.lender), amount: input.value.trim(), utr: code }, { headers: { 'Idempotency-Key': key } });
+        delete form.dataset.idempotencyKey;
         toast('Repayment recorded. The lender will confirm it.'); rerender();
-      } catch (e) { err.textContent = e.message; input.setAttribute('aria-invalid', 'true'); input.focus(); }
+      } catch (e) {
+        if (e.status && e.status < 500) delete form.dataset.idempotencyKey;
+        err.textContent = e.message; input.setAttribute('aria-invalid', 'true'); input.focus();
+      }
     }));
   }
 

@@ -1,5 +1,6 @@
 'use strict';
 const express = require('express');
+const { randomUUID } = require('node:crypto');
 const rules = require('./rules');
 const invites = require('./invites');
 const { formatInr, parseRupees } = require('../public/app/money');
@@ -765,14 +766,16 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       contributorId: req.user.id, borrowerId: r.borrowerId, isMutual: mutual, status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const created = await repo.addContribution({
-      requestId: r.id, contributorId: req.user.id, amountCents: parsed.paise, utr: u.utr,
-      status: 'sent', createdAt: now().toISOString(),
-    });
-    const overCap = await contributionOverCap(r, created.id);
-    if (overCap) {
-      await repo.deleteContribution(created.id);
-      return fail(res, 409, overCap);
+    const idempotencyKey = req.get('idempotency-key') || randomUUID();
+    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return fail(res, 400, 'Invalid idempotency key');
+    let created;
+    try {
+      created = await repo.recordContribution({
+        requestId: r.id, contributorId: req.user.id, amountCents: parsed.paise, utr: u.utr, idempotencyKey,
+      });
+    } catch (err) {
+      if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Contribution could not be recorded').replace(/^Supabase:\s*/, ''));
+      throw err;
     }
     const borrower = await repo.getUser(r.borrowerId).catch(() => null);
     if (borrower?.email) {
@@ -833,11 +836,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       isMutual: rules.isMutual(await repo.connections(req.user.id), r.borrowerId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const updated = await repo.updateContribution(c.id, patch);
-    const overCap = await contributionOverCap(r, c.id);
-    if (overCap) {
-      await repo.updateContribution(c.id, { status: 'not_received', amountCents: c.amountCents, utr: c.utr ?? null, updatedAt: now().toISOString() });
-      return fail(res, 409, overCap);
+    let updated;
+    try {
+      updated = await repo.reviseContribution({ entryId: c.id, actorId: req.user.id, amountCents, utr: patch.utr ?? c.utr ?? null });
+    } catch (err) {
+      if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Contribution could not be corrected').replace(/^Supabase:\s*/, ''));
+      throw err;
     }
     res.json({ contribution: contributionJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
@@ -885,14 +889,16 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       lenderId, owed: (await owedFor(r.id)).get(lenderId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const created = await repo.addRepayment({
-      requestId: r.id, payerId: req.user.id, lenderId, amountCents: parsed.paise, utr: u.utr,
-      status: 'sent', createdAt: now().toISOString(),
-    });
-    const overCap = await repaymentOverCap(r, lenderId, created.id);
-    if (overCap) {
-      await repo.deleteRepayment(created.id);
-      return fail(res, 409, overCap);
+    const idempotencyKey = req.get('idempotency-key') || randomUUID();
+    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return fail(res, 400, 'Invalid idempotency key');
+    let created;
+    try {
+      created = await repo.recordRepayment({
+        requestId: r.id, payerId: req.user.id, lenderId, amountCents: parsed.paise, utr: u.utr, idempotencyKey,
+      });
+    } catch (err) {
+      if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Repayment could not be recorded').replace(/^Supabase:\s*/, ''));
+      throw err;
     }
     await mailLender(lenderId, `${req.user.name} says they repaid you ${formatInr(parsed.paise)}. Please confirm.`,
       `<p>${escapeHtml(req.user.name)} says they repaid you ${formatInr(parsed.paise)}.</p>`
@@ -947,11 +953,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       lenderId: p.lenderId, owed: (await owedFor(r.id)).get(p.lenderId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const updated = await repo.updateRepayment(p.id, patch);
-    const overCap = await repaymentOverCap(r, p.lenderId, p.id);
-    if (overCap) {
-      await repo.updateRepayment(p.id, { status: 'not_received', amountCents: p.amountCents, utr: p.utr ?? null, updatedAt: now().toISOString() });
-      return fail(res, 409, overCap);
+    let updated;
+    try {
+      updated = await repo.reviseRepayment({ entryId: p.id, actorId: req.user.id, amountCents, utr: patch.utr ?? p.utr ?? null });
+    } catch (err) {
+      if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Repayment could not be corrected').replace(/^Supabase:\s*/, ''));
+      throw err;
     }
     res.json({ repayment: repaymentJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });

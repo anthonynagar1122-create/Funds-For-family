@@ -270,6 +270,32 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     },
 
     // ---- contributions and repayments ----
+    // Creation uses Postgres RPCs: request-row locks, cap checks, idempotency and audit triggers
+    // execute in one database transaction. Never replace these with read/check/insert calls.
+    async recordContribution({ requestId, contributorId, amountCents, utr = null, idempotencyKey }) {
+      const row = check(await db.rpc('record_contribution', {
+        p_request_id: requestId, p_contributor_id: contributorId, p_amount_cents: amountCents,
+        p_utr: utr, p_idempotency_key: idempotencyKey,
+      }));
+      return CONTRIBUTION.toObj(row);
+    },
+    async recordRepayment({ requestId, payerId, lenderId, amountCents, utr = null, idempotencyKey }) {
+      const row = check(await db.rpc('record_repayment', {
+        p_request_id: requestId, p_payer_id: payerId, p_lender_id: lenderId,
+        p_amount_cents: amountCents, p_utr: utr, p_idempotency_key: idempotencyKey,
+      }));
+      return REPAYMENT.toObj(row);
+    },
+    async reviseContribution({ entryId, actorId, amountCents, utr = null }) {
+      return CONTRIBUTION.toObj(check(await db.rpc('revise_contribution', {
+        p_entry_id: entryId, p_actor_id: actorId, p_amount_cents: amountCents, p_utr: utr,
+      })));
+    },
+    async reviseRepayment({ entryId, actorId, amountCents, utr = null }) {
+      return REPAYMENT.toObj(check(await db.rpc('revise_repayment', {
+        p_entry_id: entryId, p_actor_id: actorId, p_amount_cents: amountCents, p_utr: utr,
+      })));
+    },
     addContribution: contrib.add, getContribution: contrib.get, updateContribution: contrib.update,
     deleteContribution: contrib.del, listContributions: contrib.list,
     addRepayment: repay.add, getRepayment: repay.get, updateRepayment: repay.update,

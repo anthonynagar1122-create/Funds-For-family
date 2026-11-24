@@ -108,3 +108,14 @@ Remediation: open the Preview link, configure its staging secret, authenticate w
 - Implement and prove financial concurrency/idempotency guarantees.
 - Close copy mismatch via a controlled production release.
 - Obtain review approval and owner approval before merging/promoting.
+
+
+## Financial integrity retest — 2026-11-24
+
+- Implemented `0004_atomic_financial_ledger.sql` on the isolated staging project. It adds a server-only idempotency ledger, append-only financial audit events, Postgres row-locking RPCs for new contributions/repayments and their correction flows, and explicit `service_role` EXECUTE grants. Functions are `SECURITY INVOKER`; anon/authenticated cannot execute them.
+- API creation routes now call the transactional RPCs instead of read/check/insert sequences. Browser forms send a stable `Idempotency-Key` and retain it on retryable server failures. Memory repository behavior mirrors the same caps/replay contract.
+- Added concurrency/idempotency tests for the repository contract and a staging integration test. The focused local API/final-fix/financial suite passed 68/68. `git diff --check` passed. The full local suite could not be completed in this Upstash box because its Chromium runtime lacks system `libglib-2.0.so.0`; CI browser suite is still the authoritative browser result.
+- Ran a staging SQL smoke test in a transaction with synthetic users, mutual follows, an open request, contribution replay, repayment creation, audit-trigger checks and append-only mutation rejection. The test transaction rolled back; staging remains empty. Database metadata confirms all four RPCs are `SECURITY INVOKER`, executable by `service_role`, and not executable by `authenticated`.
+- Staging security advisor now reports 14 INFO-only `rls_enabled_no_policy` notices (the 12 existing server-only tables plus the two new private tables); health advisor remains clear. No broad policies were added.
+- Migration history includes a no-op `atomic_financial_ledger` entry created during an earlier migration invocation, followed by the actual `atomic_financial_ledger_implementation` migration. The latter is the migration containing the SQL above. This extra empty history entry does not change schema state, but should be reconciled in the repository's migration bookkeeping before future migration automation.
+- F-03 is partially remediated but remains open until the staging GitHub Actions integration job runs against the new RPCs and the concurrent request test passes against Postgres. The staging GitHub secrets are still not configured. No production DB or deployment was changed.
