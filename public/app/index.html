@@ -57,23 +57,8 @@
       <div id="detail"></div>
     </section>
 
-    <section id="view-circle" hidden aria-labelledby="people-title">
-      <h1 id="people-title">Circle</h1>
-      <form id="search-form" class="inline-form" role="search">
-        <label for="f-search" class="sr-only">Search members by name or email</label>
-        <input id="f-search" type="search" placeholder="Search by name or email" minlength="2">
-        <button class="btn btn-secondary" type="submit">Search</button>
-      </form>
-      <ul class="list" id="search-results"></ul>
-      <h2>Your connections</h2>
-      <ul class="list" id="connections"></ul>
-      <h2>Invite someone</h2>
-      <form id="invite-form" class="inline-form">
-        <label for="f-invite" class="sr-only">Email address to invite</label>
-        <input id="f-invite" type="email" placeholder="name@example.com" required>
-        <button class="btn btn-secondary" type="submit">Send invite</button>
-      </form>
-      <p class="muted" id="invite-status" role="status"></p>
+    <section id="view-circle" hidden aria-label="Circle">
+      <div id="circle"></div>
     </section>
 
     <section id="view-welcome" hidden aria-label="Welcome">
@@ -98,6 +83,7 @@
   <script src="/app/pages/new-request.js"></script>
   <script src="/vendor/qr.js"></script>
   <script src="/app/pages/request.js"></script>
+  <script src="/app/pages/circle.js"></script>
   <script src="/app.js" defer></script>
   <script>
     if ('serviceWorker' in navigator) {

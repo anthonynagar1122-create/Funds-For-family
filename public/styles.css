@@ -111,3 +111,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
 
 .offline-note { margin: 0; padding: var(--space-2) var(--space-4); background: #fff4d6; color: #5c4400; border-bottom: 1px solid #e6cf8a; text-align: center; font-weight: 600; }
 .offline-note[hidden] { display: none; }
+
+/* Circle */
+.person { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.person-name { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; }
+.stack { display: grid; gap: var(--space-2); max-width: 28rem; }

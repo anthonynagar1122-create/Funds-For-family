@@ -122,42 +122,12 @@
     }
   }
 
-  // ---- People ----
+  // ---- Circle ----
   async function renderPeople() {
     show('view-circle');
-    const { following, followers, mutual } = await api('/connections');
-    const mutualIds = new Set(mutual.map((u) => u.id));
-    const row = (u) => `<li><strong>${esc(u.name)}</strong> <span class="muted">${esc(u.email)}</span>
-      ${mutualIds.has(u.id) ? '<span class="badge">Mutual</span>' : ''}
-      <div class="row-actions"><button class="btn btn-secondary" data-follow="${u.id}" type="button">Follow</button>
-      <button class="btn btn-ghost" data-unfollow="${u.id}" type="button">Unfollow</button></div></li>`;
-    $('#connections').innerHTML = [...following, ...followers.filter((u) => !following.some((f) => f.id === u.id))].map(row).join('') || '<li class="muted">No connections yet.</li>';
+    try { await CirclePage.render($('#circle'), { toast }); } catch (err) { $('#circle').innerHTML = `<p class="error" role="alert">Could not load your circle. ${esc(err.message)}</p>`; }
+    $('#circle-title')?.focus();
   }
-
-  $('#search-form').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const q = $('#f-search').value.trim();
-    const { users } = await api(`/users?q=${encodeURIComponent(q)}`);
-    $('#search-results').innerHTML = users.map((u) => `<li><strong>${esc(u.name)}</strong> <span class="muted">${esc(u.email)}</span>
-      <div class="row-actions"><button class="btn btn-secondary" data-follow="${u.id}" type="button">Follow</button></div></li>`).join('') || '<li class="muted">No members found.</li>';
-  });
-
-  document.addEventListener('click', async (ev) => {
-    const f = ev.target.closest('[data-follow]');
-    const u = ev.target.closest('[data-unfollow]');
-    try {
-      if (f) { await api('/follows', { method: 'POST', body: { userId: Number(f.dataset.follow) } }); toast('Following'); }
-      if (u) { await api(`/follows/${u.dataset.unfollow}`, { method: 'DELETE' }); toast('Unfollowed'); }
-      if (f || u) renderPeople();
-    } catch (err) { toast(err.message); }
-  });
-
-  $('#invite-form').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const email = $('#f-invite').value;
-    try { await api('/invites', { method: 'POST', body: { email } }); $('#invite-status').textContent = `Invitation sent to ${email}.`; ev.target.reset(); }
-    catch (err) { $('#invite-status').textContent = err.message; }
-  });
 
   // ---- Profile (placeholder until its own page lands) ----
   function renderProfile() {
