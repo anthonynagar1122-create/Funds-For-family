@@ -53,6 +53,25 @@
     return usersById.get(id)?.name ?? 'Member';
   }
 
+  // Lenders carry the risk, so they talk to the borrower first: Call and WhatsApp, then a required confirmation.
+  function contactBlock(borrower, idSuffix) {
+    const name = esc(borrower?.name ?? 'the borrower');
+    const phone = borrower?.phone;
+    const digits = phone ? phone.replace(/\D/g, '') : '';
+    const links = phone ? `
+        <a class="btn btn-secondary btn-sm" href="tel:${esc(phone)}">📞 Call</a>
+        <a class="btn btn-secondary btn-sm" href="https://wa.me/${esc(digits)}" target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>
+        <span class="contact-number">${esc(phone)}</span>`
+      : '<span class="muted">No phone on file. Speak with them in person first.</span>';
+    return `
+      <div class="contact">
+        <p class="contact-title">Talk to ${name} first</p>
+        <div class="contact-actions">${links}</div>
+        <label class="confirm"><input type="checkbox" name="confirmedContact" id="confirm-${idSuffix}" required>
+          <span>I have spoken with ${name} about this loan</span></label>
+      </div>`;
+  }
+
   function statusBadge(status) {
     const map = { pending_verification: ['badge-warn', 'Awaiting verification'], rejected: ['badge-danger', 'Rejected'],
       open: ['', 'Open for funding'], funded: ['badge-ok', 'Funded'], overdue: ['badge-danger', 'Overdue'], repaid: ['badge-ok', 'Repaid'] };
@@ -172,6 +191,7 @@
           <p class="fund-figures"><strong>${esc(card.raisedLabel)}</strong> <span>$${remaining.toFixed(2)} to go</span></p>
         </div>
         <form class="fund-form" data-contribute="${esc(r.id)}" novalidate>
+          ${contactBlock(r.borrower, `card-${esc(r.id)}`)}
           <div class="chips" role="group" aria-label="Quick amounts">${chips}</div>
           <div class="fund-row">
             <label class="sr-only" for="amt-${esc(r.id)}">Amount to contribute (USD)</label>
@@ -202,12 +222,14 @@
     const input = form.querySelector('input[name="amount"]');
     const err = form.querySelector('.error');
     const amount = Number(input.value);
+    const confirm = form.querySelector('input[name="confirmedContact"]');
     err.textContent = '';
+    if (!confirm.checked) { err.textContent = 'Call or message the borrower first, then tick the box.'; confirm.focus(); return; }
     if (!(amount > 0)) { err.textContent = 'Enter an amount.'; input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
     try {
-      await api(`/requests/${form.dataset.contribute}/contributions`, { method: 'POST', body: { amount } });
+      await api(`/requests/${form.dataset.contribute}/contributions`, { method: 'POST', body: { amount, confirmedContact: true } });
       toast(`Contributed $${amount.toFixed(2)}. Thank you.`);
       renderFeed();
     } catch (e) {
@@ -223,6 +245,7 @@
     const { users } = await api('/users');
     sel.innerHTML = '<option value="">Choose a nominee</option>' + users.map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
     $('#f-date').min = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    if (me.phone && !$('#f-phone').value) $('#f-phone').value = me.phone;
   }
 
   function clearErrors(form) {
@@ -235,9 +258,10 @@
     const form = ev.currentTarget;
     clearErrors(form);
     const fd = new FormData(form);
-    const body = { amount: Number(fd.get('amount')), purpose: fd.get('purpose'), repaymentDate: fd.get('repaymentDate'), nomineeId: Number(fd.get('nomineeId')) };
+    const body = { amount: Number(fd.get('amount')), purpose: fd.get('purpose'), repaymentDate: fd.get('repaymentDate'), nomineeId: Number(fd.get('nomineeId')), phone: fd.get('phone') };
     try {
       const { request } = await api('/requests', { method: 'POST', body });
+      me = { ...me, phone: body.phone };
       toast('Request submitted. The verification team will check it next.');
       location.hash = `#request/${request.id}`;
     } catch (err) {
@@ -288,6 +312,7 @@
         </form>` : ''}
       ${can('contribute') ? `
         <form id="fund-form" class="form">
+          ${contactBlock(r.borrower, 'detail')}
           <div class="field"><label for="c-amount">Contribute (USD, up to ${money(r.remainingCents)})</label>
             <input id="c-amount" type="number" min="0.01" step="0.01" max="${(r.remainingCents / 100).toFixed(2)}" required>
             <p class="hint">Record what you are lending. No money moves through this app.</p>
@@ -324,7 +349,8 @@
     $('#fund-form')?.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const input = $('#c-amount');
-      try { await api(`/requests/${id}/contributions`, { method: 'POST', body: { amount: Number(input.value) } }); toast('Thank you for contributing'); renderDetail(id); }
+      if (!$('#confirm-detail').checked) { $('#e-fund').textContent = 'Call or message the borrower first, then tick the box.'; $('#confirm-detail').focus(); return; }
+      try { await api(`/requests/${id}/contributions`, { method: 'POST', body: { amount: Number(input.value), confirmedContact: true } }); toast('Thank you for contributing'); renderDetail(id); }
       catch (err) { $('#e-fund').textContent = err.message; input.setAttribute('aria-invalid', 'true'); input.focus(); }
     });
     $('#repay-form')?.addEventListener('submit', async (ev) => {

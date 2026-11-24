@@ -59,6 +59,7 @@ const validRequest = (nomineeId) => ({
   purpose: 'School fees for the second term at the local college',
   repaymentDate: '2027-02-01',
   nomineeId,
+  phone: '+1 555 010 0100', // lenders must be able to reach the borrower
 });
 
 async function createRequest({ call }, nomineeId) {
@@ -114,7 +115,7 @@ test('a contributor sees the request under lending with their own total', async 
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
-    const c = await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 300 });
+    const c = await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 300 });
     assert.equal(c.status, 201, JSON.stringify(c.body));
     const r = await ctx.call('lee', 'GET', '/activity');
     assert.equal(r.body.lending.length, 1);
@@ -130,7 +131,7 @@ test('repayments made and received are split by who recorded them', async () => 
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
-    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 500 });
+    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 500 });
     const paid = await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { amount: 100 });
     assert.equal(paid.status, 201, JSON.stringify(paid.body));
 
@@ -181,7 +182,7 @@ test('a stranger sees no rows for a request they had no part in', async () => {
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
-    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 100 });
+    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 100 });
     const r = await ctx.call('sam', 'GET', '/activity');
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, EMPTY);
@@ -193,7 +194,7 @@ test('ledger rows never include email addresses', async () => {
   try {
     const ids = await community(ctx);
     const id = await openRequest(ctx, ids.nat);
-    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 300 });
+    await ctx.call('lee', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 300 });
     await ctx.call('nat', 'POST', `/requests/${id}/repayments`, { amount: 100 });
     for (const who of ['ann', 'nat', 'lee', 'vee']) {
       const r = await ctx.call(who, 'GET', '/activity');
@@ -212,11 +213,11 @@ test('a lender keeps the loan in their ledger after leaving the borrower\'s netw
     await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     // Only the borrower's circle can fund (design 2026-11-24). Sam joins Ann's circle, lends, then leaves it.
-    const outsider = await s.call('sam', 'POST', `/requests/${id}/contributions`, { amount: 100 });
+    const outsider = await s.call('sam', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 100 });
     assert.equal(outsider.status, 404, 'outside the circle the request is not visible');
     const samId = (await s.call('sam', 'GET', '/me')).body.user.id;
     await s.call('ann', 'POST', '/follows', { userId: samId });
-    const funded = await s.call('sam', 'POST', `/requests/${id}/contributions`, { amount: 100 });
+    const funded = await s.call('sam', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 100 });
     assert.equal(funded.status, 201);
     await s.call('ann', 'DELETE', `/follows/${samId}`);
     const r = await s.call('sam', 'GET', '/activity');

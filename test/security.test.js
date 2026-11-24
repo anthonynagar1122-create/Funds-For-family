@@ -46,6 +46,7 @@ const validRequest = (nomineeId, extra = {}) => ({
   purpose: 'School fees for the second term at the local college',
   repaymentDate: '2027-02-01',
   nomineeId,
+  phone: '+1 555 010 0100', // lenders must be able to reach the borrower
   ...extra,
 });
 

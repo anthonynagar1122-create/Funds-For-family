@@ -25,6 +25,7 @@ function createMemoryRepo() {
     },
     async getUser(id) { return users.get(id) ?? null; },
     async setVerifier(id, isVerifier) { users.get(id).isVerifier = isVerifier; },
+    async setPhone(id, phone) { users.get(id).phone = phone; return users.get(id); },
     async searchUsers(q, excludeId) {
       const s = q.toLowerCase();
       return [...users.values()].filter((u) => u.id !== excludeId && (u.name.toLowerCase().includes(s) || u.email.toLowerCase().includes(s)));

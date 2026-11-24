@@ -53,6 +53,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
 
   api.get('/me', (req, res) => res.json({ user: publicUser(req.user, req.user.id) }));
 
+  // The member's phone number. Shown only to people who can see one of their requests.
+  api.post('/me/phone', async (req, res) => {
+    const phone = rules.validatePhone(req.body?.phone);
+    if (!phone.ok) return fail(res, 400, phone.error, 'phone');
+    const user = await repo.setPhone(req.user.id, phone.value);
+    res.json({ user: publicUser(user, req.user.id) });
+  });
+
   // Empty query returns your connections (used for the nominee picker). Two or more characters searches all members.
   api.get('/users', async (req, res) => {
     const q = String(req.query.q ?? '').trim();
@@ -163,7 +171,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const rows = (await repo.listFeed(ids)).filter((r) => rules.isFeedStatus(r.status));
     const withRaised = await Promise.all(rows.map(async (r) => {
       const raisedCents = (await repo.listContributions(r.id)).reduce((sum, c) => sum + c.amountCents, 0);
-      return { ...summarise(r, now()), raisedCents };
+      return { ...summarise(r, now()), raisedCents, borrower: await borrowerContact(r) };
     }));
     res.json({ requests: withRaised });
   });
@@ -243,6 +251,13 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const first = Object.keys(errors)[0];
     if (first) return fail(res, 400, errors[first], first);
     if (!(await repo.getUser(value.nomineeId))) return fail(res, 400, 'Nominee must be an existing member', 'nomineeId');
+    // Lenders must be able to reach the borrower. The form can send the number with the request.
+    if (req.body?.phone !== undefined && req.body.phone !== '') {
+      const phone = rules.validatePhone(req.body.phone);
+      if (!phone.ok) return fail(res, 400, phone.error, 'phone');
+      req.user = await repo.setPhone(req.user.id, phone.value);
+    }
+    if (!req.user.phone) return fail(res, 400, 'Add your phone number so lenders can reach you', 'phone');
     const created = await repo.createRequest({
       borrowerId: req.user.id,
       nomineeId: value.nomineeId,
@@ -288,6 +303,10 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (!r) return;
     const amountCents = toCents(req.body?.amount);
     if (amountCents === null) return fail(res, 400, 'Amount must be a positive number with at most 2 decimals', 'amount');
+    // The lender carries the risk: they confirm they spoke with the borrower first.
+    if (req.body?.confirmedContact !== true && r.borrowerId !== req.user.id) {
+      return fail(res, 400, 'Call or message the borrower first, then confirm you have spoken', 'confirmedContact');
+    }
     const raisedCents = (await repo.listContributions(r.id)).reduce((s, c) => s + c.amountCents, 0);
     const check = rules.checkContribution({ amountCents, principalCents: r.principalCents, raisedCents, contributorId: req.user.id, borrowerId: r.borrowerId, status: r.status });
     if (!check.ok) return fail(res, 409, check.reason);
@@ -333,7 +352,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   function publicUser(u, viewerId) {
     if (!u) return null;
     const out = { id: u.id, name: u.name, isVerifier: !!u.isVerifier };
-    if (viewerId !== undefined && u.id === viewerId) out.email = u.email;
+    if (viewerId !== undefined && u.id === viewerId) { out.email = u.email; out.phone = u.phone ?? null; }
     return out;
   }
 
@@ -350,12 +369,20 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     };
   }
 
+  // How a lender reaches the borrower. Only call this for a request the viewer may see (the circle rule):
+  // the phone number is shown to the borrower's circle and nobody else.
+  async function borrowerContact(r) {
+    const b = await repo.getUser(r.borrowerId);
+    return b ? { id: b.id, name: b.name, phone: b.phone ?? null } : null;
+  }
+
   async function detail(r) {
     const asOf = now();
     const [verifs, contribs, repays] = await Promise.all([repo.listVerifications(r.id), repo.listContributions(r.id), repo.listRepayments(r.id)]);
     const raisedCents = contribs.reduce((s, c) => s + c.amountCents, 0);
     const paidCents = repays.reduce((s, p) => s + p.amountCents, 0);
     const interest = rules.interestCents(r.principalCents, r.repaymentDate, asOf, annualRate);
+    const borrower = await borrowerContact(r);
     return {
       ...summarise(r, asOf),
       raisedCents,
@@ -364,6 +391,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       interestCents: interest,
       amountDueCents: r.principalCents + interest,
       paidCents,
+      borrower,
       verifications: verifs.map((v) => ({ verifierId: v.verifierId, decision: v.decision, note: v.note })),
       verificationOutcome: rules.verificationOutcome(verifs, requiredApprovals),
       contributions: contribs.map((c) => ({ contributorId: c.contributorId, amountCents: c.amountCents, createdAt: c.createdAt })),

@@ -29,7 +29,7 @@ async function setup() {
 }
 
 const req = (nomineeId, purpose = 'School fees for the second term at the local college') =>
-  ({ amount: 500, purpose, repaymentDate: '2027-02-01', nomineeId });
+  ({ amount: 500, purpose, repaymentDate: '2027-02-01', nomineeId, phone: '+1 555 010 0100' });
 
 test('verification queue: non-verifiers are refused', async () => {
   const { call, me, close } = await setup();

@@ -324,3 +324,11 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
   /* Icons carry the bottom bar on phones (an older rule hides .nav-icon in the top bar). */
   .topbar .actionbar .nav-icon { display: block; }
 }
+
+/* ---- Lender safety: talk to the borrower first ---- */
+.contact { display: grid; gap: var(--space-2); background: var(--color-warn-100); border: 1px solid #fcd34d; border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
+.contact-title { margin: 0; font-weight: 700; color: var(--color-warn-800); font-size: .9375rem; }
+.contact-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.contact-number { font-variant-numeric: tabular-nums; font-size: .875rem; color: var(--color-ink-700); }
+.confirm { display: flex; align-items: flex-start; gap: var(--space-2); font-weight: 600; font-size: .875rem; color: var(--color-ink-900); cursor: pointer; }
+.confirm input { width: 20px; height: 20px; min-height: 0; margin: 1px 0 0; accent-color: var(--color-brand-600); flex: none; }
