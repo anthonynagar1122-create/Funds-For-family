@@ -25,7 +25,7 @@
 | `RESEND_API_KEY` | — | Sends email. If missing, email is skipped with a warning. |
 | `EMAIL_FROM` | — | Must use a Resend-verified domain |
 | `APP_URL` | `http://localhost:3000` | Base for invite links |
-| `INTEREST_RATE_ANNUAL` | `0.12` | ⚠ Assumption, pending adviser review |
+| Interest / late-fee settings | Disabled | No interest or late fee is active while the policy is under review; do not add an interest-rate environment variable. |
 | `REQUIRED_APPROVALS` | `2` | Distinct verifier approvals to open a request |
 
 Secrets never go in the repository. Add them in the Vercel dashboard or a local `.env` (git-ignored).
