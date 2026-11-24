@@ -111,13 +111,13 @@
     const lenderRow = (l) => `<li class="lender-row"><strong>${esc(name(l.userId))}</strong>
         <span class="muted">lent ${money(l.lentCents)} · repaid ${money(l.repaidCents)}${l.pendingRepayCents > 0 ? ` · ${money(l.pendingRepayCents)} awaiting confirmation` : ''} · still owed ${money(l.owedCents)}</span>
         ${repayable && l.owedCents > 0 ? `<form class="repay-form form" data-lender="${esc(l.userId)}" novalidate>
-          ${payBlock(payFor(l.userId), { name: name(l.userId) }, l.owedCents, r.id)}
+          <div class="repay-pay" data-owed="${esc(l.owedCents)}"></div>
           <label for="p-amount-${esc(l.userId)}">Amount you repaid ${esc(name(l.userId))} (₹)</label>
           <input id="p-amount-${esc(l.userId)}" name="amount" type="text" inputmode="decimal" autocomplete="off" required>
           <label for="p-utr-${esc(l.userId)}">UTR (optional)</label>
           <input id="p-utr-${esc(l.userId)}" name="utr" type="text" autocomplete="off">
           <p class="error" role="alert"></p>
-          <button class="btn btn-primary" type="submit">I've sent it</button></form>` : ''}</li>`;
+          <button class="btn btn-primary" type="submit">Record repayment</button></form>` : ''}</li>`;
 
     const events = timelineEvents(r, name);
     const decisions = (r.verifications || []).map((v) => `${name(v.verifierId)} ${v.decision === 'approve' ? 'approved' : 'rejected'} the purpose${v.note ? `: ${v.note}` : ''}`);
@@ -206,6 +206,18 @@
       });
     }
 
+    root.querySelectorAll('.repay-form').forEach((form) => {
+      const slot = form.querySelector('.repay-pay');
+      const owed = Number(slot.dataset.owed);
+      const lid = Number(form.dataset.lender);
+      const draw = () => {
+        const parsed = window.Money.parseRupees(form.elements.amount.value);
+        const cents = parsed.paise && parsed.paise > 0 ? parsed.paise : owed;
+        slot.innerHTML = payBlock(payFor(lid), { name: name(lid) }, cents, r.id);
+      };
+      draw();
+      form.elements.amount.addEventListener('input', draw);
+    });
     root.querySelectorAll('.repay-form').forEach((form) => form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const input = form.elements.amount;

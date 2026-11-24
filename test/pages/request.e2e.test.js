@@ -179,8 +179,13 @@ test('the borrower repays each lender by lenderId, with a UPI link per lender', 
     assert.equal(await page.locator('.repay-form[data-lender="5"] a.upi-pay').count(), 1);
     assert.equal(await page.locator('.repay-form[data-lender="6"] a.upi-pay').count(), 0);
     assert.match(await page.locator('.repay-form[data-lender="6"]').innerText(), /Ask Raj Mehta to add their UPI ID/);
+    assert.equal(await page.locator('.repay-form[data-lender="6"]').getByRole('button', { name: 'Record repayment' }).count(), 1);
+    assert.equal(await page.locator('.repay-form').getByRole('button', { name: /I.ve sent it/ }).count(), 0);
+    await page.locator('.repay-form[data-lender="5"] input[name="amount"]').fill('100.25');
+    assert.match(await page.locator('.repay-form[data-lender="5"] a.upi-pay').innerText(), /^Pay ₹100\.25 with UPI$/);
+    assert.equal(new URL(await page.locator('.repay-form[data-lender="5"] a.upi-pay').getAttribute('href')).searchParams.get('am'), '100.25');
     await page.locator('.repay-form[data-lender="6"] input[name="amount"]').fill('250');
-    await page.locator('.repay-form[data-lender="6"] button[type="submit"]').click();
+    await page.locator('.repay-form[data-lender="6"]').getByRole('button', { name: 'Record repayment' }).click();
     await page.waitForTimeout(150);
     assert.deepEqual(calls, [{ url: '/api/requests/1/repayments', body: { lenderId: 6, amount: '250', utr: '' } }]);
   } finally { await ctx.close(); }
@@ -235,5 +240,19 @@ test('hostile purpose and names are escaped and no banned words appear', { skip 
     assert.equal(await page.locator('#detail img').count(), 0);
     assert.ok((await page.locator('#detail h1').innerText()).includes('<img src=x'));
     assert.doesNotMatch(await page.locator('#detail').innerText(), /nominee|interest/i);
+  } finally { await ctx.close(); }
+});
+
+test('upiHref encodes name, UPI id and note; keeps @ in pa', { skip }, async () => {
+  const { page, ctx } = await open(9, base());
+  try {
+    const href = await page.evaluate(() => window.RequestPage.upiHref({ name: 'A&B "x"', upiId: 'a&b@bank' }, 12345, 7));
+    assert.match(href, /[?&]pa=a%26b@bank(&|$)/);
+    assert.match(href, /[?&]pn=A%26B%20%22x%22(&|$)/);
+    assert.match(href, /[?&]tn=Funds%20For%20Family%20request%207(&|$)/);
+    assert.match(href, /[?&]am=123\.45(&|$)/);
+    const u = new URL(href);
+    assert.equal(u.searchParams.get('pn'), 'A&B "x"');
+    assert.equal(u.searchParams.get('pa'), 'a&b@bank');
   } finally { await ctx.close(); }
 });
