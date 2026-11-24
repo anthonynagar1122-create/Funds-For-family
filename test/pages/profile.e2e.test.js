@@ -42,7 +42,7 @@ const STATEMENT = {
 };
 
 async function open(opts = {}, hash = '#/profile') {
-  const state = { patches: [], prefs: [], helps: [], deletes: [], me: null, deleteResponse: { status: 200, body: { ok: true } }, ...opts };
+  const state = { patches: [], prefs: [], helps: [], myHelp: [], deletes: [], me: null, deleteResponse: { status: 200, body: { ok: true } }, ...opts };
   const ctx = await browser.newContext({ viewport: { width: 375, height: 900 }, reducedMotion: 'reduce', permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await ctx.newPage();
   page.setDefaultTimeout(8000);
@@ -74,7 +74,13 @@ async function open(opts = {}, hash = '#/profile') {
   await page.route('**/api/me/statement', (route) => json(route, 200, STATEMENT));
   await page.route('**/api/users/9', (route) => json(route, 200, { user: { id: 9, name: 'Asha Rao',
     trust: { memberSince: '2026-03', repaidCount: 3, repaidOnTimeCount: 2, lentToCount: 5 } } }));
-  await page.route('**/api/help', (route) => { state.helps.push(route.request().postDataJSON()); return json(route, 201, { ok: true }); });
+  await page.route('**/api/help', (route) => {
+    const body = route.request().postDataJSON();
+    state.helps.push(body);
+    state.myHelp.push({ body: body.body, createdAt: '2026-11-24T10:00:00.000Z', resolvedAt: null });
+    return json(route, 201, { ok: true });
+  });
+  await page.route('**/api/help/mine', (route) => json(route, 200, { messages: state.myHelp }));
   await page.route('**/api/home', (route) => json(route, 200, { needsYou: [], myRequests: [], myLending: [] }));
   await page.goto(`http://127.0.0.1:${server.address().port}/app/${hash}`, { waitUntil: 'load' });
   await page.waitForSelector('#view-profile:not([hidden]) h1');
@@ -221,5 +227,32 @@ test('Web Share is used when the browser has it', { skip }, async () => {
     await page.getByRole('button', { name: 'Share summary' }).click();
     await page.waitForFunction(() => window.__shared);
     assert.match(await page.evaluate(() => window.__shared.text), /Loans I made/);
+  } finally { await ctx.close(); }
+});
+
+test('"Your messages" lists earlier messages as text and shows a new one after sending, hostile text escaped', { skip }, async () => {
+  const hostile = '<img src=x onerror=window.__x=1> please help me';
+  const { page, ctx } = await open({ myHelp: [
+    { body: hostile, createdAt: '2026-11-20T10:00:00.000Z', resolvedAt: null },
+    { body: 'Older question that was answered', createdAt: '2026-11-10T10:00:00.000Z', resolvedAt: '2026-11-11T10:00:00.000Z' },
+  ] });
+  try {
+    const section = page.locator('#my-help');
+    assert.equal(await page.getByRole('heading', { name: 'Your messages' }).count(), 1);
+    assert.match(await section.innerText(), /<img src=x onerror=window.__x=1> please help me/);
+    assert.match(await section.innerText(), /Older question that was answered/);
+    assert.match(await section.innerText(), /Resolved/);
+    assert.equal(await section.locator('img').count(), 0);
+    assert.equal(await page.evaluate(() => window.__x), undefined);
+    await page.getByLabel('How can we help?').fill('A brand new question for you');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await page.waitForFunction(() => /A brand new question for you/.test(document.querySelector('#my-help').textContent));
+  } finally { await ctx.close(); }
+});
+
+test('"Your messages" shows an empty note when there are none', { skip }, async () => {
+  const { page, ctx } = await open();
+  try {
+    assert.match(await page.locator('#my-help').innerText(), /No messages yet/);
   } finally { await ctx.close(); }
 });

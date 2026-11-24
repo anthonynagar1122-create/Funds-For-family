@@ -127,3 +127,4 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
   .stmt-item { break-inside: avoid; }
 }
 a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.help-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

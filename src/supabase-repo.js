@@ -31,6 +31,7 @@ const INVITE = mapper({
   id: 'id', inviterId: 'inviter_id', email: 'email', tokenHash: 'token_hash', expiresAt: 'expires_at', createdAt: 'created_at',
   acceptedAt: 'accepted_at', acceptedUserId: 'accepted_user_id', revokedAt: 'revoked_at', supersededAt: 'superseded_at',
 });
+const HELP = mapper({ id: 'id', userId: 'user_id', body: 'body', createdAt: 'created_at', resolvedAt: 'resolved_at' });
 const REQUEST = mapper({
   id: 'id', borrowerId: 'borrower_id', trustedContactId: 'nominee_id', purpose: 'purpose', category: 'category',
   principalCents: 'principal_cents', repaymentDate: 'repayment_date', originalRepaymentDate: 'original_repayment_date',
@@ -195,6 +196,24 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
         .eq('inviter_id', inviterId).gte('created_at', isoDate).is('revoked_at', null).is('superseded_at', null);
       if (res.error) throw fail(res.error);
       return res.count ?? 0;
+    },
+
+    // ---- help messages ----
+    async addHelpMessage({ userId, body }) {
+      return HELP.toObj(check(await db.from('help_messages').insert({ user_id: userId, body }).select().single()));
+    },
+    async listHelpMessagesByUser(userId) {
+      return list(check(await db.from('help_messages').select().eq('user_id', userId).order('id', { ascending: false })), HELP);
+    },
+    // Unresolved first (resolved_at null sorts last by default on ascending, so order explicitly), oldest first within each group.
+    async listHelpMessages() {
+      const rows = list(check(await db.from('help_messages').select().order('id', { ascending: true })), HELP);
+      return [...rows.filter((m) => !m.resolvedAt), ...rows.filter((m) => m.resolvedAt)];
+    },
+    // Only an unresolved row is updated, so a second call keeps the first timestamp. Null if the id does not exist.
+    async resolveHelpMessage(id, at) {
+      await db.from('help_messages').update({ resolved_at: at }).eq('id', id).is('resolved_at', null);
+      return maybe(db.from('help_messages').select().eq('id', id), HELP);
     },
 
     // ---- requests ----

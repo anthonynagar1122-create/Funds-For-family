@@ -234,6 +234,27 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.deepEqual(await repo.searchUsers('Former member', other.id), [], 'deleted members are not searchable');
     assert.equal(await repo.deleteAccount(999999999), null);
   });
+  test('contract: help messages are added, listed per user, listed for admin unresolved first, and resolved once', async () => {
+    const repo = await makeRepo();
+    const a = await mk(repo, 'ha');
+    const b = await mk(repo, 'hb');
+    const m1 = await repo.addHelpMessage({ userId: a.id, body: 'First help message' });
+    const m2 = await repo.addHelpMessage({ userId: b.id, body: 'Second help message' });
+    const m3 = await repo.addHelpMessage({ userId: a.id, body: 'Third help message' });
+    assert.ok(m1.id && m1.createdAt);
+    assert.equal(m1.resolvedAt, null);
+    assert.equal(m1.userId, a.id);
+    const mine = await repo.listHelpMessagesByUser(a.id);
+    assert.deepEqual(mine.map((m) => m.id).sort(), [m1.id, m3.id].sort());
+    const at = '2026-11-21T10:00:00.000Z';
+    const r = await repo.resolveHelpMessage(m1.id, at);
+    assert.equal(new Date(r.resolvedAt).toISOString(), at);
+    const again = await repo.resolveHelpMessage(m1.id, '2026-12-01T10:00:00.000Z');
+    assert.equal(new Date(again.resolvedAt).toISOString(), at, 'already resolved: kept');
+    assert.equal(await repo.resolveHelpMessage(999999999, at), null);
+    const all = (await repo.listHelpMessages()).filter((m) => [m1.id, m2.id, m3.id].includes(m.id));
+    assert.deepEqual(all.map((m) => m.id), [m2.id, m3.id, m1.id], 'unresolved first (oldest first), then resolved');
+  });
 }
 
 module.exports = { runContract };

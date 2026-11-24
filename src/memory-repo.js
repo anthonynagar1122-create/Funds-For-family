@@ -26,6 +26,7 @@ function createMemoryRepo() {
   const verifications = [];         // {requestId, verifierId, decision, note, createdAt}
   const contributions = new Map();
   const repayments = new Map();
+  const helpMessages = new Map();
 
   const entryApi = (store, add, get, update, del, list) => ({
     async [add](row) {
@@ -176,6 +177,27 @@ function createMemoryRepo() {
       const i = verifications.findIndex((v) => v.requestId === row.requestId && v.verifierId === row.verifierId);
       const v = { createdAt: new Date().toISOString(), note: '', ...row };
       if (i >= 0) verifications[i] = v; else verifications.push(v);
+    },
+
+    // ---- help messages ----
+    async addHelpMessage({ userId, body }) {
+      const m = { id: nextId(), userId, body, createdAt: new Date().toISOString(), resolvedAt: null };
+      helpMessages.set(m.id, m);
+      return copy(m);
+    },
+    async listHelpMessagesByUser(userId) {
+      return [...helpMessages.values()].filter((m) => m.userId === userId).sort((a, b) => b.id - a.id).map(copy);
+    },
+    // Unresolved first, then resolved; oldest first within each group.
+    async listHelpMessages() {
+      return [...helpMessages.values()].sort((a, b) => (a.resolvedAt ? 1 : 0) - (b.resolvedAt ? 1 : 0) || a.id - b.id).map(copy);
+    },
+    // Idempotent: an already resolved message keeps its first timestamp. Returns null if it does not exist.
+    async resolveHelpMessage(id, at) {
+      const m = helpMessages.get(id);
+      if (!m) return null;
+      if (!m.resolvedAt) m.resolvedAt = at;
+      return copy(m);
     },
 
     // ---- contributions and repayments ----

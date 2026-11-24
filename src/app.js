@@ -149,6 +149,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   api.get('/health', (_req, res) => res.json({ ok: true }));
   api.use(requireUser);
 
+  // Admin-only routes sit behind this. requireUser has already run, so an anonymous caller got 401 first.
+  function requireAdmin(req, res, next) {
+    if (!req.user?.isAdmin) return fail(res, 403, 'Admins only');
+    next();
+  }
+
   api.get('/me', async (req, res) => {
     const user = publicUser(req.user, req.user.id);
     const invite = await repo.findInviteByAcceptedUser(req.user.id);
@@ -235,6 +241,37 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     // After the data is anonymised: remove the sign-in too. A failure must not undo or fail the deletion; log the message only.
     try { await deleteClerkUser(req.user.clerkId); } catch (err) { logger.error('clerk user delete failed', err?.message); }
     res.json({ ok: true });
+  });
+
+  // Help requests. A member writes to the owner; nothing here sends email (that is Phase C).
+  api.post('/help', async (req, res) => {
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    if (body.length < 10 || body.length > 2000) return fail(res, 400, 'Your message must be 10 to 2,000 characters', 'body');
+    await repo.addHelpMessage({ userId: req.user.id, body });
+    res.status(201).json({ ok: true });
+  });
+
+  api.get('/help/mine', async (req, res) => {
+    const rows = await repo.listHelpMessagesByUser(req.user.id);
+    res.json({ messages: rows.map((m) => ({ body: m.body, createdAt: m.createdAt, resolvedAt: m.resolvedAt ?? null })) });
+  });
+
+  // The owner's own view, so it is the one place a sender's email is shown.
+  const helpView = (m, sender) => ({ id: m.id, body: m.body, createdAt: m.createdAt, resolvedAt: m.resolvedAt ?? null,
+    userId: m.userId, name: sender?.name ?? 'Former member', email: sender?.email ?? null });
+
+  api.get('/admin/help-messages', requireAdmin, async (_req, res) => {
+    const rows = await repo.listHelpMessages();
+    const senders = new Map((await repo.getUsers([...new Set(rows.map((m) => m.userId))])).map((u) => [u.id, u]));
+    res.json({ messages: rows.map((m) => helpView(m, senders.get(m.userId))) });
+  });
+
+  api.post('/admin/help-messages/:id/resolve', requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) return fail(res, 404, 'Message not found');
+    const m = await repo.resolveHelpMessage(id, now().toISOString());
+    if (!m) return fail(res, 404, 'Message not found');
+    res.json({ message: helpView(m, await repo.getUser(m.userId)) });
   });
 
   api.post('/me/accept-terms', async (req, res) => {

@@ -18,6 +18,20 @@
     return window.Format.avatar(me);
   }
 
+  // Every value goes through esc(); the message text is never treated as markup.
+  function myHelpHtml(messages) {
+    if (!messages) return '<p class="muted">Your messages could not be loaded.</p>';
+    if (!messages.length) return '<p class="muted">No messages yet.</p>';
+    return `<ul class="list">${messages.map((m) => `<li><p class="help-body">${esc(m.body)}</p>
+      <p class="muted">${esc(day(m.createdAt))} <span class="badge${m.resolvedAt ? '' : ' badge-warn'}">${m.resolvedAt ? 'Resolved' : 'Waiting for a reply'}</span></p></li>`).join('')}</ul>`;
+  }
+  async function loadMyHelp() {
+    let messages = null;
+    try { messages = (await window.Api.get('/help/mine')).messages ?? []; } catch { messages = null; }
+    const box = document.getElementById('my-help');
+    if (box) box.innerHTML = myHelpHtml(messages);
+  }
+
   function trustHtml(t) {
     if (!t) return '<p class="muted" id="trust-unavailable">Trust history could not be loaded.</p>';
     return `<ul class="list" id="trust-list">
@@ -72,6 +86,8 @@
           <button class="btn btn-primary" type="submit" id="help-send">Send message</button>
           <p class="muted" id="help-status" role="status"></p>
         </form>
+        <h3 id="my-help-h">Your messages</h3>
+        <div id="my-help" aria-labelledby="my-help-h"><p class="muted">Loading…</p></div>
       </section>
       <section aria-labelledby="del-h"><h2 id="del-h">Delete account</h2>
         <p>This removes your name, email and UPI ID and takes you out of everyone's circle. Past payments stay in other people's records under "Former member". It cannot be undone.</p>
@@ -119,6 +135,7 @@
       }
     });
 
+    loadMyHelp();
     $('#help-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const err = $('#help-error');
@@ -133,6 +150,7 @@
         await window.Api.post('/help', { body });
         field.value = '';
         status.textContent = 'Thanks. We have your message and will get back to you.';
+        await loadMyHelp();
       } catch (e) { err.textContent = e.message; field.focus(); }
       finally { btn.disabled = false; }
     });

@@ -279,3 +279,91 @@ test('POST /follows to a deleted member is 404', async () => {
     assert.equal((await s.call('asha', 'POST', '/follows', { userId: gid })).status, 404);
   } finally { await s.close(); }
 });
+
+// ---- Task 9: help requests ----
+test('POST /api/help validates body (trimmed, 10 to 2000) with field body, then returns 201 and sends no mail', async () => {
+  const s = await setup();
+  try {
+    for (const body of [undefined, 5, '', '   short   ', 'x'.repeat(2001), `  ${'y'.repeat(9)}  `]) {
+      const r = await s.call('asha', 'POST', '/help', { body });
+      assert.equal(r.status, 400, String(body));
+      assert.equal(r.body.field, 'body');
+    }
+    const ok = await s.call('asha', 'POST', '/help', { body: `  ${'z'.repeat(10)}  ` });
+    assert.equal(ok.status, 201);
+    assert.deepEqual(ok.body, { ok: true });
+    assert.equal((await s.call('asha', 'POST', '/help', { body: 'x'.repeat(2000) })).status, 201);
+    const mine = await s.call('asha', 'GET', '/help/mine');
+    assert.ok(mine.body.messages.some((m) => m.body === 'z'.repeat(10)), 'stored trimmed');
+    assert.equal(s.sent.length, 0, 'no email is sent');
+    assert.equal((await s.call(null, 'POST', '/help', { body: 'a'.repeat(12) })).status, 401);
+  } finally { await s.close(); }
+});
+
+test('GET /api/help/mine shows only the viewer\'s own messages, with no email or user ids', async () => {
+  const s = await setup();
+  try {
+    await s.call('asha', 'POST', '/help', { body: 'Asha needs help with a thing' });
+    await s.call('ben', 'POST', '/help', { body: 'Ben has a different problem' });
+    const a = await s.call('asha', 'GET', '/help/mine');
+    assert.equal(a.status, 200);
+    assert.equal(a.body.messages.length, 1);
+    assert.deepEqual(Object.keys(a.body.messages[0]).sort(), ['body', 'createdAt', 'resolvedAt']);
+    assert.equal(a.body.messages[0].body, 'Asha needs help with a thing');
+    assert.equal(a.body.messages[0].resolvedAt, null);
+    assert.doesNotMatch(a.text, /Ben has/);
+    assert.equal((await s.call(null, 'GET', '/help/mine')).status, 401);
+  } finally { await s.close(); }
+});
+
+test('admin help list: 401 anonymous, 403 member, 200 owner with names and emails, unresolved first', async () => {
+  const s = await setup({ ownerEmail: 'boss@example.com' });
+  try {
+    await s.call('boss', 'GET', '/me', null, null, { 'x-test-email': 'boss@example.com' });
+    await s.call('asha', 'POST', '/help', { body: 'First message from Asha' });
+    await s.call('ben', 'POST', '/help', { body: 'Second message from Ben' });
+    assert.equal((await s.call(null, 'GET', '/admin/help-messages')).status, 401);
+    const denied = await s.call('asha', 'GET', '/admin/help-messages');
+    assert.equal(denied.status, 403);
+    assert.deepEqual(denied.body, { error: 'Admins only' });
+    const asBoss = { 'x-test-email': 'boss@example.com' };
+    const list = await s.call('boss', 'GET', '/admin/help-messages', null, null, asBoss);
+    assert.equal(list.status, 200);
+    assert.equal(list.body.messages.length, 2);
+    const first = list.body.messages.find((m) => m.body.startsWith('First'));
+    assert.equal(first.name, 'asha');
+    assert.equal(first.email, 'asha@example.com');
+    assert.equal(first.resolvedAt, null);
+    // Resolve the first: it moves behind the unresolved one.
+    const done = await s.call('boss', 'POST', `/admin/help-messages/${first.id}/resolve`, null, null, asBoss);
+    assert.equal(done.status, 200);
+    const after = (await s.call('boss', 'GET', '/admin/help-messages', null, null, asBoss)).body.messages;
+    assert.equal(after[0].body.startsWith('Second'), true);
+    assert.ok(after[1].resolvedAt);
+    // The sender sees it as resolved.
+    const mine = (await s.call('asha', 'GET', '/help/mine')).body.messages[0];
+    assert.ok(mine.resolvedAt);
+  } finally { await s.close(); }
+});
+
+test('resolve: sets resolvedAt once (idempotent), 404 when missing, 403 for a member, 401 anonymous', async () => {
+  const s = await setup({ ownerEmail: 'boss@example.com' });
+  try {
+    const asBoss = { 'x-test-email': 'boss@example.com' };
+    await s.call('boss', 'GET', '/me', null, null, asBoss);
+    await s.call('asha', 'POST', '/help', { body: 'Please look at my account' });
+    const id = (await s.call('boss', 'GET', '/admin/help-messages', null, null, asBoss)).body.messages[0].id;
+    assert.equal((await s.call('asha', 'POST', `/admin/help-messages/${id}/resolve`)).status, 403);
+    assert.equal((await s.call(null, 'POST', `/admin/help-messages/${id}/resolve`)).status, 401);
+    const one = await s.call('boss', 'POST', `/admin/help-messages/${id}/resolve`, null, null, asBoss);
+    assert.equal(one.status, 200);
+    assert.ok(one.body.message.resolvedAt);
+    s.setNow(new Date('2026-12-01T12:00:00Z'));
+    const two = await s.call('boss', 'POST', `/admin/help-messages/${id}/resolve`, null, null, asBoss);
+    assert.equal(two.status, 200);
+    assert.equal(two.body.message.resolvedAt, one.body.message.resolvedAt, 'first timestamp kept');
+    assert.equal((await s.call('boss', 'POST', '/admin/help-messages/999999/resolve', null, null, asBoss)).status, 404);
+    assert.equal((await s.call('boss', 'POST', '/admin/help-messages/abc/resolve', null, null, asBoss)).status, 404);
+    assert.equal(s.sent.length, 0);
+  } finally { await s.close(); }
+});
