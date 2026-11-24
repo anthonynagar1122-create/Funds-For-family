@@ -2,8 +2,8 @@
   'use strict';
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => Money.formatInr(cents);
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const views = ['signed-out', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-people', 'view-activity'];
+  const esc = Format.esc;
+  const views = ['signed-out', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile'];
   // An invite link looks like /app/#join=<token>. Keep the token for the first /api/me, then tidy the address bar.
   const joinMatch = /^#join=([^&]+)/.exec(location.hash);
   if (joinMatch) {
@@ -23,23 +23,15 @@
     clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 3500);
   }
 
-  async function api(path, opts = {}) {
-    const res = await fetch(`/api${path}`, {
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      ...opts,
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { const err = new Error(data.error || `Request failed (${res.status})`); err.field = data.field; err.code = data.code; err.status = res.status; throw err; }
-    return data;
-  }
+  // Thin adapter over Api so the existing views keep their call style.
+  const api = (path, opts = {}) => Api.request(opts.method || 'GET', path, opts.body, { headers: opts.headers });
 
   async function loadUsers() {
     const token = sessionStorage.getItem('ffjoin');
-    const { user } = await api('/me', token ? { headers: { 'content-type': 'application/json', 'x-invite-token': token } } : {});
+    const { user } = await Api.get('/me', token ? { headers: { 'x-invite-token': token } } : undefined);
     sessionStorage.removeItem('ffjoin');
     me = user;
+    Nav.setUser(user);
     usersById = new Map([[user.id, user]]);
     return user;
   }
@@ -109,7 +101,7 @@
     try {
       const { request } = await api('/requests', { method: 'POST', body });
       toast('Request sent to your trusted contact');
-      location.hash = `#request/${request.id}`;
+      Router.go(`#request/${request.id}`);
     } catch (err) {
       const field = err.field && document.getElementById(`e-${err.field}`);
       if (field) { field.textContent = err.message; const input = field.previousElementSibling; input?.setAttribute('aria-invalid', 'true'); input?.focus?.(); }
@@ -157,7 +149,7 @@
           <button class="btn btn-primary" type="submit">Repay</button></form>` : ''}</li>`;
 
     $('#detail').innerHTML = `
-      <p><a href="#feed">← Back to feed</a></p>
+      <p><a href="#/home">← Back to home</a></p>
       <h1 id="detail-title">${esc(r.purpose)}</h1>
       <div class="meta">${statusBadge(r.status)}<span>Requested by ${esc(name(r.borrowerId))}</span><span>Trusted contact: ${esc(name(r.trustedContactId))}</span></div>
       <div class="meta"><span>Amount ${money(r.principalCents)}</span><span>Repay by ${esc(r.repaymentDate)}</span>
@@ -263,7 +255,7 @@
 
   // ---- People ----
   async function renderPeople() {
-    show('view-people');
+    show('view-circle');
     const { following, followers, mutual } = await api('/connections');
     const mutualIds = new Set(mutual.map((u) => u.id));
     const row = (u) => `<li><strong>${esc(u.name)}</strong> <span class="muted">${esc(u.email)}</span>
@@ -298,21 +290,28 @@
     catch (err) { $('#invite-status').textContent = err.message; }
   });
 
-  // ---- Routing ----
-  async function route() {
-    if (!me) return;
-    const hash = location.hash.replace(/^#/, '') || 'feed';
-    if (hash.startsWith('request/')) return renderDetail(hash.split('/')[1]);
-    if (hash === 'new') return renderNew();
-    if (hash === 'people') return renderPeople();
-    if (hash === 'activity') return renderActivity();
-    return renderFeed();
+  // ---- Profile (placeholder until its own page lands) ----
+  function renderProfile() {
+    show('view-profile');
+    $('#profile-card').innerHTML = `<p>${Format.avatar(me)} <strong>${esc(me.name)}</strong></p><p class="muted">${esc(me.email)}</p>`;
   }
-  window.addEventListener('hashchange', route);
-  $('#nav-feed').addEventListener('click', () => (location.hash = '#feed'));
-  $('#nav-new').addEventListener('click', () => (location.hash = '#new'));
-  $('#nav-people').addEventListener('click', () => (location.hash = '#people'));
-  $('#nav-activity').addEventListener('click', () => (location.hash = '#activity'));
+
+  // ---- Routing ----
+  // Renderers only run for a signed-in member.
+  const guarded = (fn) => (...args) => (me ? fn(...args) : undefined);
+  Router.register('home', guarded(renderFeed));
+  Router.register('new', guarded(renderNew));
+  Router.register('requests', guarded(renderActivity));
+  Router.register('request', guarded((id) => (id ? renderDetail(id) : renderActivity())));
+  Router.register('circle', guarded(renderPeople));
+  Router.register('profile', guarded(renderProfile));
+  let routerStarted = false;
+  function route() {
+    if (!me) return undefined;
+    if (routerStarted) return Router.refresh();
+    routerStarted = true;
+    return Router.start();
+  }
 
   // ---- Clerk sign-in ----
   async function boot() {
