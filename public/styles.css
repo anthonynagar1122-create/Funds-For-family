@@ -93,3 +93,6 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
   .topbar { padding: var(--space-3) var(--space-4); }
   body:has(#primary-nav:not([hidden])) { padding-bottom: 72px; }
 }
+
+.offline-note { margin: 0; padding: var(--space-2) var(--space-4); background: #fff4d6; color: #5c4400; border-bottom: 1px solid #e6cf8a; text-align: center; font-weight: 600; }
+.offline-note[hidden] { display: none; }

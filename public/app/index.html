@@ -6,6 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Funds For Family</title>
   <meta name="description" content="Request and fund small loans within your trusted family and community circle.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#1f6f5c">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/styles.css">
   <script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>
 </head>
@@ -16,6 +19,8 @@
     <nav id="primary-nav" aria-label="Primary" hidden></nav>
     <div id="auth-slot"></div>
   </header>
+
+  <p class="offline-note" id="offline-note" role="status" hidden>You're offline, showing your last saved view.</p>
 
   <main id="main" tabindex="-1">
     <section id="signed-out" class="panel" hidden>
@@ -127,5 +132,10 @@
   <script src="/app/nav.js"></script>
   <script src="/app/card-model.js"></script>
   <script src="/app.js" defer></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js', { scope: '/app/' }).catch(() => {}));
+    }
+  </script>
 </body>
 </html>

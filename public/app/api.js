@@ -18,6 +18,11 @@
       headers: { 'content-type': 'application/json', ...(opts.headers || {}) },
       body: body === undefined || body === null ? undefined : JSON.stringify(body),
     });
+    // The service worker marks answers it served from its saved copy.
+    const fromCache = res.headers.get('x-from-sw-cache') === '1';
+    window.Api.fromCache = fromCache;
+    const note = document.getElementById('offline-note');
+    if (note) note.hidden = !fromCache;
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new ApiError(res.status, data);
     return data;
@@ -30,5 +35,14 @@
     patch: (path, body, opts) => request('PATCH', path, body ?? {}, opts),
     delete: (path, opts) => request('DELETE', path, undefined, opts),
     request,
+    fromCache: false,
+    // Forget saved API answers (sign-out), so the next person on this device never sees them.
+    async clearSaved() {
+      if (!('caches' in window)) return;
+      for (const k of await caches.keys()) {
+        const c = await caches.open(k);
+        for (const r of await c.keys()) if (new URL(r.url).pathname.startsWith('/api/')) await c.delete(r);
+      }
+    },
   };
 })();

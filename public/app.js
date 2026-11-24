@@ -315,7 +315,13 @@
 
   // ---- Clerk sign-in ----
   async function boot() {
-    const cfg = await fetch('/api/config').then((r) => r.json());
+    let cfg;
+    try { cfg = await fetch('/api/config').then((r) => r.json()); }
+    catch (err) {
+      // Offline: open from the last saved view. No sign-in widget is available without the network.
+      try { await loadUsers(); route(); } catch { show('signed-out'); toast('You are offline.'); }
+      return;
+    }
     if (!cfg.clerkPublishableKey) { $('#auth-slot').textContent = 'Sign-in is not configured.'; show('signed-out'); return; }
     // Live keys reach Clerk through the same-origin proxy; development keys do not need it.
     const clerk = new window.Clerk(cfg.clerkPublishableKey, cfg.clerkProxyUrl ? { proxyUrl: cfg.clerkProxyUrl } : undefined);
@@ -330,7 +336,7 @@
     };
     const refresh = async () => {
       mountAuth();
-      if (!clerk.user) { me = null; show('signed-out'); return; }
+      if (!clerk.user) { me = null; Api.clearSaved().catch(() => {}); show('signed-out'); return; }
       try { await loadUsers(); route(); }
       catch (err) {
         if (err.code === 'invite_only') { me = null; show('view-not-invited'); return; }
