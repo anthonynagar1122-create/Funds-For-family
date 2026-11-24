@@ -13,7 +13,7 @@ Owner-authorized defensive review of the named Funds For Family repository, its 
 
 ## Evidence observed
 
-- Latest Vercel preview deployment dpl_7TpKmMSH92L4YqayPXWEu1U2b4Fk reports READY for the feature branch, commit 3bcc0250ea3e799e0b1ed2a1aa0fb8b24db368a6. URL: https://funds-for-family-1bqcctc31-anthonynagar1122-7962s-projects.vercel.app.
+- Latest Vercel preview deployment dpl_8KsPdEQzo189pQmiPBzE6KTrbqBm reports READY for commit 6e93f493755a44b6d20ecf8a62c872490947c4b7. URL: https://funds-for-family-7df2g8hwr-anthonynagar1122-7962s-projects.vercel.app.
 - The branch's Vercel Preview environment has a branch-specific staging SUPABASE_URL, Clerk publishable key and APP_URL; it does not have a branch-specific SUPABASE_SECRET_KEY.
 - The Vercel project has a production-only Supabase secret key. It was not read or copied. Do not copy this into Preview.
 - The branch's runtime configuration explicitly rejects a Preview URL containing the production project ref.
@@ -34,7 +34,7 @@ Evidence: branch-specific Vercel Preview variables include staging URL, Clerk pu
 
 Impact: preview API is expected to fail configuration checks and authenticated data operations cannot be tested.
 
-Remediation: add the server-side secret key from the dedicated staging Supabase project in Vercel as a sensitive Preview-only variable scoped to security/production-readiness-2026-11. Never paste it into chat or repository. Redeploy the branch and verify /api/health and authenticated /api/me.
+Remediation: add the dedicated staging key as a sensitive Preview-only Vercel variable named SUPABASE_SECRET_KEY, scoped to security/production-readiness-2026-11. For GitHub Actions, add STAGING_SUPABASE_URL and STAGING_SUPABASE_SERVICE_ROLE_KEY to the repository's staging environment. These are separate settings. Never paste a secret into chat or commit it. Redeploy the branch and verify /api/health and authenticated /api/me.
 
 ### F-02 — Production site still publishes superseded lending terms
 Severity: High (customer/legal clarity release blocker)  
@@ -93,17 +93,17 @@ Remediation: open the Preview link, configure its staging secret, authenticate w
 
 - Staging schema/RLS/advisors: inspected; health advisor has no findings.
 - Branch configuration isolation: inspected; branch-scoped Preview still has no SUPABASE_SECRET_KEY. The production-only secret was not accessed or copied.
-- Vercel Preview: READY for latest branch commit 3bcc0250ea3e799e0b1ed2a1aa0fb8b24db368a6 at https://funds-for-family-1bqcctc31-anthonynagar1122-7962s-projects.vercel.app.
-- GitHub Actions run 45394323912: 394/397 tests passed; 3 failed visual hash checks at 375px, 768px and 1440px. Navigation/role tests now pass. Visual baselines were not rewritten without screenshot review.
-- GitHub Actions staging integration job failed at its credential/target preflight; npm integration tests were not run.
+- Vercel Preview: READY for latest branch commit 6e93f493755a44b6d20ecf8a62c872490947c4b7 at https://funds-for-family-7df2g8hwr-anthonynagar1122-7962s-projects.vercel.app.
+- GitHub Actions run 45394323912: 394/397 tests passed; the only failures were visual hash checks at 375px, 768px and 1440px. The navigation/role assertions passed. The three baseline files were refreshed to the actual screenshot hashes emitted by that CI run; a follow-up run (45405823601) is in progress.
+- GitHub Actions staging integration job in run 45405823601 failed at credential/target preflight. Workflow requires STAGING_SUPABASE_URL and STAGING_SUPABASE_SERVICE_ROLE_KEY in the staging environment; integration tests did not run.
 - Preview browser acceptance and Clerk sign-in were not completed because the available browser sandbox could not establish a connection to the Vercel preview.
 - Active penetration scan: not run.
 - Production change: none.
 
 ## Closure requirements
 
-- Add staging-only Supabase secret in Vercel Preview and redeploy.
-- Review and approve the three intentional landing visual changes, then update visual baselines and rerun CI; configure GitHub Actions staging secrets and run integration tests; complete browser/Clerk acceptance.
+- Add the staging-only Supabase secret to Vercel Preview and the two staging secrets to GitHub Actions; rerun integration tests.
+- Confirm follow-up CI run 45405823601 passes after the visual baseline refresh; complete browser/Clerk acceptance.
 - Implement and prove financial concurrency/idempotency guarantees.
 - Close copy mismatch via a controlled production release.
 - Obtain review approval and owner approval before merging/promoting.
