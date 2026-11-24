@@ -51,6 +51,7 @@ async function openDetail(viewer, request) {
       verify: await page.locator('#verify-form').count(),
       repay: await page.locator('#repay-form').count(),
       fund: await page.locator('#fund-form').count(),
+      nudge: await page.locator('#detail [data-share-invite]').count(),
     };
   } finally { await ctx.close(); }
 }
@@ -92,4 +93,11 @@ test('a member sees the fund form only on an open request they did not create', 
   assert.equal(f.fund, 1);
   const own = await openDetail({ id: 1, isVerifier: false }, base({ status: 'open' }));
   assert.equal(own.fund, 0);
+});
+
+test('growth: the borrower sees "Get it funded faster" on their own waiting or open request only', { skip }, async () => {
+  assert.equal((await openDetail({ id: 1, isVerifier: false }, base({}))).nudge, 1, 'pending, borrower');
+  assert.equal((await openDetail({ id: 1, isVerifier: false }, base({ status: 'open' }))).nudge, 1, 'open, borrower');
+  assert.equal((await openDetail({ id: 1, isVerifier: false }, base({ status: 'funded', remainingCents: 0, raisedCents: 50000 }))).nudge, 0, 'funded');
+  assert.equal((await openDetail({ id: 9, isVerifier: false }, base({ status: 'open' }))).nudge, 0, 'someone else');
 });

@@ -37,7 +37,7 @@ const row = (requestId, status, myRole, repaymentDate, purpose = `Request ${requ
 const feedReq = (id, status, borrowerId) =>
   ({ id, purpose: `Feed request ${id}`, status, borrowerId, principalCents: 100000, raisedCents: 20000, repaymentDate: '2027-03-01' });
 
-async function openHome({ isVerifier = false, feed = [], activity = EMPTY_ACTIVITY, queue = [] } = {}) {
+async function openHome({ isVerifier = false, feed = [], activity = EMPTY_ACTIVITY, queue = [], connections = null, suggestions = [], hash = '' } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
   const page = await ctx.newPage();
   page.setDefaultTimeout(3000);
@@ -48,19 +48,24 @@ async function openHome({ isVerifier = false, feed = [], activity = EMPTY_ACTIVI
   await page.route('**/api/feed', json({ requests: feed }));
   await page.route('**/api/activity', json(activity));
   await page.route('**/api/verification-queue', json({ requests: queue }));
-  await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: 'load' });
+  if (connections) await page.route('**/api/connections', json(connections));
+  await page.route('**/api/suggestions', json({ suggestions }));
+  await page.goto(`http://127.0.0.1:${server.address().port}/${hash}`, { waitUntil: 'load' });
+  if (hash) return { page, ctx };
   await page.waitForSelector('#view-home:not([hidden])');
   await page.waitForFunction(() => !document.querySelector('#home-empty').hidden || document.querySelector('#home-groups').children.length > 0);
   return { page, ctx };
 }
 
-test('home is the first screen and the menu marks it current', { skip }, async () => {
+test('Updates is the first screen; the four actions are always in the menu', { skip }, async () => {
   const { page, ctx } = await openHome();
   try {
     assert.equal(await page.locator('#nav-home').getAttribute('aria-current'), 'page');
+    for (const id of ['#nav-new', '#nav-feed', '#nav-invite', '#nav-people']) {
+      assert.equal(await page.locator(id).isVisible(), true, `${id} visible`);
+    }
     assert.equal(await page.locator('#signed-out').isVisible(), false, 'the sign-in panel stays hidden once signed in');
     assert.equal(await page.locator('#primary-nav').isVisible(), true);
-    assert.equal(await page.locator('#tile-new').getAttribute('href'), '#new');
     assert.equal(await page.locator('#home-empty').isVisible(), true, 'empty state when nothing is waiting');
   } finally { await ctx.close(); }
 });
@@ -89,13 +94,60 @@ test('repayments list overdue first; only funded or overdue requests count', { s
   } finally { await ctx.close(); }
 });
 
-test('the Fund list offers open requests from others, never the member\'s own', { skip }, async () => {
+test('Updates counts open requests the member can fund, never their own', { skip }, async () => {
   const feed = [feedReq(31, 'open', 2), feedReq(32, 'open', 9), feedReq(33, 'funded', 3)];
   const { page, ctx } = await openHome({ feed });
   try {
     assert.equal(await page.locator('#count-fund').textContent(), '1');
-    const hrefs = await page.locator('#group-fund .task-title').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
-    assert.deepEqual(hrefs, ['#request/31']);
+    assert.equal(await page.locator('#tile-fund').getAttribute('href'), '#feed');
+  } finally { await ctx.close(); }
+});
+
+test('Contribute: cards only for requests the member can fund, with quick amounts capped at what is left', { skip }, async () => {
+  const feed = [feedReq(31, 'open', 2), feedReq(32, 'open', 9), feedReq(33, 'funded', 3)];
+  const { page, ctx } = await openHome({ feed, hash: '#feed' });
+  try {
+    await page.waitForSelector('#view-feed:not([hidden])');
+    await page.waitForFunction(() => document.querySelectorAll('#feed-list .fund-card').length > 0 || !document.querySelector('#feed-empty').hidden);
+    assert.deepEqual(await page.locator('form[data-contribute]').evaluateAll((els) => els.map((e) => e.dataset.contribute)), ['31']);
+    // $800 left of $1,000: $10 / $25 / $50 and "All $800.00".
+    assert.deepEqual(await page.locator('.chip').allTextContents(), ['$10', '$25', '$50', 'All $800.00']);
+    await page.click('.chip[data-amount="25"]');
+    assert.equal(await page.locator('#amt-31').inputValue(), '25');
+  } finally { await ctx.close(); }
+});
+
+test('Contribute: submitting on the card records the contribution and thanks the member', { skip }, async () => {
+  const { page, ctx } = await openHome({ feed: [feedReq(31, 'open', 2)], hash: '#feed' });
+  try {
+    let body = null;
+    await page.route('**/api/requests/31/contributions', async (r) => { body = JSON.parse(r.request().postData()); await r.fulfill({ status: 201, contentType: 'application/json', body: '{"request":{}}' }); });
+    await page.waitForSelector('form[data-contribute="31"]');
+    await page.fill('#amt-31', '40');
+    await page.click('form[data-contribute="31"] button[type="submit"]');
+    await page.waitForSelector('#toast:not([hidden])');
+    assert.deepEqual(body, { amount: 40 });
+    assert.match(await page.locator('#toast').textContent(), /Contributed \$40\.00/);
+  } finally { await ctx.close(); }
+});
+
+test('Growth: a small circle sees "Grow your circle" with suggestions and an invite', { skip }, async () => {
+  const { page, ctx } = await openHome({
+    connections: { following: [{ id: 2, name: 'Asha' }], followers: [], mutual: [] },
+    suggestions: [{ user: { id: 7, name: 'Ravi' }, mutualCount: 2, mutualNames: ['Asha'], reason: '2 mutual connections' }],
+  });
+  try {
+    await page.waitForSelector('#grow-circle');
+    assert.equal(await page.locator('#grow-circle [data-follow="7"]').count(), 1);
+    assert.equal(await page.locator('#grow-circle [data-share-invite]').count(), 1);
+  } finally { await ctx.close(); }
+});
+
+test('Growth: a well-connected member is not nagged', { skip }, async () => {
+  const many = [2, 3, 4].map((id) => ({ id, name: `M${id}` }));
+  const { page, ctx } = await openHome({ connections: { following: many, followers: many, mutual: many } });
+  try {
+    assert.equal(await page.locator('#grow-circle').count(), 0);
   } finally { await ctx.close(); }
 });
 

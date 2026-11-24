@@ -3,11 +3,12 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => `$${(cents / 100).toFixed(2)}`;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-detail', 'view-people', 'view-activity'];
+  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-detail', 'view-invite', 'view-people', 'view-activity'];
   let me = null;
   let usersById = new Map();
 
-  const navFor = { 'view-home': 'nav-home', 'view-new': 'nav-home', 'view-detail': 'nav-home', 'view-feed': 'nav-feed', 'view-people': 'nav-people', 'view-activity': 'nav-activity' };
+  // Updates is the dashboard; Request, Contribute, Invite and Follow are the four actions.
+  const navFor = { 'view-home': 'nav-home', 'view-activity': 'nav-home', 'view-detail': 'nav-home', 'view-new': 'nav-new', 'view-feed': 'nav-feed', 'view-invite': 'nav-invite', 'view-people': 'nav-people' };
 
   function show(id) {
     for (const v of views) { const el = document.getElementById(v); if (el) el.hidden = v !== id; }
@@ -59,22 +60,22 @@
     return `<span class="badge ${cls}">${esc(label)}</span>`;
   }
 
-  // ---- Home: what needs this member now ----
-  // Three sources: requests to verify (verifiers only), requests to repay (borrower or nominee),
-  // and open requests in the member's circle they could fund. Each item carries one action.
+  // ---- Updates: the dashboard (what needs you, where your requests stand) ----
   const GROUPS = [
     { key: 'repay', title: 'To repay', action: 'Record repayment' },
     { key: 'verify', title: 'To verify', action: 'Review' },
-    { key: 'fund', title: 'To fund', action: 'Contribute' },
+    { key: 'mine', title: 'Your requests', action: 'View' },
   ];
 
   async function renderHome() {
     show('view-home');
     const safe = (p) => p.catch(() => null);
-    const [feed, activity, queue] = await Promise.all([
+    const [feed, activity, queue, conns, sugg] = await Promise.all([
       safe(api('/feed')),
       safe(api('/activity')),
       me.isVerifier ? safe(api('/verification-queue')) : Promise.resolve({ requests: [] }),
+      safe(api('/connections')),
+      safe(api('/suggestions')),
     ]);
 
     const repayById = new Map();
@@ -87,22 +88,26 @@
         .map((r) => ({ id: r.requestId, purpose: r.purpose, status: r.status, sub: `${r.myRole === 'nominee' ? 'You are nominee' : 'Your request'} · repay by ${r.repaymentDate}` })),
       verify: (queue?.requests ?? []).map((r) => ({ id: r.id, purpose: r.purpose, status: r.status,
         sub: `${money(r.principalCents)} · ${r.approvals ?? 0} of ${r.requiredApprovals ?? 2} approvals` })),
-      fund: (feed?.requests ?? []).filter((r) => r.status === 'open' && r.borrowerId !== me.id).map((r) => ({ id: r.id, purpose: r.purpose, status: r.status,
-        sub: `${money(r.raisedCents ?? 0)} of ${money(r.principalCents)} raised · due ${r.repaymentDate}` })),
+      // Your own requests that are still moving: awaiting a check, open for funding, or just rejected.
+      mine: (activity?.borrowing ?? []).filter((r) => ['pending_verification', 'open', 'rejected'].includes(r.status))
+        .map((r) => ({ id: r.requestId, purpose: r.purpose, status: r.status, sub: `${money(r.principalCents)} · repay by ${r.repaymentDate}` })),
     };
+    const fundable = (feed?.requests ?? []).filter((r) => r.status === 'open' && r.borrowerId !== me.id).length;
 
     $('#tile-verify').hidden = !me.isVerifier;
     // A source that failed shows "–", never a false zero.
-    const sourceFailed = { repay: activity === null, verify: queue === null, fund: feed === null };
+    const sourceFailed = { repay: activity === null, verify: queue === null, mine: activity === null };
     for (const g of GROUPS) {
       $(`#count-${g.key}`).textContent = sourceFailed[g.key] ? '–' : String(items[g.key].length);
       $(`#tile-${g.key}`).dataset.failed = sourceFailed[g.key] ? '1' : '';
     }
+    $('#count-fund').textContent = feed === null ? '–' : String(fundable);
+    $('#nav-dot').hidden = items.repay.length + items.verify.length === 0;
 
-    const failed = Object.values(sourceFailed).some(Boolean);
+    const failed = Object.values(sourceFailed).some(Boolean) || feed === null;
     const html = GROUPS.filter((g) => items[g.key].length > 0).map((g) => `
       <div class="section-card" id="group-${g.key}" tabindex="-1">
-        <h3 class="group-title">${esc(g.title)} <span class="group-count">${items[g.key].length}</span></h3>
+        <h2 class="group-title">${esc(g.title)} <span class="group-count">${items[g.key].length}</span></h2>
         <ul class="list task-list">${items[g.key].map((it) => `
           <li class="task${it.status === 'overdue' ? ' is-urgent' : ''}">
             <div class="task-main">
@@ -110,11 +115,23 @@
               <a class="task-title" href="#request/${esc(it.id)}">${esc(String(it.purpose ?? '').slice(0, 90))}</a>
               <p class="task-sub">${statusBadge(it.status)} <span>${esc(it.sub)}</span></p>
             </div>
-            <a class="btn btn-primary btn-sm" href="#request/${esc(it.id)}">${esc(g.action)}</a>
+            <a class="btn ${g.key === 'mine' ? 'btn-secondary' : 'btn-primary'} btn-sm" href="#request/${esc(it.id)}">${esc(g.action)}</a>
           </li>`).join('')}
         </ul>
       </div>`).join('');
-    $('#home-groups').innerHTML = (failed ? '<p class="error" role="alert">Some tasks could not be loaded. Refresh to try again.</p>' : '') + html;
+    // Growth: a small circle means few people can fund you. Offer suggestions and an invite.
+    const circleSize = conns ? conns.following.length : Infinity;
+    const top = (sugg?.suggestions ?? []).slice(0, 3);
+    const grow = circleSize < 3 ? `
+      <div class="section-card grow-card" id="grow-circle">
+        <h2>Grow your circle</h2>
+        <p class="muted">The people you follow can see and fund your requests.</p>
+        ${top.length ? `<ul class="list">${top.map((x) => `<li><div class="task-main"><strong>${esc(x.user.name)}</strong>
+          <p class="task-sub">${esc(x.reason)}</p></div>
+          <div class="row-actions"><button class="btn btn-primary btn-sm" data-follow="${esc(x.user.id)}" type="button">Follow</button></div></li>`).join('')}</ul>` : ''}
+        ${inviteNudge('Bring family in', 'Send your link. When they open it, you are connected both ways.')}
+      </div>` : '';
+    $('#home-groups').innerHTML = (failed ? '<p class="error" role="alert">Some updates could not be loaded. Refresh to try again.</p>' : '') + html + grow;
     $('#home-empty').hidden = html !== '' || failed;
   }
 
@@ -124,32 +141,79 @@
     const group = document.getElementById(`group-${jump.dataset.jump}`);
     if (group) { group.scrollIntoView({ block: 'start' }); group.focus({ preventScroll: true }); }
     else if (jump.dataset.failed === '1') toast('Could not load this list. Refresh to try again.');
-    else toast(`Nothing to ${jump.dataset.jump} right now`);
+    else toast('Nothing here right now');
   });
 
-  // ---- Feed ----
+  // ---- Contribute: fund open requests from your circle right on the card ----
+  const QUICK_AMOUNTS = [10, 25, 50];
+
   async function renderFeed() {
     show('view-feed');
     const { requests } = await api('/feed');
     const list = $('#feed-list');
-    $('#feed-empty').hidden = requests.length > 0;
     list.innerHTML = '';
+    let shown = 0;
     for (const r of requests) {
       const card = CardModel.requestCard(r, me);
+      if (!card.actions.some((a) => a.id === 'contribute')) continue;
+      shown++;
+      const remaining = Math.max(0, (r.principalCents - (r.raisedCents ?? 0)) / 100);
+      const chips = QUICK_AMOUNTS.filter((v) => v < remaining)
+        .map((v) => `<button class="chip" type="button" data-amount="${v}">$${v}</button>`).join('')
+        + `<button class="chip" type="button" data-amount="${remaining.toFixed(2)}">All $${remaining.toFixed(2)}</button>`;
       const li = document.createElement('li');
-      li.className = `card card-${card.tone}`;
-      const actions = card.actions
-        .map((a) => `<a class="btn btn-sm btn-${a.tone === 'primary' ? 'primary' : 'secondary'}" href="#request/${r.id}" data-action="${esc(a.id)}">${esc(a.label)}</a>`)
-        .join(' ');
+      li.className = `card fund-card card-${card.tone}`;
       li.innerHTML = `
         <p class="card-eyebrow">Request #${esc(r.id)}</p>
         <p class="card-title"><a href="#request/${r.id}">${esc(card.title)}</a></p>
-        <div class="meta"><span>${esc(card.raisedLabel)}</span><span>${esc(card.dueLabel)}</span><span class="badge badge-${esc(card.tone)}">${esc(card.statusLabel)}</span></div>
-        <div class="progress" role="progressbar" aria-label="Funding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${card.progressPct}"><span style="width:${card.progressPct}%"></span></div>
-        <div class="row-actions">${actions}</div>`;
+        <div class="meta"><span>${esc(card.dueLabel)}</span></div>
+        <div class="fund-progress">
+          <div class="progress" role="progressbar" aria-label="Funding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${card.progressPct}"><span style="width:${card.progressPct}%"></span></div>
+          <p class="fund-figures"><strong>${esc(card.raisedLabel)}</strong> <span>$${remaining.toFixed(2)} to go</span></p>
+        </div>
+        <form class="fund-form" data-contribute="${esc(r.id)}" novalidate>
+          <div class="chips" role="group" aria-label="Quick amounts">${chips}</div>
+          <div class="fund-row">
+            <label class="sr-only" for="amt-${esc(r.id)}">Amount to contribute (USD)</label>
+            <input id="amt-${esc(r.id)}" name="amount" type="number" inputmode="decimal" min="0.01" step="0.01" max="${remaining.toFixed(2)}" placeholder="Amount" required>
+            <button class="btn btn-primary" type="submit">Contribute</button>
+          </div>
+          <p class="error" role="alert"></p>
+        </form>`;
       list.appendChild(li);
     }
+    $('#feed-empty').hidden = shown > 0;
   }
+
+  document.addEventListener('click', (ev) => {
+    const chip = ev.target.closest('.chip[data-amount]');
+    if (!chip) return;
+    const form = chip.closest('form');
+    form.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', String(c === chip)));
+    const input = form.querySelector('input[name="amount"]');
+    input.value = chip.dataset.amount;
+    input.focus();
+  });
+
+  document.addEventListener('submit', async (ev) => {
+    const form = ev.target.closest('form[data-contribute]');
+    if (!form) return;
+    ev.preventDefault();
+    const input = form.querySelector('input[name="amount"]');
+    const err = form.querySelector('.error');
+    const amount = Number(input.value);
+    err.textContent = '';
+    if (!(amount > 0)) { err.textContent = 'Enter an amount.'; input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      await api(`/requests/${form.dataset.contribute}/contributions`, { method: 'POST', body: { amount } });
+      toast(`Contributed $${amount.toFixed(2)}. Thank you.`);
+      renderFeed();
+    } catch (e) {
+      err.textContent = e.message; input.setAttribute('aria-invalid', 'true'); button.disabled = false; input.focus();
+    }
+  });
 
   // ---- New request ----
   async function renderNew() {
@@ -174,7 +238,7 @@
     const body = { amount: Number(fd.get('amount')), purpose: fd.get('purpose'), repaymentDate: fd.get('repaymentDate'), nomineeId: Number(fd.get('nomineeId')) };
     try {
       const { request } = await api('/requests', { method: 'POST', body });
-      toast('Request submitted for verification');
+      toast('Request submitted. The verification team will check it next.');
       location.hash = `#request/${request.id}`;
     } catch (err) {
       const field = err.field && document.getElementById(`e-${err.field === 'nomineeId' ? 'nominee' : err.field}`);
@@ -240,6 +304,11 @@
         </form>` : ''}
       `;
     // Land on the one thing this member can do here.
+    // Growth: the borrower's request is funded faster when more people can see it.
+    if (card.role === 'borrower' && (r.status === 'pending_verification' || r.status === 'open')) {
+      $('#detail').insertAdjacentHTML('beforeend', inviteNudge('Get it funded faster',
+        'Only people you follow can see and fund this request. Invite family so more of them can help.'));
+    }
     // On desktop, put the cursor in the action without scrolling past the request details.
     // On touch devices, do not pop up the keyboard over the details.
     const firstAction = $('#detail form textarea, #detail form input, #detail form button');
@@ -323,20 +392,37 @@
   }
 
   // Share an invite link: the phone's share sheet (WhatsApp, SMS…) where available, otherwise copy it.
-  $('#share-invite').addEventListener('click', async () => {
-    const status = $('#invite-status');
+  // Any button with data-share-invite does this; it reports into the nearest [data-share-status] in its container.
+  async function shareInvite(button) {
+    const scope = button.closest('[data-share-scope]') ?? document;
+    const status = scope.querySelector('[data-share-status]');
+    const box = scope.querySelector('[data-share-link]');
+    const say = (msg) => { if (status) status.textContent = msg; };
     try {
       const { link } = await api('/invites', { method: 'POST', body: {} });
-      const box = $('#invite-link'); box.value = link; box.hidden = false;
+      if (box) { box.value = link; box.hidden = false; }
       const text = `${me?.name ?? 'I'} invited you to our family circle on Funds For Family`;
       if (navigator.share) {
-        try { await navigator.share({ title: 'Funds For Family', text, url: link }); status.textContent = 'Invite shared.'; return; }
-        catch (err) { if (err?.name === 'AbortError') { status.textContent = ''; return; } }
+        try { await navigator.share({ title: 'Funds For Family', text, url: link }); say('Invite shared.'); return; }
+        catch (err) { if (err?.name === 'AbortError') { say(''); return; } }
       }
-      try { await navigator.clipboard.writeText(link); status.textContent = 'Invite link copied. Paste it into WhatsApp, SMS or email.'; }
-      catch { box.select(); status.textContent = 'Copy this link and send it to the person you are inviting.'; }
-    } catch (err) { status.textContent = err.message; }
+      try { await navigator.clipboard.writeText(link); say('Invite link copied. Paste it into WhatsApp, SMS or email.'); }
+      catch { box?.select(); say('Copy this link and send it to the person you are inviting.'); }
+    } catch (err) { say(err.message); }
+  }
+  document.addEventListener('click', (ev) => {
+    const button = ev.target.closest('[data-share-invite]');
+    if (button) shareInvite(button);
   });
+
+  // One small block that nudges growth: share an invite. Used after requesting and when a circle is small.
+  const inviteNudge = (title, body) => `
+    <div class="nudge" data-share-scope>
+      <div class="nudge-text"><p class="nudge-title">${esc(title)}</p><p class="nudge-body">${esc(body)}</p></div>
+      <button class="btn btn-primary" type="button" data-share-invite>Share invite link</button>
+      <input class="invite-link" type="text" readonly hidden data-share-link aria-label="Your invite link">
+      <p class="nudge-status" role="status" data-share-status></p>
+    </div>`;
 
   // Opening an invite link (/?invite=…) connects the new member with the inviter once they are signed in.
   let inviteToken = new URLSearchParams(location.search).get('invite');
@@ -365,7 +451,7 @@
     try {
       if (f) { await api('/follows', { method: 'POST', body: { userId: Number(f.dataset.follow) } }); toast('Following'); }
       if (u) { await api(`/follows/${u.dataset.unfollow}`, { method: 'DELETE' }); toast('Unfollowed'); }
-      if (f || u) renderPeople();
+      if (f || u) route();
     } catch (err) { toast(err.message); }
   });
 
@@ -383,6 +469,7 @@
     if (hash.startsWith('request/')) return renderDetail(hash.split('/')[1]);
     if (hash === 'new') return renderNew();
     if (hash === 'people') return renderPeople();
+    if (hash === 'invite') { show('view-invite'); return; }
     if (hash === 'activity') return renderActivity();
     if (hash === 'feed') return renderFeed();
     return renderHome();
@@ -393,7 +480,8 @@
   $('#nav-home').addEventListener('click', go('#home'));
   $('#nav-feed').addEventListener('click', go('#feed'));
   $('#nav-people').addEventListener('click', go('#people'));
-  $('#nav-activity').addEventListener('click', go('#activity'));
+  $('#nav-new').addEventListener('click', go('#new'));
+  $('#nav-invite').addEventListener('click', go('#invite'));
 
   // ---- Clerk sign-in ----
   async function boot() {

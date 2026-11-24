@@ -73,8 +73,8 @@ test('People: no suggestions hides the section', { skip }, async () => {
   } finally { await ctx.close(); }
 });
 
-test('People: "Share invite link" gives the member a link to send', { skip }, async () => {
-  const { page, ctx } = await open('/#people');
+test('Invite: "Share invite link" gives the member a link to send', { skip }, async () => {
+  const { page, ctx } = await open('/#invite');
   try {
     await page.evaluate(() => { delete Navigator.prototype.share; });
     await page.click('#share-invite');

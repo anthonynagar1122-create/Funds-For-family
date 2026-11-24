@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="robots" content="noindex">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#4f46e5">
   <title>Funds For Family</title>
   <meta name="description" content="Small loans within your trusted circle, verified before funding.">
@@ -21,11 +21,13 @@
         <span class="brand-tile" aria-hidden="true">FF</span>
         <span class="brand-text"><span class="brand-name">Funds For Family</span></span>
       </a>
-      <nav aria-label="Primary" class="segmented" id="primary-nav" hidden>
-        <button id="nav-home" type="button"><span class="nav-icon" aria-hidden="true">🏠</span>Home</button>
-        <button id="nav-feed" type="button"><span class="nav-icon" aria-hidden="true">💸</span>Fund</button>
-        <button id="nav-activity" type="button"><span class="nav-icon" aria-hidden="true">📒</span>My activity</button>
-        <button id="nav-people" type="button"><span class="nav-icon" aria-hidden="true">👥</span>People</button>
+      <!-- The four actions are the product. Updates is where members check in. -->
+      <nav aria-label="Primary" class="actionbar" id="primary-nav" hidden>
+        <button id="nav-home" type="button"><span class="nav-icon" aria-hidden="true">🔔</span><span class="nav-label">Updates</span><span class="nav-dot" id="nav-dot" hidden></span></button>
+        <button id="nav-new" class="is-request" type="button"><span class="nav-icon" aria-hidden="true">＋</span><span class="nav-label">Request</span></button>
+        <button id="nav-feed" type="button"><span class="nav-icon" aria-hidden="true">💸</span><span class="nav-label">Contribute</span></button>
+        <button id="nav-invite" type="button"><span class="nav-icon" aria-hidden="true">✉️</span><span class="nav-label">Invite</span></button>
+        <button id="nav-people" type="button"><span class="nav-icon" aria-hidden="true">👥</span><span class="nav-label">Follow</span></button>
       </nav>
       <div id="auth-slot"></div>
     </div>
@@ -39,30 +41,44 @@
       <button class="btn btn-primary btn-lg" id="sign-in" type="button">Sign in</button>
     </section>
 
+    <!-- Updates: the dashboard. What needs you, and where your own requests stand. -->
     <section id="view-home" hidden aria-labelledby="home-title">
-      <h1 id="home-title" class="sr-only">Home</h1>
-      <div class="tiles" role="group" aria-label="Tasks">
-        <a class="tile tile-primary" href="#new" id="tile-new"><span class="tile-icon" aria-hidden="true">➕</span><span class="tile-label">Request funds</span></a>
-        <button class="tile" type="button" data-jump="verify" id="tile-verify" hidden><span class="tile-icon" aria-hidden="true">🛡️</span><span class="tile-label">Verify</span><span class="tile-count" id="count-verify">0</span></button>
-        <button class="tile" type="button" data-jump="fund" id="tile-fund"><span class="tile-icon" aria-hidden="true">💸</span><span class="tile-label">Fund</span><span class="tile-count" id="count-fund">0</span></button>
-        <button class="tile" type="button" data-jump="repay" id="tile-repay"><span class="tile-icon" aria-hidden="true">🧾</span><span class="tile-label">Repay</span><span class="tile-count" id="count-repay">0</span></button>
+      <div class="view-head">
+        <h1 id="home-title">Updates</h1>
+        <a class="link-quiet" href="#activity">Full history</a>
       </div>
-      <h2 class="list-heading">Needs you now</h2>
+      <div class="tiles" role="group" aria-label="Counts">
+        <button class="tile" type="button" data-jump="repay" id="tile-repay"><span class="tile-label">To repay</span><span class="tile-count" id="count-repay">0</span></button>
+        <button class="tile" type="button" data-jump="verify" id="tile-verify" hidden><span class="tile-label">To verify</span><span class="tile-count" id="count-verify">0</span></button>
+        <button class="tile" type="button" data-jump="mine" id="tile-mine"><span class="tile-label">Your requests</span><span class="tile-count" id="count-mine">0</span></button>
+        <a class="tile" href="#feed" id="tile-fund"><span class="tile-label">Open to fund</span><span class="tile-count" id="count-fund">0</span></a>
+      </div>
       <div id="home-groups"></div>
       <div class="empty" id="home-empty" hidden>
-        <p>Nothing needs you right now.</p>
-        <a class="btn btn-primary" href="#new">Request funds</a>
+        <p>You're all caught up.</p>
+        <div class="row-actions empty-actions">
+          <a class="btn btn-primary" href="#new">Request funds</a>
+          <a class="btn btn-secondary" href="#invite">Invite family</a>
+        </div>
       </div>
     </section>
 
+    <!-- Contribute: open requests from your circle, funded right on the card. -->
     <section id="view-feed" hidden aria-labelledby="feed-title">
-      <h1 id="feed-title">Fund</h1>
-      <ul class="cards" id="feed-list"></ul>
-      <p class="empty" id="feed-empty" hidden>No requests in your circle yet. <a href="#people">Invite family or follow people</a>.</p>
+      <div class="view-head">
+        <h1 id="feed-title">Contribute</h1>
+      </div>
+      <ul class="cards fund-cards" id="feed-list"></ul>
+      <div class="empty" id="feed-empty" hidden>
+        <p>No open requests in your circle right now.</p>
+        <a class="btn btn-secondary" href="#invite">Invite family to your circle</a>
+      </div>
     </section>
 
     <section id="view-new" hidden aria-labelledby="new-title">
-      <h1 id="new-title">Request funds</h1>
+      <div class="view-head">
+        <h1 id="new-title">Request funds</h1>
+      </div>
       <form id="new-form" class="form" novalidate>
         <div class="field">
           <label for="f-amount">Amount (USD)</label>
@@ -70,7 +86,7 @@
           <p class="error" id="e-amount" role="alert"></p>
         </div>
         <div class="field">
-          <label for="f-purpose">Purpose</label>
+          <label for="f-purpose">What is it for?</label>
           <textarea id="f-purpose" name="purpose" rows="3" minlength="20" required aria-describedby="h-purpose e-purpose"></textarea>
           <p class="hint" id="h-purpose">Be specific: the verification team checks it.</p>
           <p class="error" id="e-purpose" role="alert"></p>
@@ -83,16 +99,66 @@
         </div>
         <div class="field">
           <label for="f-nominee">Nominee (repays if you cannot)</label>
-          <select id="f-nominee" name="nomineeId" required aria-describedby="e-nominee"></select>
+          <select id="f-nominee" name="nomineeId" required aria-describedby="h-nominee e-nominee"></select>
+          <p class="hint" id="h-nominee">Choose from your connections. <a href="#invite">Invite someone</a> if they are not here yet.</p>
           <p class="error" id="e-nominee" role="alert"></p>
         </div>
         <p class="error" id="e-form" role="alert"></p>
-        <button class="btn btn-primary" type="submit">Submit for verification</button>
+        <button class="btn btn-primary btn-lg" type="submit">Submit for verification</button>
       </form>
     </section>
 
+    <!-- Invite: one big share action, email as the fallback. -->
+    <section id="view-invite" hidden aria-labelledby="invite-title">
+      <div class="view-head">
+        <h1 id="invite-title">Invite</h1>
+      </div>
+      <div class="invite-hero" data-share-scope>
+        <p class="invite-lede">Send your link to family and friends. When they open it, you're connected: they can fund your requests and you can fund theirs.</p>
+        <button class="btn btn-primary btn-lg" id="share-invite" type="button" data-share-invite>Share invite link</button>
+        <label for="invite-link" class="sr-only">Your invite link</label>
+        <input id="invite-link" class="invite-link" type="text" readonly hidden data-share-link>
+        <p class="invite-status" id="invite-status" role="status" data-share-status></p>
+        <p class="hint">Links work for 30 days.</p>
+      </div>
+      <form id="invite-form" class="form invite-email">
+        <div class="field">
+          <label for="f-invite">Or send it by email</label>
+          <div class="inline-form">
+            <input id="f-invite" type="email" placeholder="name@family.com" required>
+            <button class="btn btn-secondary" type="submit">Send invite</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <!-- Follow: suggestions first, then search, then who you are connected with. -->
+    <section id="view-people" hidden aria-labelledby="people-title">
+      <div class="view-head">
+        <h1 id="people-title">Follow</h1>
+      </div>
+      <p class="view-note">People you follow can see and fund your requests. You see the requests of people who follow you.</p>
+      <div class="section-card" id="suggestions-card" hidden>
+        <h2>Suggested for you</h2>
+        <ul class="list" id="suggestions"></ul>
+      </div>
+      <form id="search-form" class="inline-form search-bar" role="search">
+        <label for="f-search" class="sr-only">Search members by name or email</label>
+        <input id="f-search" type="search" placeholder="Find a member by name or email" minlength="2">
+        <button class="btn btn-secondary" type="submit">Search</button>
+      </form>
+      <ul class="list" id="search-results"></ul>
+      <div class="section-card">
+        <h2>Your connections</h2>
+        <ul class="list" id="connections"></ul>
+      </div>
+    </section>
+
     <section id="view-activity" hidden aria-labelledby="activity-title">
-      <h1 id="activity-title">My activity</h1>
+      <div class="view-head">
+        <h1 id="activity-title">Full history</h1>
+        <a class="link-quiet" href="#home">Back to updates</a>
+      </div>
       <div class="section-card"><h2>Borrowing</h2><div id="activity-borrowing"></div></div>
       <div class="section-card"><h2>Lending</h2><div id="activity-lending"></div></div>
       <div class="section-card"><h2>Repayments</h2><div id="activity-repayments"></div></div>
@@ -101,39 +167,6 @@
 
     <section id="view-detail" hidden aria-labelledby="detail-title">
       <div id="detail"></div>
-    </section>
-
-    <section id="view-people" hidden aria-labelledby="people-title">
-      <h1 id="people-title">People</h1>
-      <div class="section-card invite-card">
-        <h2>Invite family and friends</h2>
-        <p class="muted">Whoever opens your link joins your circle.</p>
-        <div class="row-actions">
-          <button class="btn btn-primary" id="share-invite" type="button">Share invite link</button>
-        </div>
-        <label for="invite-link" class="sr-only">Your invite link</label>
-        <input id="invite-link" class="invite-link" type="text" readonly hidden>
-        <form id="invite-form" class="inline-form">
-          <label for="f-invite" class="sr-only">Email address to invite</label>
-          <input id="f-invite" type="email" placeholder="Or invite by email" required>
-          <button class="btn btn-secondary" type="submit">Send</button>
-        </form>
-        <p class="muted" id="invite-status" role="status"></p>
-      </div>
-      <div class="section-card" id="suggestions-card" hidden>
-        <h2>Suggested for you</h2>
-        <ul class="list" id="suggestions"></ul>
-      </div>
-      <div class="section-card">
-        <h2>Your connections</h2>
-        <form id="search-form" class="inline-form" role="search">
-          <label for="f-search" class="sr-only">Search members by name or email</label>
-          <input id="f-search" type="search" placeholder="Find a member by name or email" minlength="2">
-          <button class="btn btn-secondary" type="submit">Search</button>
-        </form>
-        <ul class="list" id="search-results"></ul>
-        <ul class="list" id="connections"></ul>
-      </div>
     </section>
 
     <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
