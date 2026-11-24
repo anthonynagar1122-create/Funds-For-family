@@ -3,7 +3,7 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => Money.formatInr(cents);
   const esc = Format.esc;
-  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome'];
+  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome', 'view-workspace'];
   // An invite link looks like /app/#join=<token>. Keep the token for the first /api/me, then tidy the address bar.
   const joinMatch = /^#join=([^&]+)/.exec(location.hash);
   if (joinMatch) {
