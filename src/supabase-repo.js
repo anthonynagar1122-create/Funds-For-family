@@ -62,8 +62,31 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
         followers: check(b).map((r) => r.follower_id),
       };
     },
-    async addInvite({ inviterId, email, token }) {
+    async addInvite({ inviterId, email = null, token }) {
       check(await db.from('invites').insert({ inviter_id: inviterId, email, token }));
+    },
+    async getInviteByToken(token) {
+      const { data, error } = await db.from('invites').select().eq('token', token).maybeSingle();
+      if (error) throw new Error(`Supabase: ${error.message}`);
+      return camel(data);
+    },
+    async markInviteAccepted(token, at) {
+      check(await db.from('invites').update({ accepted_at: at }).eq('token', token).is('accepted_at', null));
+    },
+    // Every follow where either side is one of the given members.
+    async followsTouching(userIds) {
+      if (userIds.length === 0) return [];
+      const [a, b] = await Promise.all([
+        // Only follows made BY these members are used (see rules.suggestConnections). Capped for large circles.
+        db.from('follows').select('follower_id, followee_id').in('follower_id', userIds).limit(5000),
+        Promise.resolve({ data: [], error: null }),
+      ]);
+      const seen = new Set();
+      return [...check(a), ...check(b)].filter((r) => {
+        const k = `${r.follower_id}>${r.followee_id}`;
+        if (seen.has(k)) return false;
+        seen.add(k); return true;
+      }).map((r) => ({ followerId: r.follower_id, followeeId: r.followee_id }));
     },
     async createRequest(row) {
       const data = check(await db.from('requests').insert({

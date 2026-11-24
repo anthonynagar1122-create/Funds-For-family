@@ -164,7 +164,8 @@ test('feed shows connected members requests only once approved', async () => {
     const wes = (await call('wes', 'GET', '/me')).body.user;
     await repo.setVerifier(vee.id, true);
     await repo.setVerifier(wes.id, true);
-    assert.equal((await call('ben', 'POST', '/follows', { userId: ann.id })).status, 201);
+    // The borrower chooses who sees her requests: Ann follows Ben.
+    assert.equal((await call('ann', 'POST', '/follows', { userId: ben.id })).status, 201);
     const id = (await call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
 
     let feed = await call('ben', 'GET', '/feed');

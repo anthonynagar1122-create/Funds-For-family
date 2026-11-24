@@ -8,9 +8,11 @@ const DEFAULT_ANNUAL_RATE = 0.12;   // ⚠ assumption, see docs/01-idea.md
 const DEFAULT_REQUIRED_APPROVALS = 2;
 const MS_PER_DAY = 86400000;
 
-// Feed visibility mode. 'followings_and_followers' matches the handwritten notes
-// ("followings and followers"); 'mutual' would show only people who follow each other.
-const FEED_MODE = 'followings_and_followers';
+// Circle rule (owner decision 2026-11-24): a borrower's circle is the people the BORROWER follows.
+// Following is one-way and needs no approval, so following someone must never grant access to their requests;
+// the borrower chooses who sees them (accepting an invite makes both people follow each other).
+// 'mutual' would require both directions.
+const FEED_MODE = 'chosen_by_borrower';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -133,6 +135,48 @@ function effectiveStatus(request, now) {
   return request.status;
 }
 
+/**
+ * Who may see a request (and so act on it). Anyone else gets "not found".
+ * - the borrower and the nominee
+ * - anyone already involved: lent, repaid, or decided on it
+ * - the borrower's circle: people the borrower follows (the borrower chose them; see FEED_MODE)
+ * - verifiers, while the request is awaiting verification
+ * viewerFollowing / viewerFollowers: the viewer's connection ids.
+ */
+function canSeeRequest({ viewer, request, viewerFollowers = [], involved = false }) {
+  if (!viewer || !request) return false;
+  if (viewer.id === request.borrowerId || viewer.id === request.nomineeId) return true;
+  if (involved) return true;
+  // In the borrower's circle only if the borrower follows the viewer (the borrower chose them).
+  if (viewerFollowers.includes(request.borrowerId)) return true;
+  if (viewer.isVerifier && request.status === 'pending_verification') return true;
+  return false;
+}
+
+/**
+ * Connection suggestions: people who follow you (not followed back) first, then people that the people
+ * YOU follow have chosen to follow, ranked by how many of them did. Never yourself or people you follow.
+ * Only follows made BY your chosen connections count, so nobody can fake "mutual connections" by following many people.
+ * edges: follows touching your connections, as { followerId, followeeId }.
+ */
+function suggestConnections({ meId, following, followers, edges, limit = 10 }) {
+  const followingSet = new Set(following);
+  const circle = new Set([...following, ...followers]);
+  const mutuals = new Map(); // candidate id -> Set of my connections they are linked to
+  for (const { followerId: c, followeeId: other } of edges) {
+    if (!followingSet.has(c) || other === meId || other === c) continue;
+    if (!mutuals.has(other)) mutuals.set(other, new Set());
+    mutuals.get(other).add(c);
+  }
+  const followsYou = followers.filter((id) => !followingSet.has(id) && id !== meId);
+  const fof = [...mutuals.keys()].filter((id) => !circle.has(id));
+  const candidates = [...new Set([...followsYou, ...fof])];
+  return candidates
+    .map((id) => ({ id, followsYou: followsYou.includes(id), mutualIds: [...(mutuals.get(id) ?? [])].filter((m) => m !== id) }))
+    .sort((a, b) => (b.followsYou - a.followsYou) || (b.mutualIds.length - a.mutualIds.length) || (a.id - b.id))
+    .slice(0, limit);
+}
+
 /** Which statuses appear in the public feed. */
 function isFeedStatus(status) {
   return status === 'open' || status === 'funded' || status === 'repaid';
@@ -145,6 +189,8 @@ module.exports = {
   DEFAULT_ANNUAL_RATE,
   DEFAULT_REQUIRED_APPROVALS,
   FEED_MODE,
+  canSeeRequest,
+  suggestConnections,
   isIsoDate,
   daysOverdue,
   interestCents,

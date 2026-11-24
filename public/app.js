@@ -186,7 +186,14 @@
   // ---- Request detail ----
   async function renderDetail(id) {
     show('view-detail');
-    const { request: r } = await api(`/requests/${id}`);
+    let r;
+    try { ({ request: r } = await api(`/requests/${id}`)); }
+    catch (err) {
+      $('#detail').innerHTML = `<p><a class="detail-back" href="#home">← Home</a></p>
+        <h1 id="detail-title">Request not available</h1>
+        <p class="muted">${err.status === 404 ? 'It may have been removed, or it belongs to someone outside your circle.' : esc(err.message)}</p>`;
+      return;
+    }
     const pct = Math.min(100, Math.round(((r.principalCents - r.remainingCents) / r.principalCents) * 100));
     const borrower = await userName(r.borrowerId);
     const nominee = await userName(r.nomineeId);
@@ -293,13 +300,55 @@
   // ---- People ----
   async function renderPeople() {
     show('view-people');
-    const { following, followers, mutual } = await api('/connections');
+    const [{ following, followers, mutual }, sugg] = await Promise.all([
+      api('/connections'),
+      api('/suggestions').catch(() => ({ suggestions: [] })),
+    ]);
     const mutualIds = new Set(mutual.map((u) => u.id));
-    const row = (u) => `<li><strong>${esc(u.name)}</strong> <span class="muted">${esc(u.email)}</span>
-      ${mutualIds.has(u.id) ? '<span class="badge badge-primary">Mutual</span>' : ''}
-      <div class="row-actions"><button class="btn btn-secondary" data-follow="${u.id}" type="button">Follow</button>
-      <button class="btn btn-ghost" data-unfollow="${u.id}" type="button">Unfollow</button></div></li>`;
-    $('#connections').innerHTML = [...following, ...followers.filter((u) => !following.some((f) => f.id === u.id))].map(row).join('') || '<li class="muted">No connections yet.</li>';
+    const followingIds = new Set(following.map((u) => u.id));
+    const row = (u) => `<li><strong>${esc(u.name)}</strong>
+      ${mutualIds.has(u.id) ? '<span class="badge badge-primary">Mutual</span>' : followingIds.has(u.id) ? '<span class="badge badge-neutral">Following</span>' : '<span class="badge badge-neutral">Follows you</span>'}
+      <div class="row-actions">${followingIds.has(u.id)
+        ? `<button class="btn btn-ghost btn-sm" data-unfollow="${u.id}" type="button">Unfollow</button>`
+        : `<button class="btn btn-secondary btn-sm" data-follow="${u.id}" type="button">Follow back</button>`}</div></li>`;
+    $('#connections').innerHTML = [...following, ...followers.filter((u) => !followingIds.has(u.id))].map(row).join('')
+      || '<li class="muted">No connections yet. Share your invite link to start your circle.</li>';
+
+    const list = sugg.suggestions ?? [];
+    $('#suggestions-card').hidden = list.length === 0;
+    $('#suggestions').innerHTML = list.map((x) => `<li>
+      <div class="task-main"><strong>${esc(x.user.name)}</strong>
+        <p class="task-sub">${esc(x.reason)}${x.mutualNames?.length ? ` · ${esc(x.mutualNames.join(', '))}${x.mutualCount > x.mutualNames.length ? ' and others' : ''}` : ''}</p></div>
+      <div class="row-actions"><button class="btn btn-primary btn-sm" data-follow="${esc(x.user.id)}" type="button">Follow</button></div></li>`).join('');
+  }
+
+  // Share an invite link: the phone's share sheet (WhatsApp, SMS…) where available, otherwise copy it.
+  $('#share-invite').addEventListener('click', async () => {
+    const status = $('#invite-status');
+    try {
+      const { link } = await api('/invites', { method: 'POST', body: {} });
+      const box = $('#invite-link'); box.value = link; box.hidden = false;
+      const text = `${me?.name ?? 'I'} invited you to our family circle on Funds For Family`;
+      if (navigator.share) {
+        try { await navigator.share({ title: 'Funds For Family', text, url: link }); status.textContent = 'Invite shared.'; return; }
+        catch (err) { if (err?.name === 'AbortError') { status.textContent = ''; return; } }
+      }
+      try { await navigator.clipboard.writeText(link); status.textContent = 'Invite link copied. Paste it into WhatsApp, SMS or email.'; }
+      catch { box.select(); status.textContent = 'Copy this link and send it to the person you are inviting.'; }
+    } catch (err) { status.textContent = err.message; }
+  });
+
+  // Opening an invite link (/?invite=…) connects the new member with the inviter once they are signed in.
+  let inviteToken = new URLSearchParams(location.search).get('invite');
+  async function acceptInviteIfAny() {
+    if (!inviteToken) return;
+    const token = inviteToken;
+    inviteToken = null; // Clerk can call refresh several times: accept once.
+    try {
+      const { inviter } = await api('/invites/accept', { method: 'POST', body: { token } });
+      toast(`You are now connected with ${inviter.name}`);
+    } catch (err) { toast(err.message); }
+    history.replaceState(null, '', location.pathname + location.hash);
   }
 
   $('#search-form').addEventListener('submit', async (ev) => {
@@ -323,7 +372,7 @@
   $('#invite-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const email = $('#f-invite').value;
-    try { await api('/invites', { method: 'POST', body: { email } }); $('#invite-status').textContent = `Invitation sent to ${email}.`; ev.target.reset(); }
+    try { await api('/invites', { method: 'POST', body: { email } }); $('#invite-status').textContent = `Invitation sent to ${email}.`; $('#f-invite').value = ''; }
     catch (err) { $('#invite-status').textContent = err.message; }
   });
 
@@ -362,8 +411,12 @@
     };
     const refresh = async () => {
       mountAuth();
-      if (!clerk.user) { me = null; show('signed-out'); return; }
-      try { await loadUsers(); route(); }
+      if (!clerk.user) {
+        me = null;
+        if (inviteToken) $('#signin-lede').textContent = 'You have been invited to a family circle. Sign in to join.';
+        show('signed-out'); return;
+      }
+      try { await loadUsers(); await acceptInviteIfAny(); route(); }
       catch (err) { toast(err.message); }
     };
     $('#sign-in').addEventListener('click', () => clerk.openSignIn());

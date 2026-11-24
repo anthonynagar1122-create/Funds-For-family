@@ -227,3 +227,10 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
 .task .btn { flex: none; }
 #home-empty p { margin: 0 0 var(--space-3); }
 @media (max-width: 600px) { .tiles { grid-template-columns: 1fr 1fr; } .task .btn { width: 100%; } }
+
+/* ---- People: invite card ---- */
+.invite-card .muted { margin: 0 0 var(--space-3); }
+.invite-card .row-actions { margin: 0 0 var(--space-3); }
+.invite-link { width: 100%; margin-bottom: var(--space-3); font-family: var(--font-mono); font-size: .8125rem; background: var(--color-subtle); }
+#suggestions li { justify-content: space-between; }
+#suggestions .row-actions, #connections .row-actions { margin: 0 0 0 auto; }

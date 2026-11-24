@@ -167,7 +167,8 @@ test('access: a stranger cannot record a repayment on someone else\'s loan', asy
     const nat = (await s.call('nat', 'GET', '/me')).body.user;
     const id = (await s.call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
     const r = await s.call('zed', 'POST', `/requests/${id}/repayments`, { amount: 10 });
-    assert.equal(r.status, 403);
+    // 404, not 403: outside the borrower's circle the request's existence is not revealed.
+    assert.equal(r.status, 404);
   } finally { await s.close(); }
 });
 

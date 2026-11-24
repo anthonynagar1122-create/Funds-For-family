@@ -35,7 +35,7 @@
     <section id="signed-out" class="panel panel-hero signin" hidden aria-labelledby="signin-title">
       <span class="brand-tile brand-tile-lg" aria-hidden="true">FF</span>
       <h1 id="signin-title">Funds For Family</h1>
-      <p class="lede">Small loans within your trusted circle, verified before funding.</p>
+      <p class="lede" id="signin-lede">Small loans within your trusted circle, verified before funding.</p>
       <button class="btn btn-primary btn-lg" id="sign-in" type="button">Sign in</button>
     </section>
 
@@ -58,7 +58,7 @@
     <section id="view-feed" hidden aria-labelledby="feed-title">
       <h1 id="feed-title">Fund</h1>
       <ul class="cards" id="feed-list"></ul>
-      <p class="empty" id="feed-empty" hidden>No requests in your circle yet. Follow people in People.</p>
+      <p class="empty" id="feed-empty" hidden>No requests in your circle yet. <a href="#people">Invite family or follow people</a>.</p>
     </section>
 
     <section id="view-new" hidden aria-labelledby="new-title">
@@ -105,24 +105,34 @@
 
     <section id="view-people" hidden aria-labelledby="people-title">
       <h1 id="people-title">People</h1>
-      <form id="search-form" class="inline-form" role="search">
-        <label for="f-search" class="sr-only">Search members by name or email</label>
-        <input id="f-search" type="search" placeholder="Search by name or email" minlength="2">
-        <button class="btn btn-secondary" type="submit">Search</button>
-      </form>
-      <ul class="list" id="search-results"></ul>
-      <div class="section-card">
-        <h2>Your connections</h2>
-        <ul class="list" id="connections"></ul>
-      </div>
-      <div class="section-card">
-        <h2>Invite someone</h2>
+      <div class="section-card invite-card">
+        <h2>Invite family and friends</h2>
+        <p class="muted">Whoever opens your link joins your circle.</p>
+        <div class="row-actions">
+          <button class="btn btn-primary" id="share-invite" type="button">Share invite link</button>
+        </div>
+        <label for="invite-link" class="sr-only">Your invite link</label>
+        <input id="invite-link" class="invite-link" type="text" readonly hidden>
         <form id="invite-form" class="inline-form">
           <label for="f-invite" class="sr-only">Email address to invite</label>
-          <input id="f-invite" type="email" placeholder="Email address" required>
-          <button class="btn btn-secondary" type="submit">Send invite</button>
+          <input id="f-invite" type="email" placeholder="Or invite by email" required>
+          <button class="btn btn-secondary" type="submit">Send</button>
         </form>
         <p class="muted" id="invite-status" role="status"></p>
+      </div>
+      <div class="section-card" id="suggestions-card" hidden>
+        <h2>Suggested for you</h2>
+        <ul class="list" id="suggestions"></ul>
+      </div>
+      <div class="section-card">
+        <h2>Your connections</h2>
+        <form id="search-form" class="inline-form" role="search">
+          <label for="f-search" class="sr-only">Search members by name or email</label>
+          <input id="f-search" type="search" placeholder="Find a member by name or email" minlength="2">
+          <button class="btn btn-secondary" type="submit">Search</button>
+        </form>
+        <ul class="list" id="search-results"></ul>
+        <ul class="list" id="connections"></ul>
       </div>
     </section>
 
