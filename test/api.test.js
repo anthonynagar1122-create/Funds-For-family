@@ -38,6 +38,7 @@ const validRequest = (nomineeId) => ({
   purpose: 'School fees for the second term at the local college',
   repaymentDate: '2027-02-01',
   nomineeId,
+  phone: '+1 555 010 0100', // lenders must be able to reach the borrower
 });
 
 test('requests without a signed-in user are rejected', async () => {
@@ -115,17 +116,17 @@ test('contributions are capped, fund the request, and reject self-funding', asyn
     await call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
 
-    assert.equal((await call('ann', 'POST', `/requests/${id}/contributions`, { amount: 10 })).status, 409, 'borrower cannot fund own request');
+    assert.equal((await call('ann', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 10 })).status, 409, 'borrower cannot fund own request');
 
-    const over = await call('nat', 'POST', `/requests/${id}/contributions`, { amount: 600 });
+    const over = await call('nat', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 600 });
     assert.equal(over.status, 409, 'cannot exceed the requested total');
 
-    const part = await call('nat', 'POST', `/requests/${id}/contributions`, { amount: 300 });
+    const part = await call('nat', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 300 });
     assert.equal(part.status, 201);
     assert.equal(part.body.request.status, 'open');
     assert.equal(part.body.request.remainingCents, 20000);
 
-    const rest = await call('wes', 'POST', `/requests/${id}/contributions`, { amount: 200 });
+    const rest = await call('wes', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 200 });
     assert.equal(rest.body.request.status, 'funded');
     assert.equal(annUser.id !== nat.id, true);
   } finally { await close(); }
@@ -143,7 +144,7 @@ test('repayment by the nominee closes the request once the amount due is paid; i
     const id = (await call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
     await call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
-    await call('nat', 'POST', `/requests/${id}/contributions`, { amount: 500 });
+    await call('nat', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 500 });
 
     const stranger = await call('vee', 'POST', `/requests/${id}/repayments`, { amount: 500 });
     assert.equal(stranger.status, 403);

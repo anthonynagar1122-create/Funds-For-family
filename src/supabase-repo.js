@@ -37,6 +37,9 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
       if (error) throw new Error(`Supabase: ${error.message}`);
       return camel(data);
     },
+    async setPhone(id, phone) {
+      return camel(check(await db.from('users').update({ phone }).eq('id', id).select().single()));
+    },
     async setVerifier(id, isVerifier) {
       check(await db.from('users').update({ is_verifier: isVerifier }).eq('id', id));
     },

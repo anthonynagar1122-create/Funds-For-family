@@ -30,7 +30,7 @@ async function setup() {
   return { repo, call, me, follow, close };
 }
 
-const req = (nomineeId) => ({ amount: 500, purpose: 'School fees for the second term at the local college', repaymentDate: '2027-02-01', nomineeId });
+const req = (nomineeId) => ({ amount: 500, purpose: 'School fees for the second term at the local college', repaymentDate: '2027-02-01', nomineeId, phone: '+1 555 010 0100' });
 
 // Ann borrows, Nat is nominee. Vee and Wes verify, which opens the request for funding.
 async function openRequest(s) {
@@ -50,7 +50,7 @@ test('circle: a stranger cannot see or fund a request (404, so its existence doe
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.me('zed');
     assert.equal((await s.call('zed', 'GET', `/requests/${id}`)).status, 404);
-    assert.equal((await s.call('zed', 'POST', `/requests/${id}/contributions`, { amount: 10 })).status, 404);
+    assert.equal((await s.call('zed', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 10 })).status, 404);
   } finally { await s.close(); }
 });
 
@@ -76,7 +76,7 @@ test('circle: following the borrower yourself does NOT give access (following ne
     await s.me('fay');
     await s.follow('fay', ann.id);
     assert.equal((await s.call('fay', 'GET', `/requests/${id}`)).status, 404);
-    assert.equal((await s.call('fay', 'POST', `/requests/${id}/contributions`, { amount: 10 })).status, 404);
+    assert.equal((await s.call('fay', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 10 })).status, 404);
     assert.equal((await s.call('fay', 'GET', '/feed')).body.requests.length, 0, 'not in the feed either');
   } finally { await s.close(); }
 });
@@ -123,7 +123,7 @@ test('circle: someone who already lent keeps access after the connection ends', 
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     const lee = await s.me('lee');
     await s.follow('ann', lee.id);
-    assert.equal((await s.call('lee', 'POST', `/requests/${id}/contributions`, { amount: 10 })).status, 201);
+    assert.equal((await s.call('lee', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 10 })).status, 201);
     await s.call('ann', 'DELETE', `/follows/${lee.id}`);
     assert.equal((await s.call('lee', 'GET', `/requests/${id}`)).status, 200);
   } finally { await s.close(); }

@@ -39,12 +39,12 @@ test('feed cards carry the amount raised so far', async () => {
     await s.repo.setVerifier(wes.id, true);
     const ben = (await s.call('ben', 'GET', '/me')).body.user;
     await s.call('ann', 'POST', '/follows', { userId: ben.id }); // the borrower chooses her circle
-    const id = (await s.call('ann', 'POST', '/requests', { amount: 500, purpose: 'School fees for the second term at the college', repaymentDate: '2027-02-01', nomineeId: nat.id })).body.request.id;
+    const id = (await s.call('ann', 'POST', '/requests', { amount: 500, purpose: 'School fees for the second term at the college', repaymentDate: '2027-02-01', nomineeId: nat.id, phone: '+1 555 010 0100' })).body.request.id;
     await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     const zed = (await s.call('zed', 'GET', '/me')).body.user;
     await s.call('ann', 'POST', '/follows', { userId: zed.id }); // only the borrower's circle can fund
-    const lent = await s.call('zed', 'POST', `/requests/${id}/contributions`, { amount: 120 });
+    const lent = await s.call('zed', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 120 });
     assert.equal(lent.status, 201);
     const feed = await s.call('ben', 'GET', '/feed');
     assert.equal(feed.status, 200);

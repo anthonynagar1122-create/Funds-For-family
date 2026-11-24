@@ -177,6 +177,20 @@ function suggestConnections({ meId, following, followers, edges, limit = 10 }) {
     .slice(0, limit);
 }
 
+/**
+ * Phone numbers, so lenders can call or WhatsApp a borrower before sending money.
+ * Accepts digits with spaces, dashes, dots and brackets, and an optional leading +.
+ * Stores international format: "+" and 8 to 15 digits (E.164).
+ */
+function validatePhone(raw) {
+  const s = String(raw ?? '').trim();
+  if (s === '') return { ok: false, error: 'Add your phone number so lenders can reach you' };
+  if (!/^\+?[\d\s().-]+$/.test(s)) return { ok: false, error: 'Use digits only, with an optional + and country code' };
+  const digits = s.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) return { ok: false, error: 'Enter a full phone number with country code' };
+  return { ok: true, value: `+${digits}` };
+}
+
 /** Which statuses appear in the public feed. */
 function isFeedStatus(status) {
   return status === 'open' || status === 'funded' || status === 'repaid';
@@ -190,6 +204,7 @@ module.exports = {
   DEFAULT_REQUIRED_APPROVALS,
   FEED_MODE,
   canSeeRequest,
+  validatePhone,
   suggestConnections,
   isIsoDate,
   daysOverdue,

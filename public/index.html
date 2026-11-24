@@ -98,6 +98,12 @@
           <p class="error" id="e-date" role="alert"></p>
         </div>
         <div class="field">
+          <label for="f-phone">Your phone number</label>
+          <input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+91 98765 43210" required aria-describedby="h-phone e-phone">
+          <p class="hint" id="h-phone">Lenders call or WhatsApp you before they send money. Only your circle sees it.</p>
+          <p class="error" id="e-phone" role="alert"></p>
+        </div>
+        <div class="field">
           <label for="f-nominee">Nominee (repays if you cannot)</label>
           <select id="f-nominee" name="nomineeId" required aria-describedby="h-nominee e-nominee"></select>
           <p class="hint" id="h-nominee">Choose from your connections. <a href="#invite">Invite someone</a> if they are not here yet.</p>

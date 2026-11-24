@@ -35,7 +35,8 @@ const EMPTY_ACTIVITY = { borrowing: [], lending: [], repayments: { made: [], rec
 const row = (requestId, status, myRole, repaymentDate, purpose = `Request ${requestId} purpose`) =>
   ({ requestId, purpose, status, principalCents: 50000, repaymentDate, myRole, myAmountCents: 0 });
 const feedReq = (id, status, borrowerId) =>
-  ({ id, purpose: `Feed request ${id}`, status, borrowerId, principalCents: 100000, raisedCents: 20000, repaymentDate: '2027-03-01' });
+  ({ id, purpose: `Feed request ${id}`, status, borrowerId, principalCents: 100000, raisedCents: 20000, repaymentDate: '2027-03-01',
+    borrower: { id: borrowerId, name: 'Asha', phone: '+919876543210' } });
 
 async function openHome({ isVerifier = false, feed = [], activity = EMPTY_ACTIVITY, queue = [], connections = null, suggestions = [], hash = '' } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
@@ -124,9 +125,10 @@ test('Contribute: submitting on the card records the contribution and thanks the
     await page.route('**/api/requests/31/contributions', async (r) => { body = JSON.parse(r.request().postData()); await r.fulfill({ status: 201, contentType: 'application/json', body: '{"request":{}}' }); });
     await page.waitForSelector('form[data-contribute="31"]');
     await page.fill('#amt-31', '40');
+    await page.check('#confirm-card-31');
     await page.click('form[data-contribute="31"] button[type="submit"]');
     await page.waitForSelector('#toast:not([hidden])');
-    assert.deepEqual(body, { amount: 40 });
+    assert.deepEqual(body, { amount: 40, confirmedContact: true });
     assert.match(await page.locator('#toast').textContent(), /Contributed \$40\.00/);
   } finally { await ctx.close(); }
 });
@@ -167,5 +169,30 @@ test('a failing source shows an error instead of a false "nothing to do"', { ski
     assert.equal(await page.locator('#home-empty').isVisible(), false);
     assert.equal(await page.locator('#count-fund').textContent(), '–', 'a failed list shows a dash, not a false zero');
     assert.equal(await page.locator('#count-repay').textContent(), '0');
+  } finally { await ctx.close(); }
+});
+
+test('Lender safety: the card offers Call and WhatsApp to the borrower', { skip }, async () => {
+  const { page, ctx } = await openHome({ feed: [feedReq(31, 'open', 2)], hash: '#feed' });
+  try {
+    await page.waitForSelector('form[data-contribute="31"]');
+    const card = page.locator('form[data-contribute="31"]');
+    assert.match(await card.locator('.contact-title').textContent(), /Talk to Asha first/);
+    assert.equal(await card.locator('a[href^="tel:"]').getAttribute('href'), 'tel:+919876543210');
+    assert.equal(await card.locator('a[href^="https://wa.me/"]').getAttribute('href'), 'https://wa.me/919876543210');
+  } finally { await ctx.close(); }
+});
+
+test('Lender safety: contributing without confirming the conversation is blocked and sends nothing', { skip }, async () => {
+  const { page, ctx } = await openHome({ feed: [feedReq(31, 'open', 2)], hash: '#feed' });
+  try {
+    let called = false;
+    await page.route('**/api/requests/31/contributions', async (r) => { called = true; await r.fulfill({ status: 201, contentType: 'application/json', body: '{}' }); });
+    await page.waitForSelector('form[data-contribute="31"]');
+    await page.fill('#amt-31', '40');
+    await page.click('form[data-contribute="31"] button[type="submit"]');
+    await page.waitForFunction(() => document.querySelector('form[data-contribute="31"] .error').textContent.length > 0);
+    assert.match(await page.locator('form[data-contribute="31"] .error').textContent(), /tick the box/);
+    assert.equal(called, false);
   } finally { await ctx.close(); }
 });
