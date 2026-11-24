@@ -7,8 +7,15 @@
   let me = null;
   let usersById = new Map();
 
+  const navFor = { 'view-feed': 'nav-feed', 'view-new': 'nav-new', 'view-people': 'nav-people', 'view-activity': 'nav-activity', 'view-detail': 'nav-feed' };
+
   function show(id) {
     for (const v of views) { const el = document.getElementById(v); if (el) el.hidden = v !== id; }
+    // Mark the current section in the segmented navigation.
+    for (const navId of new Set(Object.values(navFor))) {
+      const btn = document.getElementById(navId);
+      if (btn) { if (navFor[id] === navId) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current'); }
+    }
     if (id !== 'signed-out') $('#main').focus();
   }
 
@@ -63,9 +70,10 @@
       const li = document.createElement('li');
       li.className = `card card-${card.tone}`;
       const actions = card.actions
-        .map((a) => `<a class="btn btn-sm btn-${a.tone === 'primary' ? 'primary' : 'ghost'}" href="#request/${r.id}" data-action="${esc(a.id)}">${esc(a.label)}</a>`)
+        .map((a) => `<a class="btn btn-sm btn-${a.tone === 'primary' ? 'primary' : 'secondary'}" href="#request/${r.id}" data-action="${esc(a.id)}">${esc(a.label)}</a>`)
         .join(' ');
       li.innerHTML = `
+        <p class="card-eyebrow">Request #${esc(r.id)}</p>
         <p class="card-title"><a href="#request/${r.id}">${esc(card.title)}</a></p>
         <div class="meta"><span>${esc(card.raisedLabel)}</span><span>${esc(card.dueLabel)}</span><span class="badge badge-${esc(card.tone)}">${esc(card.statusLabel)}</span></div>
         <div class="progress" role="progressbar" aria-label="Funding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${card.progressPct}"><span style="width:${card.progressPct}%"></span></div>
@@ -118,7 +126,8 @@
     const can = (id) => card.actions.some((a) => a.id === id);
 
     $('#detail').innerHTML = `
-      <p><a href="#feed">← Back to feed</a></p>
+      <p><a class="detail-back" href="#feed">← Back to feed</a></p>
+      <p class="card-eyebrow">Request #${esc(r.id)}</p>
       <h1 id="detail-title">${esc(r.purpose)}</h1>
       <div class="meta">${statusBadge(r.status)}<span>Requested by ${esc(borrower)}</span><span>Nominee: ${esc(nominee)}</span></div>
       <div class="meta"><span>Principal ${money(r.principalCents)}</span><span>Repay by ${esc(r.repaymentDate)}</span>
@@ -128,9 +137,9 @@
         <div class="progress" role="progressbar" aria-label="Funding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
         <p class="muted">${money(r.principalCents - r.remainingCents)} raised of ${money(r.principalCents)}</p>` : ''}
       <h2>Verification</h2>
-      <ul class="list">${r.verifications.length ? r.verifications.map((v) => `<li>${v.decision === 'approve' ? 'Approved' : 'Rejected'}${v.note ? ': ' + esc(v.note) : ''}</li>`).join('') : '<li class="muted">No decisions yet. Two approvals are needed.</li>'}</ul>
+      <ul class="list">${r.verifications.length ? r.verifications.map((v) => `<li>${v.decision === 'approve' ? '<span class="badge badge-ok">Approved</span>' : '<span class="badge badge-danger">Rejected</span>'}${v.note ? '<span>' + esc(v.note) + '</span>' : ''}</li>`).join('') : '<li class="muted">No decisions yet. Two approvals are needed.</li>'}</ul>
       ${can('verify-approve') ? `
-        <form id="verify-form" class="form" style="margin-top:16px">
+        <form id="verify-form" class="form">
           <div class="field"><label for="v-note">Note (optional)</label><textarea id="v-note" rows="2" maxlength="1000"></textarea></div>
           <div class="row-actions">
             <button class="btn btn-primary" name="decision" value="approve" type="submit">Approve purpose</button>
@@ -138,20 +147,20 @@
           </div>
         </form>` : ''}
       ${can('contribute') ? `
-        <form id="fund-form" class="form" style="margin-top:16px">
+        <form id="fund-form" class="form">
           <div class="field"><label for="c-amount">Contribute (USD, up to ${money(r.remainingCents)})</label>
             <input id="c-amount" type="number" min="0.01" step="0.01" max="${(r.remainingCents / 100).toFixed(2)}" required>
             <p class="error" id="e-fund" role="alert"></p></div>
           <button class="btn btn-primary" type="submit">Contribute</button>
         </form>` : ''}
       ${can('repay') ? `
-        <form id="repay-form" class="form" style="margin-top:16px">
+        <form id="repay-form" class="form">
           <div class="field"><label for="p-amount">Record a repayment (USD)</label>
             <input id="p-amount" type="number" min="0.01" step="0.01" required>
             <p class="error" id="e-repay" role="alert"></p></div>
           <button class="btn btn-primary" type="submit">Record repayment</button>
         </form>` : ''}
-      <p class="muted" style="margin-top:24px">Payments are recorded here for transparency. No money moves through this app.</p>`;
+      <p class="callout" style="margin-top:24px">Payments are recorded here for transparency. No money moves through this app.</p>`;
 
     const verify = $('#verify-form');
     verify?.addEventListener('submit', async (ev) => {
@@ -211,7 +220,7 @@
     const { following, followers, mutual } = await api('/connections');
     const mutualIds = new Set(mutual.map((u) => u.id));
     const row = (u) => `<li><strong>${esc(u.name)}</strong> <span class="muted">${esc(u.email)}</span>
-      ${mutualIds.has(u.id) ? '<span class="badge">Mutual</span>' : ''}
+      ${mutualIds.has(u.id) ? '<span class="badge badge-primary">Mutual</span>' : ''}
       <div class="row-actions"><button class="btn btn-secondary" data-follow="${u.id}" type="button">Follow</button>
       <button class="btn btn-ghost" data-unfollow="${u.id}" type="button">Unfollow</button></div></li>`;
     $('#connections').innerHTML = [...following, ...followers.filter((u) => !following.some((f) => f.id === u.id))].map(row).join('') || '<li class="muted">No connections yet.</li>';

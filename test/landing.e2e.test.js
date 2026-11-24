@@ -56,22 +56,22 @@ const eachMs = (list) => list.split(',').map((x) => toMs(x.trim()));
 
 // ---- Card system: the cards read their values from one set of tokens ----
 
-test('cards use the card tokens: radius 12 and padding 28 at 1440 px', { skip }, async () => {
+test('cards use the card tokens: radius 16 and padding 24 at 1440 px', { skip }, async () => {
   const cards = await withPage({ width: 1440 }, (p) => p.evaluate(() =>
     ['.feature', '.step', '.example-card', '.calc'].map((s) => {
       const cs = getComputedStyle(document.querySelector(s));
       return { s, radius: cs.borderRadius, pad: cs.paddingTop };
     })));
   for (const c of cards) {
-    assert.equal(c.radius, '12px', c.s);
-    assert.equal(c.pad, '28px', c.s);
+    assert.equal(c.radius, '16px', c.s);
+    assert.equal(c.pad, '24px', c.s);
   }
 });
 
-test('cards drop to 24 px padding at 375 px, from the same token', { skip }, async () => {
+test('cards drop to 20 px padding at 375 px, from the same token', { skip }, async () => {
   const pads = await withPage({ width: 375 }, (p) => p.evaluate(() =>
     ['.feature', '.step', '.example-card', '.calc'].map((s) => getComputedStyle(document.querySelector(s)).paddingTop)));
-  for (const pad of pads) assert.equal(pad, '24px');
+  for (const pad of pads) assert.equal(pad, '20px');
 });
 
 test('no horizontal overflow at 375 and 1440 px', { skip }, async () => {
@@ -342,5 +342,5 @@ test('card design: the example card has a 3 px brand rule across its top edge', 
   }));
   assert.notEqual(rule.content, 'none', 'accent rule present');
   assert.equal(rule.height, '3px');
-  assert.equal(rule.color, 'rgb(31, 111, 92)', 'uses brand-600');
+  assert.equal(rule.color, 'rgb(79, 70, 229)', 'uses brand-600');
 });

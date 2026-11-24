@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Funds For Family: request and fund small loans with trust</title>
   <meta name="description" content="Request a small amount, have its purpose verified by a team, and let people in your circle fund it. Clear rules, a named nominee, and repayment on the due date.">
-  <meta name="theme-color" content="#1f6f5c">
+  <meta name="theme-color" content="#4f46e5">
   <link rel="canonical" href="https://funds-for-family.vercel.app/">
   <meta property="og:site_name" content="Funds For Family">
   <meta property="og:type" content="website">
@@ -51,47 +51,55 @@
   <header class="site-header">
     <div class="container header-row">
       <a class="brand-link" href="/" aria-label="Funds For Family home">
-        <svg class="brand-mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
-          <rect width="28" height="28" rx="8" fill="#1f6f5c"/>
-          <path d="M8 19V9h11v2.5H11.2v2.4h7v2.5h-7V19z" fill="#ffffff"/>
-        </svg>
-        <span>Funds For Family</span>
+        <span class="brand-tile" aria-hidden="true">FF</span>
+        <span class="brand-text"><span class="brand-name">Funds For Family</span><span class="brand-sub">Trusted circle lending</span></span>
       </a>
-      <nav aria-label="Primary" class="site-nav header-nav">
-        <a href="#how-it-works">How it works</a>
-        <a href="#interest">Interest</a>
-        <a href="#faq">Questions</a>
+      <nav aria-label="Primary" class="site-nav header-nav segmented">
+        <a href="#how-it-works"><span class="nav-icon" aria-hidden="true">🧭</span>How it works</a>
+        <a href="#interest"><span class="nav-icon" aria-hidden="true">📈</span>Interest</a>
+        <a href="#faq"><span class="nav-icon" aria-hidden="true">💬</span>Questions</a>
       </nav>
-      <a class="btn btn-secondary btn-sm" href="/app/">Sign in</a>
+      <a class="btn btn-secondary btn-sm header-cta" href="/app/">Sign in</a>
     </div>
   </header>
 
   <main id="main" tabindex="-1">
     <!-- 1. Hero -->
     <section class="hero" aria-labelledby="hero-title">
-      <div class="container hero-grid">
-        <div class="hero-copy reveal-group">
-          <p class="eyebrow">Trusted lending for family and friends</p>
-          <h1 id="hero-title" class="hero-h1">Ask for a small amount. Let your circle help.</h1>
-          <p class="lead">Every request is verified before anyone funds it. Interest starts only after the due date.</p>
-          <div class="cta-row">
-            <a class="btn btn-primary btn-lg" href="/app/#new" data-magnetic>Start a request</a>
-            <a class="btn btn-ghost btn-lg" href="#how-it-works">See how it works</a>
-          </div>
-          <p class="disclaimer">Funds For Family records and verifies requests. It does not move money or give financial advice.</p>
-        </div>
+      <div class="container">
+        <div class="hero-panel">
+          <div class="hero-grid">
+            <div class="hero-copy reveal-group">
+              <p class="eyebrow">Trusted lending for family and friends</p>
+              <h1 id="hero-title" class="hero-h1">Ask for a small amount. Let your circle help.</h1>
+              <p class="lead">Every request is verified before anyone funds it. Interest starts only after the due date.</p>
+              <div class="cta-row">
+                <a class="btn btn-primary btn-lg" href="/app/#new" data-magnetic>Start a request</a>
+                <a class="btn btn-ghost btn-lg" href="#how-it-works">See how it works</a>
+              </div>
+              <p class="disclaimer">Funds For Family records and verifies requests. It does not move money or give financial advice.</p>
+            </div>
 
-        <aside class="example-card" aria-labelledby="example-title" data-zoom>
-          <p class="card-kicker" id="example-title">A request, step by step</p>
-          <dl class="example-list">
-            <div><dt>Purpose</dt><dd>School fees for the second term</dd></div>
-            <div><dt>Amount requested</dt><dd>$1,000.00</dd></div>
-            <div><dt>Verification</dt><dd><span class="badge badge-ok">2 of 2 approvals</span></dd></div>
-            <div><dt>Nominee</dt><dd>Sam, repays if the borrower cannot</dd></div>
-            <div><dt>Repay by</dt><dd>1 March</dd></div>
-          </dl>
-          <p class="card-foot">After the due date, simple interest of 12% a year accrues daily until repaid.</p>
-        </aside>
+            <aside class="example-card" aria-labelledby="example-title" data-zoom>
+              <p class="card-kicker" id="example-title">Example request · step by step</p>
+              <dl class="example-list">
+                <div><dt>Purpose</dt><dd>School fees for the second term</dd></div>
+                <div><dt>Amount requested</dt><dd>$1,000.00</dd></div>
+                <div><dt>Verification</dt><dd><span class="badge badge-ok">2 of 2 approvals</span></dd></div>
+                <div><dt>Nominee</dt><dd>Sam, repays if the borrower cannot</dd></div>
+                <div><dt>Repay by</dt><dd>1 March</dd></div>
+              </dl>
+              <p class="card-foot">After the due date, simple interest of 12% a year accrues daily until repaid.</p>
+            </aside>
+          </div>
+
+          <ul class="hero-stats" aria-label="The rules at a glance">
+            <li><span class="stat-value">2</span><span class="stat-label">Approvals to open a request</span></li>
+            <li><span class="stat-value">1</span><span class="stat-label">Named nominee on every request</span></li>
+            <li><span class="stat-value">0%</span><span class="stat-label">Interest before the due date</span></li>
+            <li><span class="stat-value">12%</span><span class="stat-label">A year, simple, after it</span></li>
+          </ul>
+        </div>
       </div>
     </section>
 
@@ -99,15 +107,15 @@
     <section class="trust-strip" aria-label="Three protections">
       <div class="container trust-grid">
         <div class="trust-item reveal">
-          <h2 class="trust-title">Verified purpose</h2>
+          <h2 class="trust-title"><span class="card-icon" aria-hidden="true">✅</span>Verified purpose</h2>
           <p>Two independent approvals before funding.</p>
         </div>
         <div class="trust-item reveal">
-          <h2 class="trust-title">A named nominee</h2>
+          <h2 class="trust-title"><span class="card-icon" aria-hidden="true">🤝</span>A named nominee</h2>
           <p>Someone you know is named on every request.</p>
         </div>
         <div class="trust-item reveal">
-          <h2 class="trust-title">No hidden interest</h2>
+          <h2 class="trust-title"><span class="card-icon" aria-hidden="true">🔍</span>No hidden interest</h2>
           <p>The same rule for everyone. Amount due is always shown.</p>
         </div>
       </div>
@@ -117,28 +125,32 @@
     <section class="section" id="how-it-works" aria-labelledby="how-title">
       <div class="container">
         <header class="section-head reveal">
-          <p class="eyebrow">How it works</p>
           <h2 id="how-title">Four steps from request to repayment</h2>
+          <p class="section-sub">How it works: the same path for every request, recorded at every step.</p>
         </header>
         <ol class="steps">
           <li class="step" data-zoom data-tilt data-spotlight>
-            <span class="step-num" aria-hidden="true">1</span>
+            <span class="step-icon" aria-hidden="true">📝</span>
             <h3>Request</h3>
+            <span class="step-num">Step 1 · Borrower</span>
             <p>Amount, purpose, due date, nominee.</p>
           </li>
           <li class="step" data-zoom data-tilt data-spotlight>
-            <span class="step-num" aria-hidden="true">2</span>
+            <span class="step-icon" aria-hidden="true">🛡️</span>
             <h3>Verify</h3>
+            <span class="step-num">Step 2 · Verification team</span>
             <p>Two approvals open it. One rejection closes it.</p>
           </li>
           <li class="step" data-zoom data-tilt data-spotlight>
-            <span class="step-num" aria-hidden="true">3</span>
+            <span class="step-icon" aria-hidden="true">💸</span>
             <h3>Fund</h3>
+            <span class="step-num">Step 3 · Your circle</span>
             <p>Anyone signed in can contribute, up to the balance left.</p>
           </li>
           <li class="step" data-zoom data-tilt data-spotlight>
-            <span class="step-num" aria-hidden="true">4</span>
+            <span class="step-icon" aria-hidden="true">🧾</span>
             <h3>Repay</h3>
+            <span class="step-num">Step 4 · Borrower or nominee</span>
             <p>The borrower or nominee records repayments until paid in full.</p>
           </li>
         </ol>
@@ -152,7 +164,7 @@
           <p class="eyebrow">Interest, worked through</p>
           <h2 id="interest-title">Interest starts after the due date, not before</h2>
           <p>Simple interest at 12% a year, from the day after the due date.</p>
-          <p>Example: $1,000.00, repaid 10 days late.</p>
+          <p class="callout">Example: $1,000.00, repaid 10 days late. The amount due is always shown on the request.</p>
         </div>
         <div class="calc" data-zoom role="group" aria-labelledby="calc-title">
           <p class="card-kicker" id="calc-title">Example</p>
@@ -160,7 +172,7 @@
             <caption class="sr-only">Amount due for a $1,000.00 request repaid 10 days after the due date</caption>
             <tbody>
               <tr><th scope="row">Principal</th><td>$1,000.00</td></tr>
-              <tr><th scope="row">Days late</th><td>10</td></tr>
+              <tr><th scope="row">Days late</th><td><span class="badge badge-danger">10 days</span></td></tr>
               <tr><th scope="row">Interest (12% a year, simple)</th><td>$3.29</td></tr>
               <tr class="calc-total"><th scope="row">Amount due</th><td>$1,003.29</td></tr>
             </tbody>
@@ -174,25 +186,25 @@
     <section class="section" id="features" aria-labelledby="features-title">
       <div class="container">
         <header class="section-head reveal">
-          <p class="eyebrow">Built for trust</p>
           <h2 id="features-title">Everything is recorded, and nothing is hidden</h2>
+          <p class="section-sub">Built for trust: four rules the app enforces for every member.</p>
         </header>
         <div class="feature-grid">
           <article class="feature" data-zoom>
-            <h3>Your network, not the public</h3>
+            <h3><span class="card-icon" aria-hidden="true">👥</span>Your network, not the public</h3>
             <p>The feed shows requests from people you follow and people who follow you. You choose who to connect with.</p>
           </article>
           <article class="feature" data-zoom>
-            <h3>A record of every decision</h3>
+            <h3><span class="card-icon" aria-hidden="true">📒</span>A record of every decision</h3>
             <p>Each verification, contribution and repayment is stored with its time and author, and shown on the request.</p>
           </article>
           <article class="feature" data-zoom>
-            <h3>Separation of roles</h3>
+            <h3><span class="card-icon" aria-hidden="true">⚖️</span>Separation of roles</h3>
             <p>Borrowers cannot verify or fund their own requests. Nominees cannot verify the request they are named on.</p>
           </article>
           <article class="feature" data-zoom>
-            <h3>Clear status at a glance</h3>
-            <p>Each request shows whether it is awaiting verification, open, funded, repaid, or overdue, with the amount still needed.</p>
+            <h3><span class="card-icon" aria-hidden="true">🚦</span>Clear status at a glance</h3>
+            <p>Each request shows whether it is <span class="badge badge-warn">Awaiting verification</span> <span class="badge badge-neutral">Open</span> <span class="badge badge-ok">Funded</span> <span class="badge badge-ok">Repaid</span> or <span class="badge badge-danger">Overdue</span>, with the amount still needed.</p>
           </article>
         </div>
       </div>
@@ -202,8 +214,8 @@
     <section class="section section-tint" id="faq" aria-labelledby="faq-title">
       <div class="container">
         <header class="section-head reveal">
-          <p class="eyebrow">Questions</p>
           <h2 id="faq-title">Questions people ask before lending</h2>
+          <p class="section-sub">Straight answers about money, verification and interest.</p>
         </header>
         <div class="faq reveal">
           <details>

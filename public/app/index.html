@@ -5,6 +5,7 @@
   <meta name="robots" content="noindex">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Funds For Family</title>
+  <meta name="theme-color" content="#4f46e5">
   <meta name="description" content="Request and fund small loans within your trusted family and community circle.">
   <link rel="stylesheet" href="/styles.css">
   <script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>
@@ -12,32 +13,43 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="topbar">
-    <a class="brand" href="/">Funds For Family</a>
-    <nav aria-label="Primary">
-      <button class="btn btn-ghost" id="nav-feed" type="button">Feed</button>
-      <button class="btn btn-ghost" id="nav-new" type="button">Request funds</button>
-      <button class="btn btn-ghost" id="nav-people" type="button">People</button>
-      <button class="btn btn-ghost" id="nav-activity" type="button">My activity</button>
-    </nav>
-    <div id="auth-slot"></div>
+    <div class="topbar-row">
+      <a class="brand" href="/">
+        <span class="brand-tile" aria-hidden="true">FF</span>
+        <span class="brand-text"><span class="brand-name">Funds For Family</span><span class="brand-sub">Member app</span></span>
+      </a>
+      <nav aria-label="Primary" class="segmented">
+        <button id="nav-feed" type="button"><span class="nav-icon" aria-hidden="true">🏠</span>Feed</button>
+        <button id="nav-new" type="button"><span class="nav-icon" aria-hidden="true">➕</span>Request funds</button>
+        <button id="nav-people" type="button"><span class="nav-icon" aria-hidden="true">👥</span>People</button>
+        <button id="nav-activity" type="button"><span class="nav-icon" aria-hidden="true">📒</span>My activity</button>
+      </nav>
+      <div id="auth-slot"></div>
+    </div>
   </header>
 
   <main id="main" tabindex="-1">
-    <section id="signed-out" class="panel" hidden>
+    <section id="signed-out" class="panel panel-hero" hidden>
+      <p class="eyebrow">Trusted lending for family and friends</p>
       <h1>Help family and friends, with purpose and trust.</h1>
       <p class="lede">Request a small amount, have its purpose verified by a team, and let people in your circle fund it. Repay on the due date.</p>
       <button class="btn btn-primary" id="sign-in" type="button">Sign in to continue</button>
     </section>
 
     <section id="view-feed" hidden aria-labelledby="feed-title">
-      <h1 id="feed-title">Feed</h1>
-      <p class="muted">Approved requests from people you follow and people who follow you.</p>
+      <header class="page-head">
+        <h1 id="feed-title"><span aria-hidden="true">🏠</span>Feed</h1>
+        <p class="muted">Approved requests from people you follow and people who follow you.</p>
+      </header>
       <ul class="cards" id="feed-list"></ul>
       <p class="empty" id="feed-empty" hidden>No approved requests in your circle yet. Follow people to see their requests.</p>
     </section>
 
     <section id="view-new" hidden aria-labelledby="new-title">
-      <h1 id="new-title">Request funds</h1>
+      <header class="page-head">
+        <h1 id="new-title"><span aria-hidden="true">➕</span>Request funds</h1>
+        <p class="muted">A verification team checks every request before anyone can fund it.</p>
+      </header>
       <form id="new-form" class="form" novalidate>
         <div class="field">
           <label for="f-amount">Total amount (USD)</label>
@@ -67,11 +79,14 @@
     </section>
 
     <section id="view-activity" hidden aria-labelledby="activity-title">
-      <h1 id="activity-title">My activity</h1>
-      <h2>Borrowing</h2><div id="activity-borrowing"></div>
-      <h2>Lending</h2><div id="activity-lending"></div>
-      <h2>Repayments</h2><div id="activity-repayments"></div>
-      <h2>Roles</h2><div id="activity-roles"></div>
+      <header class="page-head">
+        <h1 id="activity-title"><span aria-hidden="true">📒</span>My activity</h1>
+        <p class="muted">Everything you have borrowed, lent, repaid, or stand behind.</p>
+      </header>
+      <div class="section-card"><h2>Borrowing</h2><div id="activity-borrowing"></div></div>
+      <div class="section-card"><h2>Lending</h2><div id="activity-lending"></div></div>
+      <div class="section-card"><h2>Repayments</h2><div id="activity-repayments"></div></div>
+      <div class="section-card"><h2>Roles</h2><div id="activity-roles"></div></div>
     </section>
 
     <section id="view-detail" hidden aria-labelledby="detail-title">
@@ -79,22 +94,29 @@
     </section>
 
     <section id="view-people" hidden aria-labelledby="people-title">
-      <h1 id="people-title">People</h1>
+      <header class="page-head">
+        <h1 id="people-title"><span aria-hidden="true">👥</span>People</h1>
+        <p class="muted">Follow people to see their requests in your feed.</p>
+      </header>
       <form id="search-form" class="inline-form" role="search">
         <label for="f-search" class="sr-only">Search members by name or email</label>
         <input id="f-search" type="search" placeholder="Search by name or email" minlength="2">
         <button class="btn btn-secondary" type="submit">Search</button>
       </form>
       <ul class="list" id="search-results"></ul>
-      <h2>Your connections</h2>
-      <ul class="list" id="connections"></ul>
-      <h2>Invite someone</h2>
-      <form id="invite-form" class="inline-form">
-        <label for="f-invite" class="sr-only">Email address to invite</label>
-        <input id="f-invite" type="email" placeholder="name@example.com" required>
-        <button class="btn btn-secondary" type="submit">Send invite</button>
-      </form>
-      <p class="muted" id="invite-status" role="status"></p>
+      <div class="section-card">
+        <h2>Your connections</h2>
+        <ul class="list" id="connections"></ul>
+      </div>
+      <div class="section-card">
+        <h2>Invite someone</h2>
+        <form id="invite-form" class="inline-form">
+          <label for="f-invite" class="sr-only">Email address to invite</label>
+          <input id="f-invite" type="email" placeholder="name@example.com" required>
+          <button class="btn btn-secondary" type="submit">Send invite</button>
+        </form>
+        <p class="muted" id="invite-status" role="status"></p>
+      </div>
     </section>
 
     <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>

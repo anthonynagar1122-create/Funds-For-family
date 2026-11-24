@@ -43,11 +43,18 @@ test('keyboard: Tab from the top visits the skip link, the brand, then the heade
     const seen = [];
     for (let i = 0; i < 3; i++) {
       await p.keyboard.press('Tab');
-      seen.push(await p.evaluate(() => document.activeElement.textContent.trim()));
+      // Accessible name: aria-label if set, otherwise the text without decorative (aria-hidden) icons.
+      seen.push(await p.evaluate(() => {
+        const el = document.activeElement;
+        if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+        const clone = el.cloneNode(true);
+        clone.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+        return clone.textContent.trim();
+      }));
     }
     return seen;
   });
-  assert.deepEqual(order, ['Skip to content', 'Funds For Family', 'How it works']);
+  assert.deepEqual(order, ['Skip to content', 'Funds For Family home', 'How it works']);
 });
 
 test('focus: keyboard focus on the primary CTA shows a visible ring', { skip }, async () => {

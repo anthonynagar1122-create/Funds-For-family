@@ -1,13 +1,13 @@
 /* Motion prototype. Standalone: tokens are defined here, and the page needs no other stylesheet. */
 :root {
-  --ink-900: #14201c; --ink-700: #3b4a45; --ink-500: #5f6f69;
-  --brand-600: #1f6f5c; --brand-700: #185a4a; --brand-100: #e3f2ee;
-  --canvas: #f6f7f5; --surface: #fff; --border: #d9dfdc;
+  --ink-900: #0f172a; --ink-700: #475569; --ink-500: #64748b;
+  --brand-600: #4f46e5; --brand-700: #4338ca; --brand-100: #eef2ff;
+  --canvas: #f6f7fb; --surface: #fff; --border: #e2e8f0;
   --motion-100: 100ms; --motion-150: 150ms; --motion-200: 200ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--canvas); color: var(--ink-900); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { margin: 0; background: var(--canvas); color: var(--ink-900); font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 main { display: block; }
 h1 { font-size: clamp(2rem, 1.4rem + 2.6vw, 3.25rem); line-height: 1.08; margin: 0 0 16px; max-width: 16ch; }
 h2 { font-size: 1.6rem; margin: 0 0 24px; }
@@ -21,7 +21,7 @@ section { padding: 72px 24px; max-width: 1080px; margin: 0 auto; }
 
 .btn {
   display: inline-flex; align-items: center; min-height: 48px; padding: 12px 22px;
-  border-radius: 8px; background: var(--brand-600); color: #fff; font-weight: 600; text-decoration: none;
+  border-radius: 12px; background: var(--brand-600); color: #fff; font-weight: 600; text-decoration: none;
   transition: transform var(--motion-150) var(--ease-out), background-color var(--motion-150) var(--ease-out);
 }
 .btn:hover { background: var(--brand-700); }
@@ -34,8 +34,8 @@ section { padding: 72px 24px; max-width: 1080px; margin: 0 auto; }
 
 .card {
   position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 10px;
-  padding: 28px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
-  box-shadow: 0 1px 2px rgba(20, 32, 28, .06);
+  padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .08);
   will-change: auto;
 }
 .card .num { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--brand-100); color: var(--brand-700); font-weight: 700; }
@@ -44,7 +44,7 @@ section { padding: 72px 24px; max-width: 1080px; margin: 0 auto; }
 /* Spotlight: a soft highlight follows the pointer. Colour only, no motion. */
 .card::before {
   content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0;
-  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), rgba(31, 111, 92, .09), transparent 70%);
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), rgba(79, 70, 229, .08), transparent 70%);
   transition: opacity var(--motion-150) var(--ease-out);
 }
 .card[data-spotlight]:hover::before { opacity: 1; }
