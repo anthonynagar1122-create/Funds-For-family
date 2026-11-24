@@ -14,9 +14,10 @@
     const followingIds = new Set(following.map((u) => u.id));
     const followingOnly = following.filter((u) => !mutualIds.has(u.id));
     const followersOnly = followers.filter((u) => !mutualIds.has(u.id) && !followingIds.has(u.id));
+    const unfollow = (u) => `<button class="btn btn-ghost" type="button" data-unfollow="${esc(u.id)}" aria-label="Unfollow ${esc(u.name)}">Unfollow</button>`;
     const followBack = (u) => `<button class="btn btn-secondary" type="button" data-follow-back="${esc(u.id)}" aria-label="Follow back ${esc(u.name)}">Follow back</button>`;
-    return group('Mutual', 'circle-mutual', mutual, null, 'No mutual connections yet. You see requests only from people you follow and who follow you.')
-      + group('Following only', 'circle-following', followingOnly, null, 'Nobody here. These are people you follow who have not followed you back.')
+    return group('Mutual', 'circle-mutual', mutual, unfollow, 'No mutual connections yet. You see requests only from people you follow and who follow you.')
+      + group('Following only', 'circle-following', followingOnly, unfollow, 'Nobody here. These are people you follow who have not followed you back.')
       + group('Followers only', 'circle-followers', followersOnly, followBack, 'Nobody here. These are people who follow you and wait for you to follow back.');
   }
 
@@ -50,23 +51,48 @@
 
     const reloadInvites = async () => { $('#my-invites-box').innerHTML = invitesHtml((await window.Api.get('/invites')).invites || []); };
 
+    const reloadLists = async () => { try { $('#circle-lists').innerHTML = listsHtml(await window.Api.get('/connections')); } catch { /* the action worked; the list refreshes next visit */ } };
+
     $('#circle-lists').addEventListener('click', async (ev) => {
+      const li = ev.target.closest('li.person');
+      const ask = ev.target.closest('[data-unfollow]');
+      if (ask && li) {
+        const name = li.querySelector('.person-name').textContent;
+        const id = ask.dataset.unfollow;
+        li.dataset.restore = li.innerHTML;
+        li.querySelector('.person-name').insertAdjacentHTML('afterend', `<span class="person-confirm" role="group" aria-label="Confirm unfollow"><span>Unfollow ${esc(name)}?</span>
+          <button class="btn btn-secondary" type="button" data-unfollow-confirm="${esc(id)}">Confirm</button>
+          <button class="btn btn-ghost" type="button" data-unfollow-cancel>Cancel</button></span>`);
+        ask.remove();
+        li.querySelector('[data-unfollow-confirm]').focus();
+        return;
+      }
+      if (ev.target.closest('[data-unfollow-cancel]') && li) { li.innerHTML = li.dataset.restore; return; }
+      const conf = ev.target.closest('[data-unfollow-confirm]');
+      if (conf) {
+        conf.disabled = true;
+        try { await window.Api.delete(`/follows/${encodeURIComponent(conf.dataset.unfollowConfirm)}`); }
+        catch (err) { conf.disabled = false; ctx.toast?.(err.message); return; }
+        ctx.toast?.('Unfollowed');
+        await reloadLists();
+        return;
+      }
       const b = ev.target.closest('[data-follow-back]');
       if (!b) return;
       b.disabled = true;
-      try {
-        await window.Api.post('/follows', { userId: Number(b.dataset.followBack) });
-        ctx.toast?.('Following');
-        $('#circle-lists').innerHTML = listsHtml(await window.Api.get('/connections'));
-      } catch (err) { b.disabled = false; ctx.toast?.(err.message); }
+      try { await window.Api.post('/follows', { userId: Number(b.dataset.followBack) }); }
+      catch (err) { b.disabled = false; ctx.toast?.(err.message); return; }
+      ctx.toast?.('Following');
+      await reloadLists();
     });
 
     $('#my-invites-box').addEventListener('click', async (ev) => {
       const b = ev.target.closest('[data-revoke]');
       if (!b) return;
       b.disabled = true;
-      try { await window.Api.delete(`/invites/${encodeURIComponent(b.dataset.revoke)}`); await reloadInvites(); }
-      catch (err) { b.disabled = false; ctx.toast?.(err.message); }
+      try { await window.Api.delete(`/invites/${encodeURIComponent(b.dataset.revoke)}`); }
+      catch (err) { b.disabled = false; ctx.toast?.(err.message); return; }
+      try { await reloadInvites(); } catch { /* revoked; list refreshes next visit */ }
     });
 
     $('#invite-form').addEventListener('submit', async (ev) => {
@@ -93,11 +119,12 @@
           catch { $('#copy-status').textContent = 'Could not copy. Use WhatsApp instead.'; }
         });
         input.value = '';
-        await reloadInvites();
       } catch (e) {
         err.textContent = e.message;
         input.focus();
+        return;
       } finally { btn.disabled = false; }
+      try { await reloadInvites(); } catch { /* the invite exists; the list refreshes next visit */ }
     });
   }
 

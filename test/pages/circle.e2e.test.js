@@ -1,5 +1,5 @@
 'use strict';
-// Browser test of the home overview with a MOCKED Clerk and MOCKED API.
+// Browser test of the circle page with a MOCKED Clerk and MOCKED API.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -50,6 +50,13 @@ async function open(opts = {}) {
   await page.route('**/api/feed', (route) => json(route, 200, { requests: [] }));
   await page.route('**/api/home', (route) => json(route, 200, { needsYou: [], myRequests: [], myLending: [] }));
   await page.route('**/api/connections', (route) => json(route, 200, state.connections));
+  await page.route('**/api/follows/*', (route) => {
+    const id = Number(route.request().url().split('/').pop());
+    state.unfollows = [...(state.unfollows || []), { method: route.request().method(), id }];
+    const c = state.connections;
+    state.connections = { ...c, following: c.following.filter((u) => u.id !== id), mutual: c.mutual.filter((u) => u.id !== id) };
+    return json(route, 200, { ok: true });
+  });
   await page.route('**/api/follows', (route) => {
     const body = route.request().postDataJSON();
     state.posts.push(body);
@@ -157,4 +164,24 @@ test('409 and 429 messages are shown in the form', { skip }, async () => {
       assert.equal(await page.locator('#wa-share').count(), 0);
     } finally { await ctx.close(); }
   }
+});
+
+test('Unfollow asks first, Cancel sends nothing, Confirm sends DELETE and removes the entry', { skip }, async () => {
+  const { page, ctx, state } = await open();
+  try {
+    await page.getByRole('button', { name: 'Unfollow Ravi Kumar' }).click();
+    assert.match(await page.locator('#circle-following li').innerText(), /Unfollow Ravi Kumar\?/);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    assert.equal(state.unfollows, undefined);
+    assert.match(await page.locator('#circle-following').innerText(), /Ravi Kumar/);
+    await page.getByRole('button', { name: 'Unfollow Ravi Kumar' }).click();
+    await page.getByRole('button', { name: 'Confirm' }).click();
+    await page.waitForFunction(() => !document.querySelector('#circle-following'));
+    assert.deepEqual(state.unfollows, [{ method: 'DELETE', id: 4 }]);
+    // a mutual entry can be unfollowed too
+    await page.getByRole('button', { name: 'Unfollow Meera Nair' }).click();
+    await page.getByRole('button', { name: 'Confirm' }).click();
+    await page.waitForFunction(() => !document.querySelector('#circle-mutual'));
+    assert.equal(state.unfollows[1].id, 3);
+  } finally { await ctx.close(); }
 });
