@@ -140,3 +140,15 @@ Remediation: open the Preview link, configure its staging secret, authenticate w
 - API tests cover member denial, invalid/inactive assignees, assign/reassign/unassign, audit history, and idempotent resolution.
 - Focused API/repository/financial/migration tests: 65/65 passed before the final unified-audit assertion; rerun full suite after it.
 - Staging migration application remains unverified due database connectivity failure. The branch migration must be applied and checked in isolated staging before Preview acceptance.
+
+## Continuation checkpoint — 2026-11-24 (latest branch review)
+
+- Staging project `sgtfdoiauximmktdhrxb` records migrations through `index_audit_actor_foreign_keys` (migration 0007). Read-only SQL verification confirmed all five indexes from 0007 exist.
+- Staging health advisor returned no findings. Performance advisor reported unused indexes (INFO); these are not evidence of a performance defect in an empty staging database. Security advisor returned 16 INFO-only `rls_enabled_no_policy` notices on server-only tables. RLS remains enabled and direct `anon` / `authenticated` access remains revoked; no broad policies were added.
+- Latest non-visual local suite: 406 tests, 405 passed, zero failed, one skipped. Dependency audit: zero vulnerabilities. The complete visual suite still reports three landing screenshot hash mismatches at 375, 768 and 1440 px; baselines were not overwritten.
+- Full local screenshot review was performed at 768 px. This is not a substitute for the automated three-viewport visual gate or signed-in browser acceptance.
+- Support assignment is implemented in code and covered by API/repository tests; it must remain unavailable in a deployed build until the latest migration set is verified against the exact deployed Preview.
+- The current PR head has diverged from its base: 37 commits ahead and 8 behind at the latest comparison. The base branch has since gained separate Admin and Legal page implementations and its own migrations named `0004_removed_entry_status.sql` and `0005_delete_account_fn.sql`. The security branch independently adds financial migrations 0004–0005 and changes overlapping application files. Do not merge or rebase mechanically: reconcile the two feature sets and establish one ordered migration history first.
+- The latest GitHub combined status still reports the Vercel Preview check blocked by the free-plan daily deployment limit. The existing READY Preview is for an older commit and is not acceptance evidence for the latest branch.
+- Deployment is deferred to the owner's planned deployment window. No Vercel deployment was triggered, no production configuration or data was changed, and PR #1 remains draft and unmerged.
+- Remaining release gates: resolve base-branch divergence and migration ordering; fix/review visual baselines; configure staging-only GitHub and Vercel secrets; run the Postgres integration/concurrency suite; deploy the exact reviewed commit to Preview; complete authenticated, keyboard, mobile, 200% zoom and reduced-motion acceptance; obtain explicit production approval.
