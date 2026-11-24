@@ -492,3 +492,19 @@ test('Supabase support resolution RPC maps the returned JSON payload', async () 
     resolvedAt:'2026-11-24T12:00:00Z',assignedToId:3,assignedById:1,assignedAt:'2026-11-24T11:00:00Z',
   });
 });
+
+
+test('migration 0007 indexes audit actor and support assignment foreign keys', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '0007_index_audit_actor_foreign_keys.sql'), 'utf8');
+  for (const [table, column] of [
+    ['admin_audit_events','actor_id'],
+    ['support_audit_events','actor_id'],
+    ['help_messages','assigned_by'],
+    ['financial_audit_events','actor_id'],
+    ['financial_idempotency','actor_id'],
+  ]) {
+    assert.match(sql, new RegExp('create index if not exists [a-z_]+ on public\\.' + table + ' \\(' + column + '\\)'));
+  }
+});
