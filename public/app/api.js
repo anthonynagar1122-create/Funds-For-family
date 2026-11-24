@@ -10,12 +10,18 @@
     }
   }
 
+  // The last member id seen from a live /api/me on this device.
+  const USER_KEY = 'ff-user';
+  function savedUser() { try { return localStorage.getItem(USER_KEY) || ''; } catch { return ''; } }
+
   // path is relative to /api, e.g. Api.get('/feed'). opts.headers adds headers (for example x-invite-token).
   async function request(method, path, body, opts = {}) {
+    const who = savedUser();
     const res = await fetch(`/api${path}`, {
       method,
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', ...(opts.headers || {}) },
+      // x-ff-user lets the service worker serve a saved copy only to the member it was saved for.
+      headers: { 'content-type': 'application/json', ...(who ? { 'x-ff-user': who } : {}), ...(opts.headers || {}) },
       body: body === undefined || body === null ? undefined : JSON.stringify(body),
     });
     // The service worker marks answers it served from its saved copy.
@@ -36,8 +42,10 @@
     delete: (path, opts) => request('DELETE', path, undefined, opts),
     request,
     fromCache: false,
+    setSavedUser(id) { try { if (id == null) localStorage.removeItem(USER_KEY); else localStorage.setItem(USER_KEY, String(id)); } catch { /* storage unavailable */ } },
     // Forget saved API answers (sign-out), so the next person on this device never sees them.
     async clearSaved() {
+      window.Api.setSavedUser(null);
       if (!('caches' in window)) return;
       for (const k of await caches.keys()) {
         const c = await caches.open(k);

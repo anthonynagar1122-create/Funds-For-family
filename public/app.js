@@ -31,6 +31,7 @@
     const { user } = await Api.get('/me', token ? { headers: { 'x-invite-token': token } } : undefined);
     sessionStorage.removeItem('ffjoin');
     me = user;
+    if (!Api.fromCache) Api.setSavedUser(user.id); // only a live answer says who is signed in
     Nav.setUser(user);
     usersById = new Map([[user.id, user]]);
     return user;
@@ -201,7 +202,7 @@
     try { cfg = await fetch('/api/config').then((r) => r.json()); }
     catch (err) {
       // Offline: open from the last saved view. No sign-in widget is available without the network.
-      try { await loadUsers(); route(); } catch { show('signed-out'); toast('You are offline.'); }
+      try { await loadUsers(); route(); } catch (e) { show('signed-out'); toast(e.code === 'saved_view_mismatch' ? e.message : 'You are offline.'); }
       return;
     }
     if (!cfg.clerkPublishableKey) { $('#auth-slot').textContent = 'Sign-in is not configured.'; show('signed-out'); return; }

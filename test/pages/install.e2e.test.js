@@ -16,6 +16,7 @@ let server = null;
 let browser = null;
 let base = '';
 const apiHits = [];
+const dropPaths = new Set(); // API paths whose connection is cut, to stand in for "offline" on one endpoint
 
 const CLERK_STUB = `window.Clerk = class { constructor(){ this.user = { id: 'mock' }; }
   async load(){} addListener(){} mountUserButton(){} openSignIn(){} };`;
@@ -35,6 +36,7 @@ test.before(async () => {
     let rel = req.url.split('?')[0];
     if (rel.startsWith('/api/')) {
       apiHits.push(`${req.method} ${rel}`);
+      if (dropPaths.has(rel)) return req.destroy();
       const body = API[rel];
       res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(body || {}));
@@ -125,5 +127,71 @@ test('service worker saved nothing for mutations or admin paths', { skip }, asyn
       assert.ok(!/\/api\/(admin|invites)/.test(s), s);
     }
     assert.equal(saved.filter((s) => s === 'GET /api/me').length <= 1, true);
+  } finally { await ctx.close(); }
+});
+
+test('shared device: member B offline never sees what the service worker saved for member A', { skip }, async () => {
+  const A = { id: 9, name: 'Asha Rao', email: 'a@example.com', isAdmin: false, welcomedAt: '2026-11-20T12:00:00.000Z', termsAcceptedAt: '2026-11-20T12:00:00.000Z' };
+  const B = { id: 10, name: 'Bela Das', email: 'b@example.com', isAdmin: false, welcomedAt: '2026-11-20T12:00:00.000Z', termsAcceptedAt: '2026-11-20T12:00:00.000Z' };
+  const homeA = { needsYou: [], myLending: [], myRequests: [{ id: 77, purpose: 'ASHA-PRIVATE school fees', status: 'open', principalCents: 500000, totals: { confirmedCents: 0, pendingCents: 0 } }] };
+  const saveAPI = { me: API['/api/me'], home: API['/api/home'] };
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 800 }, reducedMotion: 'reduce' });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(6000);
+  await ctx.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  try {
+    // A signs in online; the service worker saves A's home.
+    API['/api/me'] = { user: A };
+    API['/api/home'] = homeA;
+    await page.goto(`${base}/app/#/home`, { waitUntil: 'load' });
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('#my-requests');
+    assert.match(await page.locator('#home').innerText(), /ASHA-PRIVATE/);
+
+    // B signs in on the same browser (A did not sign out through the app). B's home cannot be reached.
+    API['/api/me'] = { user: B };
+    API['/api/home'] = { needsYou: [], myLending: [], myRequests: [] };
+    dropPaths.add('/api/home');
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => /Sign in again/.test(document.getElementById('home').innerText));
+    assert.doesNotMatch(await page.locator('body').innerText(), /ASHA-PRIVATE/);
+
+    // Fully offline as B: still no A data, only the message.
+    await ctx.setOffline(true);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => /Sign in again to see your saved view/.test(document.getElementById('home').innerText));
+    const text = await page.locator('body').innerText();
+    assert.doesNotMatch(text, /ASHA-PRIVATE|Asha/);
+    const savedHome = await page.evaluate(async () => {
+      for (const k of await caches.keys()) { const r = await (await caches.open(k)).match('/api/home'); if (r) return r.headers.get('x-ff-saved-for'); }
+      return null;
+    });
+    assert.equal(savedHome, '9', 'the saved copy is tagged with its owner');
+  } finally {
+    dropPaths.clear();
+    API['/api/me'] = saveAPI.me; API['/api/home'] = saveAPI.home;
+    await ctx.close();
+  }
+});
+
+test('sign-out clears saved answers and the remembered member id', { skip }, async () => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await ctx.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  try {
+    await page.goto(`${base}/app/#/home`, { waitUntil: 'load' });
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('nav[aria-label="Primary"] a:visible');
+    assert.equal(await page.evaluate(() => localStorage.getItem('ff-user')), '9');
+    await page.evaluate(() => window.Api.clearSaved());
+    assert.equal(await page.evaluate(() => localStorage.getItem('ff-user')), null);
+    const left = await page.evaluate(async () => {
+      const out = [];
+      for (const k of await caches.keys()) for (const r of await (await caches.open(k)).keys()) if (new URL(r.url).pathname.startsWith('/api/')) out.push(r.url);
+      return out;
+    });
+    assert.deepEqual(left, []);
   } finally { await ctx.close(); }
 });

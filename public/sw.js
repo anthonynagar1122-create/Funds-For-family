@@ -5,7 +5,7 @@
 //  - API: network-first with last-saved fallback, ONLY for the allow-list below.
 //  - Never cached: /api/admin*, /api/invites*, any request carrying an invite token, any other API path.
 // Bump CACHE_VERSION on each release; older caches are deleted on activate.
-const CACHE_VERSION = 'ff-v9';
+const CACHE_VERSION = 'ff-v10';
 const SHELL_FILES = [
   '/app/', '/app/index.html', '/styles.css', '/app.js',
   '/app/money.js', '/app/format.js', '/app/api.js', '/app/nav.js', '/app/card-model.js',
@@ -54,16 +54,42 @@ async function shellFirst(req, key) {
   return res;
 }
 
+// Shared-device privacy: every saved API answer remembers whose it is. The page sends the signed-in member's id
+// in x-ff-user (the last id it saw from a live /api/me). An answer is served offline only to that same member.
+// /api/me names its owner in the body; the other saved paths take the id the request carried when it was saved.
+const OWNER_HEADER = 'x-ff-saved-for';
+const WHO_HEADER = 'x-ff-user';
+
+async function ownerOf(req, res, key) {
+  if (key === '/api/me') {
+    try { const body = await res.clone().json(); return body && body.user && body.user.id != null ? String(body.user.id) : ''; } catch { return ''; }
+  }
+  return req.headers.get(WHO_HEADER) || '';
+}
+
+async function savedCopy(res, owner) {
+  const headers = new Headers(res.headers);
+  headers.set(OWNER_HEADER, owner);
+  return new Response(await res.clone().blob(), { status: res.status, statusText: res.statusText, headers });
+}
+
+function signInAgain() {
+  return new Response(JSON.stringify({ error: 'Sign in again to see your saved view', code: 'saved_view_mismatch' }),
+    { status: 401, headers: { 'content-type': 'application/json' } });
+}
+
 async function apiNetworkFirst(req, key) {
   const cache = await caches.open(CACHE_VERSION);
   try {
     const res = await fetch(req);
     // Only successful, non-private-marked responses are saved.
-    if (res.ok && !/no-store|private/i.test(res.headers.get('cache-control') || '')) await cache.put(key, res.clone());
+    if (res.ok && !/no-store|private/i.test(res.headers.get('cache-control') || '')) await cache.put(key, await savedCopy(res, await ownerOf(req, res, key)));
     return res;
   } catch (err) {
     const hit = await cache.match(key);
     if (!hit) throw err;
+    const who = req.headers.get(WHO_HEADER) || '';
+    if (!who || hit.headers.get(OWNER_HEADER) !== who) return signInAgain();
     const headers = new Headers(hit.headers);
     headers.set('x-from-sw-cache', '1');
     return new Response(await hit.blob(), { status: hit.status, statusText: hit.statusText, headers });
