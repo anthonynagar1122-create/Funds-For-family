@@ -173,6 +173,66 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ user: publicUser(updated, req.user.id) });
   });
 
+  // Only the two optional kinds can be switched. Essential emails (money asked, received, changed) are always sent.
+  api.patch('/me/email-preferences', async (req, res) => {
+    const { reminders, thanks } = req.body ?? {};
+    if (typeof reminders !== 'boolean' || typeof thanks !== 'boolean') {
+      return fail(res, 400, 'Choose on or off for reminders and thank-you emails', 'reminders');
+    }
+    const updated = await repo.updateUser(req.user.id, { emailReminders: reminders, emailThanks: thanks });
+    res.json({ user: publicUser(updated, req.user.id) });
+  });
+
+  // Everything the member borrowed and lent, for the profile statement. A member sees only their own entries
+  // (as borrower: every entry on their request; as lender: their own contributions and repayments paid to them).
+  api.get('/me/statement', async (req, res) => {
+    const me = req.user.id;
+    const asOf = now();
+    const out = { member: { id: me, name: req.user.name }, generatedAt: asOf.toISOString(), requests: [], loans: [] };
+    const entry = (kind, e) => ({ kind, id: e.id, amountCents: e.amountCents, status: e.status, utr: e.utr ?? null,
+      createdAt: e.createdAt ?? null, confirmedAt: e.confirmedAt ?? null });
+    for (const r of (await repo.listRequestsForMember(me)).sort((a, b) => a.id - b.id)) {
+      const [contribs, repays] = await Promise.all([repo.listContributions(r.id), repo.listRepayments(r.id)]);
+      const base = { requestId: r.id, purpose: r.purpose, status: rules.effectiveStatus(r, asOf), principalCents: r.principalCents,
+        repaymentDate: r.repaymentDate, createdAt: r.createdAt, repaidAt: r.repaidAt ?? null };
+      if (r.borrowerId === me) {
+        out.requests.push({ ...base, raisedCents: rules.fundingTotals(contribs).confirmedCents,
+          paidBackCents: repays.filter((p) => p.status === 'confirmed').reduce((t, p) => t + p.amountCents, 0),
+          entries: [...contribs.map((c) => entry('contribution', c)), ...repays.map((p) => entry('repayment', p))] });
+      }
+      const mine = contribs.filter((c) => c.contributorId === me);
+      if (mine.length) {
+        const owed = rules.owedByLender(contribs.map((c) => ({ ...c, lenderId: c.contributorId })), repays).get(me)
+          ?? { lentCents: 0, repaidCents: 0, owedCents: 0 };
+        out.loans.push({ ...base, borrowerId: r.borrowerId, myLentCents: owed.lentCents, myRepaidCents: owed.repaidCents, myOwedCents: owed.owedCents,
+          entries: [...mine.map((c) => entry('contribution', c)), ...repays.filter((p) => p.lenderId === me).map((p) => entry('repayment', p))] });
+      }
+    }
+    res.json(out);
+  });
+
+  // Delete the account. The row stays (anonymised) because ledger rows point at it; nothing in the ledger is touched.
+  api.delete('/me', async (req, res) => {
+    if (req.body?.confirm !== 'DELETE') return fail(res, 400, 'Type DELETE to confirm', 'confirm');
+    const me = req.user.id;
+    let activeCount = 0;
+    let owedToMeCents = 0;
+    let unsettledCount = 0;
+    for (const r of await repo.listRequestsForMember(me)) {
+      if (r.borrowerId === me && rules.ACTIVE_STATUSES.includes(r.status)) activeCount++;
+      const [contribs, repays] = await Promise.all([repo.listContributions(r.id), repo.listRepayments(r.id)]);
+      const owed = rules.owedByLender(contribs.map((c) => ({ ...c, lenderId: c.contributorId })), repays).get(me);
+      if (owed && owed.owedCents > 0) owedToMeCents += owed.owedCents;
+      const open = (e) => e.status === 'sent' || (e.status === 'not_received' && !e.settledAt);
+      unsettledCount += contribs.filter((c) => open(c) && (c.contributorId === me || r.borrowerId === me)).length
+        + repays.filter((p) => open(p) && (p.payerId === me || p.lenderId === me)).length;
+    }
+    const reason = rules.deletionBlock({ activeCount, owedToMeCents, unsettledCount });
+    if (reason) return fail(res, 409, reason);
+    await repo.deleteAccount(me);
+    res.json({ ok: true });
+  });
+
   api.post('/me/accept-terms', async (req, res) => {
     // Idempotent: a second call keeps the first timestamp.
     const updated = req.user.termsAcceptedAt ? req.user : await repo.updateUser(req.user.id, { termsAcceptedAt: now().toISOString() });
@@ -190,11 +250,11 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (q.length === 0) {
       const conn = await repo.connections(req.user.id);
       const ids = conn.following.filter((id) => rules.isMutual(conn, id));
-      const users = await repo.getUsers(ids);
+      const users = (await repo.getUsers(ids)).filter((u) => !u.deletedAt);
       return res.json({ users: users.map((u) => publicUser(u, req.user.id)) });
     }
     if (q.length < 2) return res.json({ users: [] });
-    const users = await repo.searchUsers(q, req.user.id);
+    const users = (await repo.searchUsers(q, req.user.id)).filter((u) => !u.deletedAt);
     res.json({ users: users.slice(0, 20).map((u) => publicUser(u, req.user.id)) });
   });
 
@@ -202,7 +262,10 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const uid = parseId(req.params.id);
     const u = uid === null ? null : await repo.getUser(uid);
     if (!u) return fail(res, 404, 'User not found');
-    res.json({ user: publicUser(u, req.user.id) });
+    const out = publicUser(u, req.user.id);
+    // Trust history is for the member and their mutual connections only.
+    if (!u.deletedAt && (u.id === req.user.id || rules.isMutual(await repo.connections(req.user.id), u.id))) out.trust = await trustOf(u);
+    res.json({ user: out });
   });
 
   api.post('/follows', async (req, res) => {
@@ -225,7 +288,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const { following, followers } = await repo.connections(req.user.id);
     const followingSet = new Set(following);
     const mutualIds = followers.filter((id) => followingSet.has(id));
-    const load = async (ids) => Promise.all(ids.map((id) => repo.getUser(id).then((u) => publicUser(u, req.user.id))));
+    const load = async (ids) => (await Promise.all(ids.map((id) => repo.getUser(id))))
+      .filter((u) => u && !u.deletedAt).map((u) => publicUser(u, req.user.id));
     res.json({ following: await load(following), followers: await load(followers), mutual: await load(mutualIds) });
   });
 
@@ -880,8 +944,21 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       out.isAdmin = !!u.isAdmin;
       out.welcomedAt = u.welcomedAt ?? null;
       out.termsAcceptedAt = u.termsAcceptedAt ?? null;
+      out.emailReminders = u.emailReminders !== false;
+      out.emailThanks = u.emailThanks !== false;
     }
     return out;
+  }
+
+  // Facts only, computed from the ledger each time. Never overdue or unpaid.
+  async function trustOf(u) {
+    const mine = await repo.listRequestsForMember(u.id);
+    let lentToCount = 0;
+    for (const r of mine) {
+      if ((await repo.listContributions(r.id)).some((c) => c.contributorId === u.id && c.status === 'confirmed')) lentToCount++;
+    }
+    return rules.trustFacts({ createdAt: u.createdAt, lentToCount,
+      repaidRequests: mine.filter((r) => r.borrowerId === u.id && r.status === 'repaid') });
   }
 
   function summarise(r, asOf, viewerId) {

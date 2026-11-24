@@ -129,10 +129,20 @@
     $('#circle-title')?.focus();
   }
 
-  // ---- Profile (placeholder until its own page lands) ----
-  function renderProfile() {
+  // ---- Profile and statement ----
+  let clerkInstance = null;
+  async function signOut() {
+    Api.clearSaved().catch(() => {});
+    if (clerkInstance) await clerkInstance.signOut();
+  }
+  async function renderProfile(sub) {
     show('view-profile');
-    $('#profile-card').innerHTML = `<p>${Format.avatar(me)} <strong>${esc(me.name)}</strong></p><p class="muted">${esc(me.email)}</p>`;
+    const ctx = { me, toast, signOut, onUser: (u) => { me = { ...me, ...u }; Nav.setUser(me); } };
+    try {
+      if (sub === 'statement') await ProfilePage.renderStatement($('#profile'), ctx);
+      else await ProfilePage.render($('#profile'), ctx);
+    } catch (err) { $('#profile').innerHTML = `<p class="error" role="alert">Could not load this page. ${esc(err.message)}</p>`; }
+    $('#profile-heading, #statement-heading')?.focus();
   }
 
   // ---- Welcome ----
@@ -166,7 +176,7 @@
   Router.register('requests', guarded(renderActivity));
   Router.register('request', guarded((id) => (id ? renderDetail(id) : renderActivity())));
   Router.register('circle', guarded(renderPeople));
-  Router.register('profile', guarded(renderProfile));
+  Router.register('profile', guarded((sub) => renderProfile(sub)));
   Router.register('welcome', guarded(renderWelcome));
   let routerStarted = false;
   function route() {
@@ -189,6 +199,7 @@
     // Live keys reach Clerk through the same-origin proxy; development keys do not need it.
     const clerk = new window.Clerk(cfg.clerkPublishableKey, cfg.clerkProxyUrl ? { proxyUrl: cfg.clerkProxyUrl } : undefined);
     await clerk.load();
+    clerkInstance = clerk;
     const mountAuth = () => {
       if (clerk.user) {
         clerk.mountUserButton(document.getElementById('auth-slot'));

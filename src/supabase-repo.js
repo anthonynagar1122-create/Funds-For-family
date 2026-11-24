@@ -46,7 +46,7 @@ const CONTRIBUTION = mapper({ ...ENTRY_COMMON, contributorId: 'contributor_id' }
 const REPAYMENT = mapper({ ...ENTRY_COMMON, payerId: 'payer_id', lenderId: 'lender_id' });
 const VERIFICATION = mapper({ requestId: 'request_id', verifierId: 'verifier_id', decision: 'decision', note: 'note', createdAt: 'created_at' });
 
-const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt', 'isAdmin', 'isVerifier'];
+const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt', 'isAdmin', 'isVerifier', 'emailReminders', 'emailThanks'];
 const INVITE_PATCH = ['acceptedAt', 'acceptedUserId', 'revokedAt', 'supersededAt'];
 const REQUEST_PATCH = ['status', 'decidedAt', 'fundedAt', 'repaidAt', 'fundedCents', 'rejectionReason', 'repaymentDate',
   'originalRepaymentDate', 'withdrawnAt', 'contactDecidedAt', 'category', 'purpose', 'trustedContactId'];
@@ -124,8 +124,23 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     // Name only (email is private). Parameterised: user text never goes into a filter string.
     async searchUsers(q, excludeId) {
       const pattern = `%${likeEscape(q)}%`;
-      const byName = await db.from('users').select().ilike('name', pattern).neq('id', excludeId).limit(20);
+      const byName = await db.from('users').select().ilike('name', pattern).is('deleted_at', null).neq('id', excludeId).limit(20);
       return list(check(byName), USER).slice(0, 20);
+    },
+
+    // Anonymise in place; the row stays so ledger rows keep a valid member. The email column is NOT NULL and unique,
+    // so it gets a unique placeholder. Follows and open invites go. Never touches ledger rows.
+    async deleteAccount(id) {
+      const row = USER.toRow({ name: 'Former member', email: `deleted-${id}@deleted.invalid`, upiId: null, avatarUrl: null,
+        clerkId: `deleted:${id}`, deletedAt: new Date().toISOString() });
+      const user = await maybe(db.from('users').update(row).eq('id', id).select(), USER);
+      if (!user) return null;
+      check(await db.from('follows').delete().eq('follower_id', id));
+      check(await db.from('follows').delete().eq('followee_id', id));
+      for (const column of ['inviter_id', 'accepted_user_id']) {
+        check(await db.from('invites').delete().eq(column, id).is('accepted_at', null).is('revoked_at', null).is('superseded_at', null));
+      }
+      return user;
     },
 
     // ---- follows ----

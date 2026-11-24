@@ -116,3 +116,14 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
 .person { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .person-name { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; }
 .stack { display: grid; gap: var(--space-2); max-width: 28rem; }
+
+/* Profile and statement */
+.avatar-photo { object-fit: cover; width: 64px; height: 64px; }
+.stmt-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.stmt-table th, .stmt-table td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--color-border); }
+.stmt-table .num { text-align: right; white-space: nowrap; }
+@media print {
+  .no-print, #primary-nav, header, .toast, .offline-note { display: none !important; }
+  .stmt-item { break-inside: avoid; }
+}
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }

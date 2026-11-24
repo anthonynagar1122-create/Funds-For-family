@@ -197,6 +197,39 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.deepEqual(await repo.searchUsers(`${tag}ot@c`, me.id), [], 'email is not searchable');
     assert.deepEqual(await repo.searchUsers('a,name.eq.x),or(id.gt.0', me.id), []);
   });
+
+  test('contract: deleteAccount anonymises the member, removes follows and open invites, keeps ledger rows and other people\'s invites', async () => {
+    const repo = await makeRepo();
+    const [b, c, l, other] = [await mk(repo, 'b'), await mk(repo, 'c'), await mk(repo, 'l'), await mk(repo, 'o')];
+    await repo.updateUser(l.id, { upiId: 'l@okbank', avatarUrl: 'https://img.test/l.png' });
+    await repo.addFollow(l.id, other.id); await repo.addFollow(other.id, l.id); await repo.addFollow(b.id, other.id);
+    const expiresAt = new Date(Date.now() + 14 * 864e5).toISOString();
+    const open = await repo.createInvite({ inviterId: l.id, email: `${uniq()}@x.test`, tokenHash: `${prefix}${uniq()}x`, expiresAt });
+    const kept = await repo.createInvite({ inviterId: other.id, email: `${uniq()}@x.test`, tokenHash: `${prefix}${uniq()}y`, expiresAt });
+    const r = await repo.createRequest(req(b, c, { status: 'repaid' }));
+    await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 50000, status: 'confirmed' });
+    await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: l.id, amountCents: 50000, status: 'confirmed' });
+
+    const out = await repo.deleteAccount(l.id);
+    assert.equal(out.id, l.id);
+    const gone = await repo.getUser(l.id);
+    assert.equal(gone.name, 'Former member');
+    assert.ok(gone.deletedAt);
+    assert.equal(gone.upiId, null);
+    assert.equal(gone.avatarUrl, null);
+    assert.equal(gone.clerkId, `deleted:${l.id}`);
+    assert.notEqual(gone.email, l.email);
+    assert.equal(await repo.findUserByClerkId(l.clerkId), null);
+    assert.deepEqual(await repo.connections(l.id), { following: [], followers: [] });
+    assert.deepEqual((await repo.connections(other.id)).following, []);
+    assert.deepEqual((await repo.connections(b.id)).following, [other.id], 'unrelated follows stay');
+    assert.equal(await repo.getInvite(open.id), null);
+    assert.ok(await repo.getInvite(kept.id));
+    assert.equal((await repo.listContributions(r.id)).length, 1);
+    assert.equal((await repo.listRepayments(r.id)).length, 1);
+    assert.deepEqual(await repo.searchUsers('Former member', other.id), [], 'deleted members are not searchable');
+    assert.equal(await repo.deleteAccount(999999999), null);
+  });
 }
 
 module.exports = { runContract };

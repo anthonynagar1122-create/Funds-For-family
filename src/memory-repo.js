@@ -12,7 +12,7 @@ const patchOnly = (patch, allowed) => {
   return out;
 };
 
-const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt', 'isAdmin', 'isVerifier'];
+const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt', 'isAdmin', 'isVerifier', 'emailReminders', 'emailThanks'];
 const INVITE_PATCH = ['acceptedAt', 'acceptedUserId', 'revokedAt', 'supersededAt'];
 const REQUEST_PATCH = ['status', 'decidedAt', 'fundedAt', 'repaidAt', 'fundedCents', 'rejectionReason', 'repaymentDate',
   'originalRepaymentDate', 'withdrawnAt', 'contactDecidedAt', 'category', 'purpose', 'trustedContactId'];
@@ -69,7 +69,20 @@ function createMemoryRepo() {
     async setVerifier(id, isVerifier) { users.get(id).isVerifier = !!isVerifier; },
     async searchUsers(q, excludeId) {
       const s = q.toLowerCase();
-      return [...users.values()].filter((u) => u.id !== excludeId && u.name.toLowerCase().includes(s)).slice(0, 20).map(copy);
+      return [...users.values()].filter((u) => u.id !== excludeId && !u.deletedAt && u.name.toLowerCase().includes(s)).slice(0, 20).map(copy);
+    },
+
+    // Anonymise in place; the row stays so ledger rows keep a valid member. Follows and open invites go. Never touches ledger rows.
+    async deleteAccount(id) {
+      const u = users.get(id);
+      if (!u) return null;
+      Object.assign(u, { name: 'Former member', email: `deleted-${id}@deleted.invalid`, upiId: null, avatarUrl: null,
+        clerkId: `deleted:${id}`, deletedAt: new Date().toISOString() });
+      for (let i = follows.length - 1; i >= 0; i--) if (follows[i].followerId === id || follows[i].followeeId === id) follows.splice(i, 1);
+      for (const [iid, inv] of invites) {
+        if ((inv.inviterId === id || inv.acceptedUserId === id) && !inv.acceptedAt && !inv.revokedAt && !inv.supersededAt) invites.delete(iid);
+      }
+      return copy(u);
     },
 
     // ---- follows ----
