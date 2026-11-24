@@ -169,6 +169,7 @@
       try {
         const data = await api('/admin/help-messages');
         messages = data.messages || [];
+        messages.sort((a, b) => Number(Boolean(a.resolvedAt)) - Number(Boolean(b.resolvedAt)) || new Date(b.createdAt) - new Date(a.createdAt));
       } catch (err) {
         root.innerHTML = `<h1 id="workspace-title" tabindex="-1">Admin workspace</h1><p class="error" role="alert">${esc(err.message)}</p>`;
         return;
