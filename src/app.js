@@ -75,10 +75,17 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ users: users.slice(0, 20).map((u) => publicUser(u, req.user.id)) });
   });
 
+  // A member's profile. Their phone is included only if they follow you: they chose you, so you are in the
+  // circle that sees their requests (the same rule as rules.canSeeRequest).
   api.get('/users/:id', async (req, res) => {
     const u = await repo.getUser(Number(req.params.id));
     if (!u) return fail(res, 404, 'User not found');
-    res.json({ user: publicUser(u, req.user.id) });
+    const user = publicUser(u, req.user.id);
+    if (u.id === req.user.id) return res.json({ user, relationship: { youFollow: false, followsYou: false } });
+    const { following, followers } = await repo.connections(req.user.id);
+    const relationship = { youFollow: following.includes(u.id), followsYou: followers.includes(u.id) };
+    if (relationship.followsYou && u.phone) user.phone = u.phone;
+    res.json({ user, relationship });
   });
 
   api.post('/follows', async (req, res) => {

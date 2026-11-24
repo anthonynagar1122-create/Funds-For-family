@@ -3,12 +3,12 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => `$${(cents / 100).toFixed(2)}`;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-detail', 'view-invite', 'view-people', 'view-activity'];
+  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-detail', 'view-invite', 'view-people', 'view-activity', 'view-profile', 'view-member'];
   let me = null;
   let usersById = new Map();
 
   // Updates is the dashboard; Request, Contribute, Invite and Follow are the four actions.
-  const navFor = { 'view-home': 'nav-home', 'view-activity': 'nav-home', 'view-detail': 'nav-home', 'view-new': 'nav-new', 'view-feed': 'nav-feed', 'view-invite': 'nav-invite', 'view-people': 'nav-people' };
+  const navFor = { 'view-home': 'nav-home', 'view-activity': 'nav-home', 'view-detail': 'nav-home', 'view-new': 'nav-new', 'view-feed': 'nav-feed', 'view-invite': 'nav-invite', 'view-people': 'nav-people', 'view-member': 'nav-people' };
 
   function show(id) {
     for (const v of views) { const el = document.getElementById(v); if (el) el.hidden = v !== id; }
@@ -18,6 +18,8 @@
       if (btn) { if (navFor[id] === navId) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current'); }
     }
     $('#primary-nav').hidden = id === 'signed-out';
+    $('#nav-profile').hidden = id === 'signed-out';
+    if (id === 'view-profile') $('#nav-profile').setAttribute('aria-current', 'page'); else $('#nav-profile').removeAttribute('aria-current');
     if (id !== 'signed-out') $('#main').focus();
   }
 
@@ -65,7 +67,7 @@
       : '<span class="muted">No phone on file. Speak with them in person first.</span>';
     return `
       <div class="contact">
-        <p class="contact-title">Talk to ${name} first</p>
+        <p class="contact-title">Talk to ${borrower?.id ? `<a href="#member/${esc(borrower.id)}">${name}</a>` : name} first</p>
         <div class="contact-actions">${links}</div>
         <label class="confirm"><input type="checkbox" name="confirmedContact" id="confirm-${idSuffix}" required>
           <span>I have spoken with ${name} about this loan</span></label>
@@ -401,7 +403,7 @@
     ]);
     const mutualIds = new Set(mutual.map((u) => u.id));
     const followingIds = new Set(following.map((u) => u.id));
-    const row = (u) => `<li><strong>${esc(u.name)}</strong>
+    const row = (u) => `<li><a class="person-link" href="#member/${esc(u.id)}">${esc(u.name)}</a>
       ${mutualIds.has(u.id) ? '<span class="badge badge-primary">Mutual</span>' : followingIds.has(u.id) ? '<span class="badge badge-neutral">Following</span>' : '<span class="badge badge-neutral">Follows you</span>'}
       <div class="row-actions">${followingIds.has(u.id)
         ? `<button class="btn btn-ghost btn-sm" data-unfollow="${u.id}" type="button">Unfollow</button>`
@@ -412,9 +414,82 @@
     const list = sugg.suggestions ?? [];
     $('#suggestions-card').hidden = list.length === 0;
     $('#suggestions').innerHTML = list.map((x) => `<li>
-      <div class="task-main"><strong>${esc(x.user.name)}</strong>
+      <div class="task-main"><a class="person-link" href="#member/${esc(x.user.id)}">${esc(x.user.name)}</a>
         <p class="task-sub">${esc(x.reason)}${x.mutualNames?.length ? ` · ${esc(x.mutualNames.join(', '))}${x.mutualCount > x.mutualNames.length ? ' and others' : ''}` : ''}</p></div>
       <div class="row-actions"><button class="btn btn-primary btn-sm" data-follow="${esc(x.user.id)}" type="button">Follow</button></div></li>`).join('');
+  }
+
+  // ---- Profiles ----
+  const initials = (name) => String(name ?? '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? '').join('') || '?';
+
+  async function renderProfile() {
+    show('view-profile');
+    $('#profile-avatar').textContent = initials(me.name);
+    $('#profile-name').textContent = me.name;
+    $('#profile-email').textContent = me.email ?? '';
+    $('#profile-badges').innerHTML = me.isVerifier ? '<span class="badge badge-primary">Verifier</span>' : '';
+    $('#p-phone').value = me.phone ?? '';
+    $('#e-p-phone').textContent = '';
+    try {
+      const { following, followers } = await api('/connections');
+      $('#profile-following').textContent = String(following.length);
+      $('#profile-followers').textContent = String(followers.length);
+    } catch { /* counts stay as "–" */ }
+  }
+
+  $('#phone-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const input = $('#p-phone');
+    $('#e-p-phone').textContent = ''; input.removeAttribute('aria-invalid');
+    try {
+      const { user } = await api('/me/phone', { method: 'POST', body: { phone: input.value } });
+      me = { ...me, phone: user.phone };
+      input.value = user.phone;
+      toast('Phone number saved');
+    } catch (err) { $('#e-p-phone').textContent = err.message; input.setAttribute('aria-invalid', 'true'); input.focus(); }
+  });
+
+  async function renderMember(id) {
+    if (id === me.id) { location.hash = '#profile'; return; }
+    show('view-member');
+    let data;
+    try { data = await api(`/users/${id}`); }
+    catch (err) {
+      $('#member-title').textContent = 'Member not found';
+      for (const sel of ['#member-badges', '#member-actions', '#member-contact']) $(sel).innerHTML = '';
+      $('#member-requests-card').hidden = true;
+      return;
+    }
+    const { user, relationship: rel } = data;
+    $('#member-avatar').textContent = initials(user.name);
+    $('#member-title').textContent = user.name;
+    const badge = rel.youFollow && rel.followsYou ? ['badge-primary', 'Mutual']
+      : rel.followsYou ? ['badge-neutral', 'Follows you'] : rel.youFollow ? ['badge-neutral', 'You follow'] : null;
+    $('#member-badges').innerHTML = (badge ? `<span class="badge ${badge[0]}">${esc(badge[1])}</span> ` : '')
+      + (user.isVerifier ? '<span class="badge badge-primary">Verifier</span>' : '');
+    $('#member-actions').innerHTML = rel.youFollow
+      ? `<button class="btn btn-ghost" data-unfollow="${esc(user.id)}" type="button">Unfollow</button>`
+      : `<button class="btn btn-primary" data-follow="${esc(user.id)}" type="button">${rel.followsYou ? 'Follow back' : 'Follow'}</button>`;
+    const digits = user.phone ? user.phone.replace(/\D/g, '') : '';
+    $('#member-contact').innerHTML = user.phone ? `
+      <div class="contact contact-plain">
+        <p class="contact-title">Contact ${esc(user.name)}</p>
+        <div class="contact-actions">
+          <a class="btn btn-secondary btn-sm" href="tel:${esc(user.phone)}">📞 Call</a>
+          <a class="btn btn-secondary btn-sm" href="https://wa.me/${esc(digits)}" target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>
+          <span class="contact-number">${esc(user.phone)}</span>
+        </div>
+      </div>` : `<p class="muted member-note">${rel.followsYou
+        ? `${esc(user.name)} has not added a phone number yet.`
+        : `${esc(user.name)}'s phone number and requests appear once they follow you.`}</p>`;
+    // Their open requests you can fund: the feed already holds only requests from people who chose you.
+    const feed = rel.followsYou ? await api('/feed').catch(() => ({ requests: [] })) : { requests: [] };
+    const open = feed.requests.filter((r) => r.borrowerId === user.id && r.status === 'open');
+    $('#member-requests-card').hidden = open.length === 0;
+    $('#member-requests').innerHTML = open.map((r) => `<li class="task">
+      <div class="task-main"><a class="task-title" href="#request/${esc(r.id)}">${esc(String(r.purpose).slice(0, 90))}</a>
+        <p class="task-sub">${money(r.raisedCents ?? 0)} of ${money(r.principalCents)} raised · due ${esc(r.repaymentDate)}</p></div>
+      <a class="btn btn-primary btn-sm" href="#feed">Contribute</a></li>`).join('');
   }
 
   // Share an invite link: the phone's share sheet (WhatsApp, SMS…) where available, otherwise copy it.
@@ -496,6 +571,8 @@
     if (hash === 'new') return renderNew();
     if (hash === 'people') return renderPeople();
     if (hash === 'invite') { show('view-invite'); return; }
+    if (hash === 'profile') return renderProfile();
+    if (hash.startsWith('member/')) return renderMember(Number(hash.split('/')[1]));
     if (hash === 'activity') return renderActivity();
     if (hash === 'feed') return renderFeed();
     return renderHome();
