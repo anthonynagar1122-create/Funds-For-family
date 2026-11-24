@@ -97,7 +97,7 @@ function createMemoryRepo() {
       const u = users.get(id);
       if (!u) return null;
       Object.assign(u, { name: 'Former member', email: `deleted-${id}@deleted.invalid`, upiId: null, avatarUrl: null,
-        clerkId: `deleted:${id}`, deletedAt: new Date().toISOString() });
+        clerkId: `deleted:${id}`, deletedAt: new Date().toISOString(), isAdmin: false, isVerifier: false });
       for (let i = follows.length - 1; i >= 0; i--) if (follows[i].followerId === id || follows[i].followeeId === id) follows.splice(i, 1);
       for (const inv of invites.values()) if (inv.acceptedUserId === id) inv.email = `deleted-${id}@deleted.invalid`;
       for (const [iid, inv] of invites) {

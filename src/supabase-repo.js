@@ -150,19 +150,12 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     },
 
     // Anonymise in place; the row stays so ledger rows keep a valid member. The email column is NOT NULL and unique,
-    // so it gets a unique placeholder. Follows and open invites go. Never touches ledger rows.
+    // so it gets a unique placeholder. Everything happens in one transaction inside delete_member_account (migration 0005):
+    // the user row, the invite emails, follows and open invites. Never touches ledger rows. Null if the member does not exist.
     async deleteAccount(id) {
-      const row = USER.toRow({ name: 'Former member', email: `deleted-${id}@deleted.invalid`, upiId: null, avatarUrl: null,
-        clerkId: `deleted:${id}`, deletedAt: new Date().toISOString() });
-      const user = await maybe(db.from('users').update(row).eq('id', id).select(), USER);
-      if (!user) return null;
-      check(await db.from('follows').delete().eq('follower_id', id));
-      check(await db.from('follows').delete().eq('followee_id', id));
-      check(await db.from('invites').update({ email: `deleted-${id}@deleted.invalid` }).eq('accepted_user_id', id));
-      for (const column of ['inviter_id', 'accepted_user_id']) {
-        check(await db.from('invites').delete().eq(column, id).is('accepted_at', null).is('revoked_at', null).is('superseded_at', null));
-      }
-      return user;
+      check(await db.rpc('delete_member_account', { p_user_id: id, p_placeholder_email: `deleted-${id}@deleted.invalid`,
+        p_clerk_placeholder: `deleted:${id}` }));
+      return maybe(db.from('users').select().eq('id', id), USER);
     },
 
     // ---- follows ----
@@ -233,7 +226,7 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     },
     // Only an unresolved row is updated, so a second call keeps the first timestamp. Null if the id does not exist.
     async resolveHelpMessage(id, at) {
-      await db.from('help_messages').update({ resolved_at: at }).eq('id', id).is('resolved_at', null);
+      check(await db.from('help_messages').update({ resolved_at: at }).eq('id', id).is('resolved_at', null));
       return maybe(db.from('help_messages').select().eq('id', id), HELP);
     },
 

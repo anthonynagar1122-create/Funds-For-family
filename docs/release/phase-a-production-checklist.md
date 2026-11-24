@@ -1,7 +1,7 @@
 # Phase A production release checklist
 
 Plain-English steps for releasing Phase A (data and rules) to production. Nothing here has been run against production.
-Staging already has migrations 0002 and 0003 applied. Do each step in order and stop if a check does not come back as expected.
+Staging already has migrations 0002 and 0003 applied; 0004 and 0005 must be applied to staging too. Do each step in order and stop if a check does not come back as expected.
 
 ## 1. Read-only checks on the production database
 
@@ -55,7 +55,15 @@ where token is not null;
 1. Get the owner's explicit approval, in writing, for the release.
 2. Apply `supabase/migrations/0002_customer_ready.sql`. It runs inside a single transaction, so a failure leaves nothing half done.
 3. Check it finished without errors, then apply `supabase/migrations/0003_fix_upi_check.sql`. It is also a single transaction.
-4. Do not apply them to production by any other route than the approved release.
+4. Apply `supabase/migrations/0004_removed_entry_status.sql` after 0003 (single transaction). Then run this read-only check; both rows must list the `'removed'` status value:
+
+   ```sql
+   select conname, pg_get_constraintdef(oid) from pg_constraint where conname in ('contributions_status_check','repayments_status_check');
+   ```
+
+5. Apply `supabase/migrations/0005_delete_account_fn.sql` after 0004 (single transaction). It adds `public.delete_member_account`, which account deletion calls; without it, deleting an account fails.
+6. 0004 and 0005 must be applied to staging, and the Supabase contract suite (`test/integration/supabase.integration.test.js`) run against staging, before any production release.
+7. Do not apply them to production by any other route than the approved release.
 
 ## 3. Make the owner an admin and verifier
 

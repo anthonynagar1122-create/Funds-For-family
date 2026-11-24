@@ -199,7 +199,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const me = req.user.id;
     const asOf = now();
     const out = { member: { id: me, name: req.user.name }, generatedAt: asOf.toISOString(), requests: [], loans: [] };
-    const entry = (kind, e) => ({ kind, id: e.id, amountCents: e.amountCents, status: e.status, utr: e.utr ?? null,
+    // The UPI reference follows the request page rule: a contribution's contributor and borrower, a repayment's payer and lender.
+    const entry = (kind, e, r) => ({ kind, id: e.id, amountCents: e.amountCents, status: e.status,
+      utr: (kind === 'contribution' ? (me === e.contributorId || me === r.borrowerId) : (me === e.payerId || me === e.lenderId)) ? (e.utr ?? null) : null,
       createdAt: e.createdAt ?? null, confirmedAt: e.confirmedAt ?? null });
     for (const r of (await repo.listRequestsForMember(me)).sort((a, b) => a.id - b.id)) {
       const [contribs, repays] = await Promise.all([repo.listContributions(r.id), repo.listRepayments(r.id)]);
@@ -208,14 +210,16 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       if (r.borrowerId === me) {
         out.requests.push({ ...base, raisedCents: rules.fundingTotals(contribs).confirmedCents,
           paidBackCents: repays.filter((p) => p.status === 'confirmed').reduce((t, p) => t + p.amountCents, 0),
-          entries: [...contribs.map((c) => entry('contribution', c)), ...repays.map((p) => entry('repayment', p))] });
+          entries: [...contribs.map((c) => entry('contribution', c, r)), ...repays.map((p) => entry('repayment', p, r))] });
       }
       const mine = contribs.filter((c) => c.contributorId === me);
-      if (mine.length) {
+      // Repayments the member received as lender, or made as payer (a trusted contact paying on a borrower's behalf).
+      const theirRepays = repays.filter((p) => p.lenderId === me || (p.payerId === me && r.borrowerId !== me));
+      if (mine.length || theirRepays.some((p) => p.payerId === me)) {
         const owed = rules.owedByLender(contribs.map((c) => ({ ...c, lenderId: c.contributorId })), repays).get(me)
           ?? { lentCents: 0, repaidCents: 0, owedCents: 0 };
         out.loans.push({ ...base, borrowerId: r.borrowerId, myLentCents: owed.lentCents, myRepaidCents: owed.repaidCents, myOwedCents: owed.owedCents,
-          entries: [...mine.map((c) => entry('contribution', c)), ...repays.filter((p) => p.lenderId === me).map((p) => entry('repayment', p))] });
+          entries: [...mine.map((c) => entry('contribution', c, r)), ...theirRepays.map((p) => entry('repayment', p, r))] });
       }
     }
     res.json(out);
