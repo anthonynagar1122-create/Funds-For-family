@@ -274,6 +274,168 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ message: helpView(m, await repo.getUser(m.userId)) });
   });
 
+  // ---- Owner admin. Every route sits behind requireAdmin. Nothing here sends email (that is Phase C). ----
+  const memberView = (u, invitesThisMonth = 0) => ({ id: u.id, name: u.name, email: u.email, isVerifier: !!u.isVerifier,
+    inviteLimit: u.inviteLimit ?? null, invitesThisMonth });
+
+  async function invitesThisMonthByInviter() {
+    const from = new Date(invites.monthStartIst(now())).getTime();
+    const counts = new Map();
+    for (const i of await repo.listInvites()) {
+      if (i.revokedAt || i.supersededAt || new Date(i.createdAt).getTime() < from) continue;
+      counts.set(i.inviterId, (counts.get(i.inviterId) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  api.get('/admin/members', requireAdmin, async (_req, res) => {
+    const [users, counts] = await Promise.all([repo.listUsers(), invitesThisMonthByInviter()]);
+    res.json({ members: users.map((u) => memberView(u, counts.get(u.id) ?? 0)) });
+  });
+
+  api.post('/admin/members/:id/verifier', requireAdmin, async (req, res) => {
+    const id = parseId(req.params.id);
+    const member = id === null ? null : await repo.getUser(id);
+    if (!member || member.deletedAt) return fail(res, 404, 'Member not found');
+    const on = req.body?.on;
+    if (typeof on !== 'boolean') return fail(res, 400, 'Send on as true or false', 'on');
+    if (!on && id === req.user.id) return fail(res, 409, 'You cannot remove your own verifier status');
+    await repo.setVerifier(id, on);
+    res.json({ member: memberView(await repo.getUser(id)) });
+  });
+
+  api.post('/admin/members/:id/invite-limit', requireAdmin, async (req, res) => {
+    const id = parseId(req.params.id);
+    const member = id === null ? null : await repo.getUser(id);
+    if (!member || member.deletedAt) return fail(res, 404, 'Member not found');
+    const limit = req.body?.limit;
+    if (limit !== null && !(Number.isInteger(limit) && limit >= 0 && limit <= 50)) {
+      return fail(res, 400, 'The invite limit must be a whole number from 0 to 50, or empty for the default', 'limit');
+    }
+    res.json({ member: memberView(await repo.setInviteLimit(id, limit)) });
+  });
+
+  const adminInviteView = (i, inviter) => ({ id: i.id, email: i.email, inviterName: inviter?.name ?? 'Former member',
+    state: invites.inviteState(i, now()), createdAt: i.createdAt, expiresAt: i.expiresAt, acceptedAt: i.acceptedAt ?? null });
+
+  api.get('/admin/invites', requireAdmin, async (_req, res) => {
+    const all = await repo.listInvites();
+    const inviters = new Map((await repo.getUsers([...new Set(all.map((i) => i.inviterId))])).map((u) => [u.id, u]));
+    res.json({ invites: all.map((i) => adminInviteView(i, inviters.get(i.inviterId))) });
+  });
+
+  api.delete('/admin/invites/:id', requireAdmin, async (req, res) => {
+    const id = parseId(req.params.id);
+    let invite = id === null ? null : await repo.getInvite(id);
+    if (!invite) return fail(res, 404, 'Invite not found');
+    if (invite.acceptedAt) return fail(res, 409, 'This invite has already been used');
+    if (!invite.revokedAt) invite = await repo.updateInvite(invite.id, { revokedAt: now().toISOString() });
+    res.json({ invite: adminInviteView(invite, await repo.getUser(invite.inviterId)) });
+  });
+
+  api.get('/admin/stats', requireAdmin, async (_req, res) => {
+    const all = await repo.listInvites();
+    const accepted = all.filter((i) => i.acceptedAt);
+    const acceptedIds = [...new Set(accepted.map((i) => i.acceptedUserId).filter((x) => x !== null && x !== undefined))];
+    res.json({ invitesSent: all.length, invitesAccepted: accepted.length,
+      acceptedWhoMadeOrFunded: (await repo.membersWhoActed(acceptedIds)).length });
+  });
+
+  // Requests waiting for verification that cannot reach the approvals they need: eligible verifiers are
+  // verifiers other than the borrower and the trusted contact.
+  api.get('/admin/verification-gaps', requireAdmin, async (_req, res) => {
+    const verifiers = (await repo.listUsers()).filter((u) => u.isVerifier);
+    const out = [];
+    for (const r of await repo.listRequestsByStatus('pending_verification')) {
+      const eligible = verifiers.filter((v) => v.id !== r.borrowerId && v.id !== r.trustedContactId).length;
+      if (eligible >= requiredApprovals) continue;
+      const borrower = await repo.getUser(r.borrowerId).catch(() => null);
+      out.push({ requestId: r.id, borrowerName: borrower?.name ?? 'Former member', purpose: r.purpose,
+        eligibleVerifiers: eligible, needed: requiredApprovals });
+    }
+    res.json({ requests: out });
+  });
+
+  // Settle queue (P-34): a payment still waiting (sent or not_received) with no change for 7 IST days.
+  const STUCK_DAYS = 7;
+  const dayNum = (date) => Math.floor(Date.parse(`${rules.todayIst(date)}T00:00:00Z`) / 864e5);
+  const idleDays = (e) => dayNum(now()) - dayNum(new Date(e.updatedAt ?? e.createdAt));
+  const isStuck = (e) => (e.status === 'sent' || e.status === 'not_received') && idleDays(e) >= STUCK_DAYS;
+
+  api.get('/admin/stuck', requireAdmin, async (req, res) => {
+    const me = req.user.id;
+    const requestCache = new Map();
+    const requestOf = async (id) => {
+      if (!requestCache.has(id)) requestCache.set(id, await repo.getRequest(id));
+      return requestCache.get(id);
+    };
+    const rows = [];
+    for (const c of (await repo.listContributionsByStatus(['sent', 'not_received'])).filter(isStuck)) {
+      const r = await requestOf(c.requestId);
+      if (r) rows.push({ kind: 'contribution', e: c, payerId: c.contributorId, receiverId: r.borrowerId });
+    }
+    for (const p of (await repo.listRepaymentsByStatus(['sent', 'not_received'])).filter(isStuck)) {
+      rows.push({ kind: 'repayment', e: p, payerId: p.payerId, receiverId: p.lenderId });
+    }
+    const names = new Map((await repo.getUsers([...new Set(rows.flatMap((x) => [x.payerId, x.receiverId]))])).map((u) => [u.id, u.name]));
+    const entries = rows.map(({ kind, e, payerId, receiverId }) => ({
+      kind, id: e.id, requestId: e.requestId, amountCents: e.amountCents, status: e.status, createdAt: e.createdAt,
+      updatedAt: e.updatedAt ?? null, daysWaiting: idleDays(e),
+      payerName: names.get(payerId) ?? 'Former member', receiverName: names.get(receiverId) ?? 'Former member',
+      isYours: payerId === me || receiverId === me,
+    })).sort((a, b) => b.daysWaiting - a.daysWaiting);
+    res.json({ entries });
+  });
+
+  // Owner settles a stuck entry. confirm marks it received; remove deletes it. Both need a note. No email in this phase.
+  async function adminSettle(req, res, { getter, updater, remover, label, sides, finish, overCap }) {
+    const id = parseId(req.params.id);
+    const entry = id === null ? null : await getter(id);
+    if (!entry) return fail(res, 404, `${label} not found`);
+    const action = req.body?.action;
+    if (action !== 'confirm' && action !== 'remove') return fail(res, 400, 'Choose confirm or remove', 'action');
+    const note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+    if (note.length < 5 || note.length > 500) return fail(res, 400, 'Write a note of 5 to 500 characters', 'note');
+    if (!isStuck(entry)) return fail(res, 409, 'Only a payment still waiting after 7 days can be settled here');
+    const r = await repo.getRequest(entry.requestId);
+    const { payerId, receiverId } = sides(entry, r);
+    if (payerId === req.user.id || receiverId === req.user.id) return fail(res, 409, 'You are part of this payment, so someone else must settle it');
+    if (action === 'remove') {
+      await remover(entry.id);
+      return res.json({ ok: true, removed: true, id: entry.id });
+    }
+    const blocked = await overCap(r, entry);
+    if (blocked) return fail(res, 409, blocked);
+    const at = now().toISOString();
+    const updated = await updater(entry.id, { status: 'confirmed', confirmedAt: at, updatedAt: at, settledBy: req.user.id, settledNote: note, settledAt: at });
+    await finish(r);
+    res.json({ ok: true, removed: false, id: updated.id, status: updated.status, request: { id: r.id, status: (await repo.getRequest(r.id)).status } });
+  }
+
+  api.post('/admin/contributions/:id/settle', requireAdmin, (req, res) => adminSettle(req, res, {
+    getter: repo.getContribution, updater: repo.updateContribution, remover: repo.deleteContribution, label: 'Contribution',
+    sides: (c, r) => ({ payerId: c.contributorId, receiverId: r.borrowerId }),
+    finish: (r) => settleFunded(r.id),
+    // A not_received entry is not in the totals, so confirming it counts as new money.
+    overCap: async (r, c) => {
+      const others = rules.fundingTotals((await repo.listContributions(r.id)).filter((x) => x.id !== c.id));
+      const room = r.principalCents - others.confirmedCents - others.pendingCents;
+      return c.amountCents > room ? `Only ${formatInr(Math.max(0, room))} is still needed` : null;
+    },
+  }));
+
+  api.post('/admin/repayments/:id/settle', requireAdmin, (req, res) => adminSettle(req, res, {
+    getter: repo.getRepayment, updater: repo.updateRepayment, remover: repo.deleteRepayment, label: 'Repayment',
+    sides: (p) => ({ payerId: p.payerId, receiverId: p.lenderId }),
+    finish: (r) => settleRepaid(r.id),
+    overCap: async (r, p) => {
+      const lent = (await owedFor(r.id)).get(p.lenderId)?.lentCents ?? 0;
+      const others = (await repo.listRepayments(r.id)).filter((x) => x.lenderId === p.lenderId && x.id !== p.id && (x.status === 'sent' || x.status === 'confirmed'))
+        .reduce((t, x) => t + x.amountCents, 0);
+      return p.amountCents > lent - others ? `Only ${formatInr(Math.max(0, lent - others))} can still be repaid to this lender` : null;
+    },
+  }));
+
   api.post('/me/accept-terms', async (req, res) => {
     // Idempotent: a second call keeps the first timestamp.
     const updated = req.user.termsAcceptedAt ? req.user : await repo.updateUser(req.user.id, { termsAcceptedAt: now().toISOString() });

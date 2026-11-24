@@ -3,7 +3,7 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => Money.formatInr(cents);
   const esc = Format.esc;
-  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome'];
+  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome', 'view-admin'];
   // An invite link looks like /app/#join=<token>. Keep the token for the first /api/me, then tidy the address bar.
   const joinMatch = /^#join=([^&]+)/.exec(location.hash);
   if (joinMatch) {
@@ -145,6 +145,14 @@
     $('#profile-heading, #statement-heading')?.focus();
   }
 
+  // ---- Admin (owner only; the API enforces it too) ----
+  async function renderAdmin() {
+    if (!me?.isAdmin) { Router.go('#/home'); return; }
+    show('view-admin');
+    try { await AdminPage.render($('#admin')); } catch (err) { $('#admin').innerHTML = `<p class="error" role="alert">Could not load this page. ${esc(err.message)}</p>`; }
+    $('#admin-heading')?.focus();
+  }
+
   // ---- Welcome ----
   // The API sends null until each step is done (an absent field is treated as done).
   const needsWelcome = (u) => u.welcomedAt === null || u.termsAcceptedAt === null;
@@ -178,6 +186,7 @@
   Router.register('circle', guarded(renderPeople));
   Router.register('profile', guarded((sub) => renderProfile(sub)));
   Router.register('welcome', guarded(renderWelcome));
+  Router.register('admin', guarded(renderAdmin));
   let routerStarted = false;
   function route() {
     if (!me) return undefined;

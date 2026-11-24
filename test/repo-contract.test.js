@@ -255,6 +255,43 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     const all = (await repo.listHelpMessages()).filter((m) => [m1.id, m2.id, m3.id].includes(m.id));
     assert.deepEqual(all.map((m) => m.id), [m2.id, m3.id, m1.id], 'unresolved first (oldest first), then resolved');
   });
+  test('contract: admin listings, invite limit, status lists and members who acted', async () => {
+    const repo = await makeRepo();
+    const a = await mk(repo, 'ad1');
+    const b = await mk(repo, 'ad2');
+    const c = await mk(repo, 'ad3');
+    const gone = await mk(repo, 'ad4');
+    await repo.deleteAccount(gone.id);
+    const users = await repo.listUsers();
+    assert.ok([a, b, c].every((u) => users.some((x) => x.id === u.id)));
+    assert.equal(users.some((x) => x.id === gone.id), false, 'deleted members are not listed');
+    assert.equal(users.find((x) => x.id === a.id).inviteLimit, null);
+    assert.equal((await repo.setInviteLimit(a.id, 7)).inviteLimit, 7);
+    assert.equal((await repo.getUser(a.id)).inviteLimit, 7);
+    assert.equal((await repo.setInviteLimit(a.id, null)).inviteLimit, null);
+    assert.equal(await repo.setInviteLimit(999999999, 3), null);
+    const expiresAt = new Date(Date.now() + 14 * 864e5).toISOString();
+    const i1 = await repo.createInvite({ inviterId: a.id, email: `${uniq()}@x.test`, tokenHash: `${prefix}${uniq()}p`, expiresAt });
+    const i2 = await repo.createInvite({ inviterId: b.id, email: `${uniq()}@x.test`, tokenHash: `${prefix}${uniq()}q`, expiresAt });
+    const all = await repo.listInvites();
+    assert.ok(all.some((i) => i.id === i1.id) && all.some((i) => i.id === i2.id));
+    assert.ok(all.findIndex((i) => i.id === i2.id) < all.findIndex((i) => i.id === i1.id), 'newest first');
+    const r = await repo.createRequest(req(b, c));
+    const sent = await repo.addContribution({ requestId: r.id, contributorId: a.id, amountCents: 100, status: 'sent' });
+    const done = await repo.addContribution({ requestId: r.id, contributorId: a.id, amountCents: 100, status: 'confirmed' });
+    const nr = await repo.addContribution({ requestId: r.id, contributorId: a.id, amountCents: 100, status: 'not_received' });
+    const ids = (rows) => rows.map((x) => x.id);
+    const got = ids(await repo.listContributionsByStatus(['sent', 'not_received']));
+    assert.ok(got.includes(sent.id) && got.includes(nr.id) && !got.includes(done.id));
+    assert.deepEqual(await repo.listContributionsByStatus([]), []);
+    const p1 = await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: a.id, amountCents: 100, status: 'sent' });
+    const p2 = await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: a.id, amountCents: 100, status: 'confirmed' });
+    const gotP = ids(await repo.listRepaymentsByStatus(['sent']));
+    assert.ok(gotP.includes(p1.id) && !gotP.includes(p2.id));
+    const acted = await repo.membersWhoActed([a.id, b.id, c.id]);
+    assert.deepEqual([...acted].sort((x, y) => x - y), [a.id, b.id].sort((x, y) => x - y), 'borrower and contributor, not the trusted contact');
+    assert.deepEqual(await repo.membersWhoActed([]), []);
+  });
 }
 
 module.exports = { runContract };

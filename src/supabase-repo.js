@@ -122,6 +122,19 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       return list(check(await db.from('users').select().in('id', ids)), USER);
     },
     async setVerifier(id, isVerifier) { check(await db.from('users').update({ is_verifier: !!isVerifier }).eq('id', id)); },
+    // Admin views. Deleted (anonymised) members are not listed.
+    async listUsers() { return list(check(await db.from('users').select().is('deleted_at', null).order('id', { ascending: true })), USER); },
+    // limit is an integer, or null for the default. Returns the member, or null if the id is unknown.
+    setInviteLimit: (id, limit) => maybe(db.from('users').update({ invite_limit: limit }).eq('id', id).select(), USER),
+    // Of the given ids, those who made a request or contributed to one.
+    async membersWhoActed(ids) {
+      if (ids.length === 0) return [];
+      const [asBorrower, asContributor] = await Promise.all([
+        db.from('requests').select('borrower_id').in('borrower_id', ids),
+        db.from('contributions').select('contributor_id').in('contributor_id', ids),
+      ]);
+      return [...new Set([...check(asBorrower).map((r) => r.borrower_id), ...check(asContributor).map((r) => r.contributor_id)])];
+    },
     // Name only (email is private). Parameterised: user text never goes into a filter string.
     async searchUsers(q, excludeId) {
       const pattern = `%${likeEscape(q)}%`;
@@ -176,6 +189,7 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       return list(check(await db.from('invites').select().ilike('email', likeEscape(email))
         .is('accepted_at', null).is('revoked_at', null).is('superseded_at', null)), INVITE);
     },
+    async listInvites() { return list(check(await db.from('invites').select().order('id', { ascending: false })), INVITE); },
     async listInvitesByInviter(id) {
       return list(check(await db.from('invites').select().eq('inviter_id', id).order('id', { ascending: false })), INVITE);
     },
@@ -270,6 +284,14 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     },
 
     // ---- contributions and repayments ----
+    async listContributionsByStatus(statuses) {
+      if (statuses.length === 0) return [];
+      return list(check(await db.from('contributions').select().in('status', statuses).order('id', { ascending: true })), CONTRIBUTION);
+    },
+    async listRepaymentsByStatus(statuses) {
+      if (statuses.length === 0) return [];
+      return list(check(await db.from('repayments').select().in('status', statuses).order('id', { ascending: true })), REPAYMENT);
+    },
     addContribution: contrib.add, getContribution: contrib.get, updateContribution: contrib.update,
     deleteContribution: contrib.del, listContributions: contrib.list,
     addRepayment: repay.add, getRepayment: repay.get, updateRepayment: repay.update,

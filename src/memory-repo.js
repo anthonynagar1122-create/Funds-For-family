@@ -68,6 +68,23 @@ function createMemoryRepo() {
     async getUser(id) { return copy(users.get(id)); },
     async getUsers(ids) { return ids.map((id) => users.get(id)).filter(Boolean).map(copy); },
     async setVerifier(id, isVerifier) { users.get(id).isVerifier = !!isVerifier; },
+    // Admin views. Deleted (anonymised) members are not listed.
+    async listUsers() { return [...users.values()].filter((u) => !u.deletedAt).sort((a, b) => a.id - b.id).map(copy); },
+    // limit is an integer, or null for the default. Returns the member, or null if the id is unknown.
+    async setInviteLimit(id, limit) {
+      const u = users.get(id);
+      if (!u) return null;
+      u.inviteLimit = limit;
+      return copy(u);
+    },
+    // Of the given ids, those who made a request or contributed to one.
+    async membersWhoActed(ids) {
+      const set = new Set(ids);
+      const acted = new Set();
+      for (const r of requests.values()) if (set.has(r.borrowerId)) acted.add(r.borrowerId);
+      for (const c of contributions.values()) if (set.has(c.contributorId)) acted.add(c.contributorId);
+      return [...acted];
+    },
     async searchUsers(q, excludeId) {
       const s = q.toLowerCase();
       return [...users.values()].filter((u) => u.id !== excludeId && !u.deletedAt && u.name.toLowerCase().includes(s)).slice(0, 20).map(copy);
@@ -117,6 +134,7 @@ function createMemoryRepo() {
       const e = email.toLowerCase();
       return [...invites.values()].filter((i) => i.email.toLowerCase() === e && !i.acceptedAt && !i.revokedAt && !i.supersededAt).map(copy);
     },
+    async listInvites() { return [...invites.values()].sort((a, b) => b.id - a.id).map(copy); },
     async listInvitesByInviter(id) { return [...invites.values()].filter((i) => i.inviterId === id).sort((a, b) => b.id - a.id).map(copy); },
     async updateInvite(id, patch) {
       const i = invites.get(id);
@@ -201,6 +219,8 @@ function createMemoryRepo() {
     },
 
     // ---- contributions and repayments ----
+    async listContributionsByStatus(statuses) { return [...contributions.values()].filter((e) => statuses.includes(e.status)).sort((a, b) => a.id - b.id).map(copy); },
+    async listRepaymentsByStatus(statuses) { return [...repayments.values()].filter((e) => statuses.includes(e.status)).sort((a, b) => a.id - b.id).map(copy); },
     ...entryApi(contributions, 'addContribution', 'getContribution', 'updateContribution', 'deleteContribution', 'listContributions'),
     ...entryApi(repayments, 'addRepayment', 'getRepayment', 'updateRepayment', 'deleteRepayment', 'listRepayments'),
     _state: { users, follows, invites, requests, verifications, contributions, repayments },
