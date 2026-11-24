@@ -21,6 +21,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Audit npm dependencies (high severity gate)
+        run: npm audit --audit-level=high
       - run: npx playwright install --with-deps chromium
       - run: npm test
 
