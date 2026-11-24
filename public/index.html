@@ -29,6 +29,7 @@
         <button id="nav-invite" type="button"><span class="nav-icon" aria-hidden="true">✉️</span><span class="nav-label">Invite</span></button>
         <button id="nav-people" type="button"><span class="nav-icon" aria-hidden="true">👥</span><span class="nav-label">Follow</span></button>
       </nav>
+      <a class="profile-link" id="nav-profile" href="#profile" hidden>Profile</a>
       <div id="auth-slot"></div>
     </div>
   </header>
@@ -157,6 +158,56 @@
       <div class="section-card">
         <h2>Your connections</h2>
         <ul class="list" id="connections"></ul>
+      </div>
+    </section>
+
+    <!-- Your profile: who you are, the phone lenders use to reach you, your circle. -->
+    <section id="view-profile" hidden aria-labelledby="profile-title">
+      <div class="view-head">
+        <h1 id="profile-title">Your profile</h1>
+        <a class="link-quiet" href="#activity">Full history</a>
+      </div>
+      <div class="profile-card">
+        <span class="avatar avatar-lg" id="profile-avatar" aria-hidden="true"></span>
+        <div class="profile-id">
+          <p class="profile-name" id="profile-name"></p>
+          <p class="muted" id="profile-email"></p>
+          <p id="profile-badges"></p>
+        </div>
+      </div>
+      <form id="phone-form" class="form profile-phone" novalidate>
+        <div class="field">
+          <label for="p-phone">Phone number</label>
+          <div class="inline-form">
+            <input id="p-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+91 98765 43210" aria-describedby="h-p-phone e-p-phone">
+            <button class="btn btn-primary" type="submit">Save</button>
+          </div>
+          <p class="hint" id="h-p-phone">Lenders call or WhatsApp you before sending money. Only people you follow can see it.</p>
+          <p class="error" id="e-p-phone" role="alert"></p>
+        </div>
+      </form>
+      <div class="kpi-grid">
+        <a class="kpi" href="#people"><p class="kpi-label">You follow</p><p class="kpi-value is-brand" id="profile-following">–</p><p class="kpi-sub">They can see and fund your requests</p></a>
+        <a class="kpi" href="#people"><p class="kpi-label">Follow you</p><p class="kpi-value" id="profile-followers">–</p><p class="kpi-sub">You can see their requests</p></a>
+      </div>
+      <p class="muted">Your name and email come from your sign-in account.</p>
+    </section>
+
+    <!-- Another member: how you are connected, how to reach them, their open requests. -->
+    <section id="view-member" hidden aria-labelledby="member-title">
+      <p><a class="detail-back" href="#people">← Follow</a></p>
+      <div class="profile-card">
+        <span class="avatar avatar-lg" id="member-avatar" aria-hidden="true"></span>
+        <div class="profile-id">
+          <h1 class="profile-name" id="member-title"></h1>
+          <p id="member-badges"></p>
+        </div>
+        <div class="profile-actions" id="member-actions"></div>
+      </div>
+      <div id="member-contact"></div>
+      <div class="section-card" id="member-requests-card" hidden>
+        <h2>Open requests</h2>
+        <ul class="list" id="member-requests"></ul>
       </div>
     </section>
 

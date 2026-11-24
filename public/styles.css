@@ -332,3 +332,24 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
 .contact-number { font-variant-numeric: tabular-nums; font-size: .875rem; color: var(--color-ink-700); }
 .confirm { display: flex; align-items: flex-start; gap: var(--space-2); font-weight: 600; font-size: .875rem; color: var(--color-ink-900); cursor: pointer; }
 .confirm input { width: 20px; height: 20px; min-height: 0; margin: 1px 0 0; accent-color: var(--color-brand-600); flex: none; }
+
+/* ---- Profiles ---- */
+.profile-link { font-size: .875rem; font-weight: 600; text-decoration: none; color: var(--color-ink-600); padding: 8px 10px; border-radius: var(--radius-sm); min-height: 40px; display: inline-flex; align-items: center; }
+.profile-link:hover, .profile-link[aria-current="page"] { color: var(--color-ink-900); background: var(--color-subtle); }
+.profile-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5); box-shadow: var(--shadow-1); margin-bottom: var(--space-4); }
+.avatar { display: inline-grid; place-items: center; border-radius: 50%; background: var(--gradient-brand); background-color: var(--color-brand-600); color: #fff; font-weight: 700; flex: none; }
+.avatar-lg { width: 64px; height: 64px; font-size: 1.375rem; }
+.profile-id { flex: 1 1 200px; min-width: 0; }
+.profile-name { font-size: 1.375rem; font-weight: 700; margin: 0; line-height: 1.2; }
+.profile-id .muted, .profile-id p { margin: 4px 0 0; }
+.profile-actions { flex: none; }
+.profile-phone { max-width: none; margin-bottom: var(--space-4); }
+.profile-phone .inline-form { margin: 0; }
+a.kpi { text-decoration: none; color: inherit; }
+a.kpi:hover { border-color: var(--color-brand-300); box-shadow: var(--shadow-2); }
+.contact-plain { background: var(--color-surface); border-color: var(--color-border); margin-bottom: var(--space-4); }
+.contact-plain .contact-title { color: var(--color-ink-900); }
+.member-note { margin: 0 0 var(--space-4); }
+.person-link { font-weight: 700; color: var(--color-ink-900); text-decoration: none; }
+.person-link:hover { color: var(--color-brand-700); text-decoration: underline; }
+.contact-title a { color: inherit; }
