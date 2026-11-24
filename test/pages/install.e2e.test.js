@@ -107,6 +107,7 @@ test('service worker saved nothing for mutations or admin paths', { skip }, asyn
     await page.goto(`${base}/app/#/home`, { waitUntil: 'load' });
     await page.evaluate(() => navigator.serviceWorker.ready);
     await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('nav[aria-label="Primary"] a:visible'); // boot has fetched /api/me and /api/feed
     await page.evaluate(async () => {
       await fetch('/api/admin/users').catch(() => {});
       await fetch('/api/feed', { method: 'POST', body: '{}' }).catch(() => {});

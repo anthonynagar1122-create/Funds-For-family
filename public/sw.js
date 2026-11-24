@@ -5,7 +5,7 @@
 //  - API: network-first with last-saved fallback, ONLY for the allow-list below.
 //  - Never cached: /api/admin*, /api/invites*, any request carrying an invite token, any other API path.
 // Bump CACHE_VERSION on each release; older caches are deleted on activate.
-const CACHE_VERSION = 'ff-v2';
+const CACHE_VERSION = 'ff-v3';
 const SHELL_FILES = [
   '/app/', '/app/index.html', '/styles.css', '/app.js',
   '/app/money.js', '/app/format.js', '/app/api.js', '/app/nav.js', '/app/card-model.js',
@@ -39,7 +39,9 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     for (const k of await caches.keys()) if (k !== CACHE_VERSION) await caches.delete(k);
-    await self.clients.claim();
+    // No clients.claim(): the page that registered this worker keeps loading straight from the network.
+    // Taking it over mid-boot made its first /api calls race between the network and the worker.
+    // The worker controls the next load, which is the one that needs the saved copies.
   })());
 });
 

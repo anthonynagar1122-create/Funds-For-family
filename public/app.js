@@ -352,14 +352,27 @@
         $('#top-sign-in').addEventListener('click', () => clerk.openSignIn());
       }
     };
-    const refresh = async () => {
+    // One refresh at a time. Clerk calls the listener as soon as it is added (and again on every sign-in
+    // change), so overlapping calls are coalesced: a call that arrives while one is running schedules a single
+    // re-run afterwards and shares its promise. /me is never fetched twice at once.
+    let inFlight = null;
+    let again = false;
+    const refreshOnce = async () => {
       mountAuth();
       if (!clerk.user) { me = null; Api.clearSaved().catch(() => {}); show('signed-out'); return; }
-      try { await loadUsers(); route(); }
+      try { await loadUsers(); await route(); }
       catch (err) {
         if (err.code === 'invite_only') { me = null; show('view-not-invited'); return; }
         toast(err.message);
       }
+    };
+    const refresh = () => {
+      if (inFlight) { again = true; return inFlight; }
+      inFlight = (async () => {
+        try { do { again = false; await refreshOnce(); } while (again); }
+        finally { inFlight = null; }
+      })();
+      return inFlight;
     };
     $('#sign-in').addEventListener('click', () => clerk.openSignIn());
     clerk.addListener(refresh);
