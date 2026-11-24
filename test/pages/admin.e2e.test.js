@@ -43,7 +43,7 @@ async function open({ isAdmin = true, hash = '#/admin', fail = {} } = {}) {
     ],
     invites: [
       { id: 11, email: 'new@example.com', inviterName: 'Ben <i>Rao</i>', state: 'open', createdAt: '2026-11-20T00:00:00.000Z', expiresAt: '2026-12-04T00:00:00.000Z' },
-      { id: 12, email: 'old@example.com', inviterName: 'Cara Das', state: 'accepted', createdAt: '2026-11-01T00:00:00.000Z', expiresAt: '2026-11-15T00:00:00.000Z' },
+      { id: 12, email: 'old@example.com', joinedEmail: 'other@example.com', inviterName: 'Cara Das', state: 'accepted', createdAt: '2026-11-01T00:00:00.000Z', expiresAt: '2026-11-15T00:00:00.000Z' },
     ],
     help: [{ id: 21, body: 'My <b>UPI</b> will not save', createdAt: '2026-11-22T00:00:00.000Z', resolvedAt: null, userId: 2, name: 'Ben <i>Rao</i>', email: 'ben@example.com' }],
     stuck: [
@@ -155,6 +155,8 @@ test('invites: state shown as text, Revoke only for open, result as text', { ski
     assert.match(text, /new@example\.com/);
     assert.match(text, /Open/);
     assert.match(text, /Accepted/);
+    assert.match(text, /Joined with other@example\.com/);
+    assert.match(text, /different from the invited address/i);
     assert.equal(await page.getByRole('button', { name: /Revoke invite/ }).count(), 1);
     await page.getByRole('button', { name: 'Revoke invite for new@example.com' }).click();
     await waitStatus(page, /Invite for new@example\.com revoked/);
@@ -218,6 +220,7 @@ test('gaps and stats tabs show their data as text', { skip }, async () => {
     await page.waitForSelector('#admin-panel li');
     const gaps = await page.locator('#admin-panel').innerText();
     assert.match(gaps, /Ben <i>Rao<\/i>/);
+    assert.match(gaps, /Needs another verifier/);
     assert.match(gaps, /1 of 2/);
     assert.equal(await page.locator('#admin-panel i').count(), 0);
     await page.getByRole('tab', { name: 'Stats' }).click();
@@ -237,5 +240,22 @@ test('a tab that fails to load shows an error as text', { skip }, async () => {
   try {
     await page.getByRole('tab', { name: 'Stats' }).click();
     await waitStatus(page, /Could not load.*Something went wrong/);
+  } finally { await ctx.close(); }
+});
+
+test('leaving the admin page and coming back does not multiply click handlers', { skip }, async () => {
+  const { page, ctx, calls } = await open();
+  try {
+    await page.waitForSelector('#admin-panel li');
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => { location.hash = '#/home'; });
+      await page.waitForSelector('#view-home:not([hidden])');
+      await page.evaluate(() => { location.hash = '#/admin'; });
+      await page.waitForSelector('#view-admin:not([hidden]) #admin-panel li');
+    }
+    const before = calls.filter((c) => c.path === '/invites').length;
+    await page.getByRole('tab', { name: 'Invites' }).click();
+    await page.waitForSelector('#admin-panel button[data-act="revoke"]');
+    assert.equal(calls.filter((c) => c.path === '/invites').length - before, 1, 'exactly one request for one click');
   } finally { await ctx.close(); }
 });

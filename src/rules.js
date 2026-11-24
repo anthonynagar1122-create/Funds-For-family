@@ -163,7 +163,8 @@ function canVerify({ verifier, borrowerId, trustedContactId, status }) {
   return { ok: true };
 }
 
-const ENTRY_STATUSES = ['sent', 'confirmed', 'not_received'];
+// 'removed' is an owner-settled entry kept for audit; repos leave it out of every list.
+const ENTRY_STATUSES = ['sent', 'confirmed', 'not_received', 'removed'];
 const UTR_RE = /^[A-Za-z0-9]{6,35}$/;
 
 /** A UTR is optional; when present it must be 6-35 alphanumerics. */

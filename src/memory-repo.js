@@ -42,7 +42,8 @@ function createMemoryRepo() {
       return copy(r);
     },
     async [del](id) { store.delete(id); },
-    async [list](requestId) { return [...store.values()].filter((e) => e.requestId === requestId).map(copy); },
+    // A removed entry is an audit record only: get by id still returns it, lists never do.
+    async [list](requestId) { return [...store.values()].filter((e) => e.requestId === requestId && e.status !== 'removed').map(copy); },
   });
 
   return {
@@ -77,12 +78,13 @@ function createMemoryRepo() {
       u.inviteLimit = limit;
       return copy(u);
     },
-    // Of the given ids, those who made a request or contributed to one.
-    async membersWhoActed(ids) {
-      const set = new Set(ids);
+    // entries: [{ id, since }]. Made a request, or has a confirmed contribution, created at or after `since`.
+    async membersWhoActed(entries) {
+      const since = new Map(entries.map((e) => [e.id, new Date(e.since).getTime()]));
+      const after = (id, at) => since.has(id) && new Date(at).getTime() >= since.get(id);
       const acted = new Set();
-      for (const r of requests.values()) if (set.has(r.borrowerId)) acted.add(r.borrowerId);
-      for (const c of contributions.values()) if (set.has(c.contributorId)) acted.add(c.contributorId);
+      for (const r of requests.values()) if (after(r.borrowerId, r.createdAt)) acted.add(r.borrowerId);
+      for (const c of contributions.values()) if (c.status === 'confirmed' && after(c.contributorId, c.createdAt)) acted.add(c.contributorId);
       return [...acted];
     },
     async searchUsers(q, excludeId) {
@@ -181,8 +183,8 @@ function createMemoryRepo() {
     async listRequestsForMember(userId) {
       const ids = new Set();
       for (const r of requests.values()) if (r.borrowerId === userId || r.trustedContactId === userId) ids.add(r.id);
-      for (const c of contributions.values()) if (c.contributorId === userId) ids.add(c.requestId);
-      for (const p of repayments.values()) if (p.payerId === userId || p.lenderId === userId) ids.add(p.requestId);
+      for (const c of contributions.values()) if (c.contributorId === userId && c.status !== 'removed') ids.add(c.requestId);
+      for (const p of repayments.values()) if ((p.payerId === userId || p.lenderId === userId) && p.status !== 'removed') ids.add(p.requestId);
       for (const v of verifications) if (v.verifierId === userId) ids.add(v.requestId);
       return [...ids].map((id) => requests.get(id)).sort((a, b) => b.id - a.id).map(copy);
     },

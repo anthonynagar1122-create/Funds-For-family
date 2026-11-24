@@ -165,7 +165,7 @@ test('validateUtr allows empty and 6-35 alphanumerics only', () => {
   assert.equal(r.validateUtr('A'.repeat(36)), false);
   assert.equal(r.validateUtr('ABC12'), false);
   assert.equal(r.validateUtr('ABC-123'), false);
-  assert.deepEqual(r.ENTRY_STATUSES, ['sent', 'confirmed', 'not_received']);
+  assert.deepEqual(r.ENTRY_STATUSES, ['sent', 'confirmed', 'not_received', 'removed']);
 });
 
 test('fundingTotals counts confirmed and sent, not not_received', () => {

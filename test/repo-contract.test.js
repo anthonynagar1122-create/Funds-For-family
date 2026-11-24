@@ -255,6 +255,33 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     const all = (await repo.listHelpMessages()).filter((m) => [m1.id, m2.id, m3.id].includes(m.id));
     assert.deepEqual(all.map((m) => m.id), [m2.id, m3.id, m1.id], 'unresolved first (oldest first), then resolved');
   });
+  test('contract: a removed entry stays readable by id with its audit fields but leaves every list', async () => {
+    const repo = await makeRepo();
+    const [b, c, l, admin] = [await mk(repo, 'rb'), await mk(repo, 'rc'), await mk(repo, 'rl'), await mk(repo, 'ra')];
+    const r = await repo.createRequest(req(b, c));
+    const keep = await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 100, status: 'confirmed' });
+    const gone = await repo.addContribution({ requestId: r.id, contributorId: c.id, amountCents: 200, status: 'sent' });
+    const pay = await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: c.id, amountCents: 50, status: 'sent' });
+    const at = '2026-11-24T10:00:00.000Z';
+    const patch = { status: 'removed', settledBy: admin.id, settledNote: 'Checked with both people', settledAt: at, updatedAt: at };
+    await repo.updateContribution(gone.id, patch);
+    await repo.updateRepayment(pay.id, patch);
+    const g = await repo.getContribution(gone.id);
+    assert.equal(g.status, 'removed');
+    assert.equal(g.settledBy, admin.id);
+    assert.equal(g.settledNote, 'Checked with both people');
+    assert.equal(new Date(g.settledAt).toISOString(), at);
+    assert.equal((await repo.getRepayment(pay.id)).status, 'removed');
+    assert.deepEqual((await repo.listContributions(r.id)).map((x) => x.id), [keep.id]);
+    assert.deepEqual(await repo.listRepayments(r.id), []);
+    assert.deepEqual((await repo.listContributionsByStatus(['sent'])).filter((x) => x.id === gone.id), []);
+    assert.deepEqual((await repo.listRequestsForMember(c.id)).map((x) => x.id), [r.id], 'still the trusted contact');
+    const other = await mk(repo, 'ro');
+    await repo.addContribution({ requestId: r.id, contributorId: other.id, amountCents: 5, status: 'sent' });
+    const lone = await repo.addContribution({ requestId: r.id, contributorId: admin.id, amountCents: 5, status: 'sent' });
+    await repo.updateContribution(lone.id, patch);
+    assert.deepEqual((await repo.listRequestsForMember(admin.id)), [], 'a removed entry does not tie a member to the request');
+  });
   test('contract: admin listings, invite limit, status lists and members who acted', async () => {
     const repo = await makeRepo();
     const a = await mk(repo, 'ad1');
@@ -288,8 +315,14 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     const p2 = await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: a.id, amountCents: 100, status: 'confirmed' });
     const gotP = ids(await repo.listRepaymentsByStatus(['sent']));
     assert.ok(gotP.includes(p1.id) && !gotP.includes(p2.id));
-    const acted = await repo.membersWhoActed([a.id, b.id, c.id]);
-    assert.deepEqual([...acted].sort((x, y) => x - y), [a.id, b.id].sort((x, y) => x - y), 'borrower and contributor, not the trusted contact');
+    const early = new Date(Date.now() - 3600e3).toISOString();
+    const acted = await repo.membersWhoActed([{ id: a.id, since: early }, { id: b.id, since: early }, { id: c.id, since: early }]);
+    assert.deepEqual([...acted].sort((x, y) => x - y), [a.id, b.id].sort((x, y) => x - y), 'borrower and confirmed contributor, not the trusted contact');
+    const future = new Date(Date.now() + 3600e3).toISOString();
+    assert.deepEqual(await repo.membersWhoActed([{ id: a.id, since: future }, { id: b.id, since: future }]), [], 'only activity after the given time');
+    const onlySent = await mk(repo, 'ad5');
+    await repo.addContribution({ requestId: r.id, contributorId: onlySent.id, amountCents: 100, status: 'sent' });
+    assert.deepEqual(await repo.membersWhoActed([{ id: onlySent.id, since: early }]), [], 'a sent entry is not funding');
     assert.deepEqual(await repo.membersWhoActed([]), []);
   });
 }

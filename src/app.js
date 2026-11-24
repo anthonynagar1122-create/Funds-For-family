@@ -315,13 +315,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ member: memberView(await repo.setInviteLimit(id, limit)) });
   });
 
-  const adminInviteView = (i, inviter) => ({ id: i.id, email: i.email, inviterName: inviter?.name ?? 'Former member',
-    state: invites.inviteState(i, now()), createdAt: i.createdAt, expiresAt: i.expiresAt, acceptedAt: i.acceptedAt ?? null });
+  const adminInviteView = (i, inviter, joined = null) => ({ id: i.id, email: i.email, inviterName: inviter?.name ?? 'Former member',
+    joinedEmail: i.acceptedAt ? (joined?.email ?? null) : null, state: invites.inviteState(i, now()), createdAt: i.createdAt, expiresAt: i.expiresAt, acceptedAt: i.acceptedAt ?? null });
 
   api.get('/admin/invites', requireAdmin, async (_req, res) => {
     const all = await repo.listInvites();
     const inviters = new Map((await repo.getUsers([...new Set(all.map((i) => i.inviterId))])).map((u) => [u.id, u]));
-    res.json({ invites: all.map((i) => adminInviteView(i, inviters.get(i.inviterId))) });
+    const joiners = new Map((await repo.getUsers([...new Set(all.map((i) => i.acceptedUserId).filter((x) => x !== null && x !== undefined))])).map((u) => [u.id, u]));
+    res.json({ invites: all.map((i) => adminInviteView(i, inviters.get(i.inviterId), joiners.get(i.acceptedUserId))) });
   });
 
   api.delete('/admin/invites/:id', requireAdmin, async (req, res) => {
@@ -336,9 +337,11 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   api.get('/admin/stats', requireAdmin, async (_req, res) => {
     const all = await repo.listInvites();
     const accepted = all.filter((i) => i.acceptedAt);
-    const acceptedIds = [...new Set(accepted.map((i) => i.acceptedUserId).filter((x) => x !== null && x !== undefined))];
+    // Activity counts only after the person joined: a request made, or a confirmed contribution.
+    const since = new Map();
+    for (const i of accepted) if (i.acceptedUserId !== null && i.acceptedUserId !== undefined) since.set(i.acceptedUserId, i.acceptedAt);
     res.json({ invitesSent: all.length, invitesAccepted: accepted.length,
-      acceptedWhoMadeOrFunded: (await repo.membersWhoActed(acceptedIds)).length });
+      acceptedWhoMadeOrFunded: (await repo.membersWhoActed([...since].map(([id, at]) => ({ id, since: at })))).length });
   });
 
   // Requests waiting for verification that cannot reach the approvals they need: eligible verifiers are
@@ -388,7 +391,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   // Owner settles a stuck entry. confirm marks it received; remove deletes it. Both need a note. No email in this phase.
-  async function adminSettle(req, res, { getter, updater, remover, label, sides, finish, overCap }) {
+  async function adminSettle(req, res, { getter, updater, label, sides, finish, overCap }) {
     const id = parseId(req.params.id);
     const entry = id === null ? null : await getter(id);
     if (!entry) return fail(res, 404, `${label} not found`);
@@ -398,22 +401,25 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (note.length < 5 || note.length > 500) return fail(res, 400, 'Write a note of 5 to 500 characters', 'note');
     if (!isStuck(entry)) return fail(res, 409, 'Only a payment still waiting after 7 days can be settled here');
     const r = await repo.getRequest(entry.requestId);
+    if (!r) return fail(res, 404, 'Request not found');
     const { payerId, receiverId } = sides(entry, r);
     if (payerId === req.user.id || receiverId === req.user.id) return fail(res, 409, 'You are part of this payment, so someone else must settle it');
+    const at = now().toISOString();
+    const audit = { updatedAt: at, settledBy: req.user.id, settledNote: note, settledAt: at };
+    // Removal keeps the row as an audit record (status removed). Every list, total and owed figure leaves it out.
     if (action === 'remove') {
-      await remover(entry.id);
+      await updater(entry.id, { status: 'removed', ...audit });
       return res.json({ ok: true, removed: true, id: entry.id });
     }
     const blocked = await overCap(r, entry);
     if (blocked) return fail(res, 409, blocked);
-    const at = now().toISOString();
-    const updated = await updater(entry.id, { status: 'confirmed', confirmedAt: at, updatedAt: at, settledBy: req.user.id, settledNote: note, settledAt: at });
+    const updated = await updater(entry.id, { status: 'confirmed', confirmedAt: at, ...audit });
     await finish(r);
     res.json({ ok: true, removed: false, id: updated.id, status: updated.status, request: { id: r.id, status: (await repo.getRequest(r.id)).status } });
   }
 
-  api.post('/admin/contributions/:id/settle', requireAdmin, (req, res) => adminSettle(req, res, {
-    getter: repo.getContribution, updater: repo.updateContribution, remover: repo.deleteContribution, label: 'Contribution',
+  api.post('/admin/contributions/:id/settle', requireAdmin, async (req, res) => adminSettle(req, res, {
+    getter: repo.getContribution, updater: repo.updateContribution, label: 'Contribution',
     sides: (c, r) => ({ payerId: c.contributorId, receiverId: r.borrowerId }),
     finish: (r) => settleFunded(r.id),
     // A not_received entry is not in the totals, so confirming it counts as new money.
@@ -424,8 +430,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     },
   }));
 
-  api.post('/admin/repayments/:id/settle', requireAdmin, (req, res) => adminSettle(req, res, {
-    getter: repo.getRepayment, updater: repo.updateRepayment, remover: repo.deleteRepayment, label: 'Repayment',
+  api.post('/admin/repayments/:id/settle', requireAdmin, async (req, res) => adminSettle(req, res, {
+    getter: repo.getRepayment, updater: repo.updateRepayment, label: 'Repayment',
     sides: (p) => ({ payerId: p.payerId, receiverId: p.lenderId }),
     finish: (r) => settleRepaid(r.id),
     overCap: async (r, p) => {
@@ -834,7 +840,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   async function loadEntry(req, res, getter, label) {
     const id = parseId(req.params.id);
     const entry = id !== null ? await getter(id) : null;
-    if (!entry) { fail(res, 404, `${label} not found`); return null; }
+    if (!entry || entry.status === 'removed') { fail(res, 404, `${label} not found`); return null; }
     const r = await visibleRequest(req, res, entry.requestId);
     if (!r) return null;
     return { entry, r };

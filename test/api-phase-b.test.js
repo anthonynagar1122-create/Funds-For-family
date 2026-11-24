@@ -511,7 +511,10 @@ test('stats: invites sent, accepted, and accepted members who made or funded a r
     assert.equal(stats.body.invitesSent, 4);
     assert.equal(stats.body.invitesAccepted, 3);
     assert.equal(stats.body.acceptedWhoMadeOrFunded, 1);
-    await s.repo.addContribution({ requestId: id, contributorId: await idOf(s.call, 'eli'), amountCents: 100, status: 'sent' });
+    const eli = await idOf(s.call, 'eli');
+    await s.repo.addContribution({ requestId: id, contributorId: eli, amountCents: 100, status: 'sent' });
+    assert.equal((await admin('GET', '/stats')).body.acceptedWhoMadeOrFunded, 1, 'a sent entry is not funding yet');
+    await s.repo.addContribution({ requestId: id, contributorId: eli, amountCents: 100, status: 'confirmed' });
     assert.equal((await admin('GET', '/stats')).body.acceptedWhoMadeOrFunded, 2);
   } finally { await s.close(); }
 });
@@ -626,7 +629,11 @@ test('settle contribution remove: deletes a stuck entry only; a confirmed one is
     assert.ok(await s.repo.getContribution(done));
     const r = await admin('POST', `/contributions/${stuck}/settle`, { action: 'remove', note: 'Lender says it never went' });
     assert.equal(r.status, 200);
-    assert.equal(await s.repo.getContribution(stuck), null);
+    const kept = await s.repo.getContribution(stuck);
+    assert.equal(kept.status, 'removed', 'row kept as an audit record');
+    assert.equal(kept.settledBy, await idOf(s.call, 'boss'));
+    assert.equal(kept.settledNote, 'Lender says it never went');
+    assert.ok(kept.settledAt);
     assert.equal((await s.repo.getRequest(id)).status, 'open');
     assert.equal(s.sent.filter((m) => /settle|removed/i.test(m.subject)).length, 0);
   } finally { await s.close(); }
@@ -694,6 +701,73 @@ test('settle repayment remove deletes a stuck not_received repayment', async () 
     assert.equal(listed.payerName, 'bo');
     assert.equal(listed.receiverName, 'li');
     assert.equal((await admin('POST', `/repayments/${pid}/settle`, { action: 'remove', note: 'Payer says it never went' })).status, 200);
-    assert.equal(await s.repo.getRepayment(pid), null);
+    const kept = await s.repo.getRepayment(pid);
+    assert.equal(kept.status, 'removed');
+    assert.equal(kept.settledNote, 'Payer says it never went');
+    assert.ok(kept.settledBy && kept.settledAt);
+    assert.equal((await s.repo.listRepayments(id)).some((x) => x.id === pid), false, 'not in the request ledger');
+  } finally { await s.close(); }
+});
+
+test('settle routes: a throwing repo gives a 500 JSON error, a missing request gives 404', async () => {
+  const { s, admin } = await adminSetup();
+  try {
+    const id = await openFunded(s);
+    const cid = await lend(s.call, 'li', 'bo', id, 100, { confirm: false });
+    s.setNow(new Date('2026-12-05T12:00:00Z'));
+    const orphan = await s.repo.addContribution({ requestId: 999999, contributorId: await idOf(s.call, 'li'), amountCents: 100, status: 'sent', createdAt: '2026-11-01T00:00:00.000Z' });
+    const missing = await admin('POST', `/contributions/${orphan.id}/settle`, { action: 'remove', note: 'a valid note' });
+    assert.equal(missing.status, 404);
+    const real = s.repo.updateContribution;
+    s.repo.updateContribution = async () => { throw new Error('db down'); };
+    try {
+      const r = await Promise.race([
+        admin('POST', `/contributions/${cid}/settle`, { action: 'confirm', note: 'a valid note' }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('hung')), 3000)),
+      ]);
+      assert.equal(r.status, 500);
+      assert.ok(r.body.error);
+      assert.doesNotMatch(r.text, /db down/);
+    } finally { s.repo.updateContribution = real; }
+  } finally { await s.close(); }
+});
+
+test('a removed entry is excluded from totals and funding; the owner can still fund; members cannot touch it', async () => {
+  const { s, admin } = await adminSetup();
+  try {
+    const id = await openFunded(s);
+    const stuck = await lend(s.call, 'li', 'bo', id, 400, { confirm: false });
+    // 400 pending leaves 100: a 500 contribution is refused until the entry is removed.
+    assert.equal((await s.call('li', 'POST', `/requests/${id}/contributions`, { amount: 500 })).status, 409);
+    s.setNow(new Date('2026-12-05T12:00:00Z'));
+    assert.equal((await admin('POST', `/contributions/${stuck}/settle`, { action: 'remove', note: 'Lender says it never went' })).status, 200);
+    const detail = await s.call('bo', 'GET', `/requests/${id}`);
+    assert.equal(JSON.stringify(detail.body).includes(`"id":${stuck},`), false, 'removed entry is not shown');
+    const full = await lend(s.call, 'li', 'bo', id, 500, { confirm: true });
+    assert.ok(full);
+    assert.equal((await s.repo.getRequest(id)).status, 'funded', 'funded from real money only');
+    assert.equal((await admin('GET', '/stuck')).body.entries.some((e) => e.id === stuck), false);
+    assert.equal((await admin('POST', `/contributions/${stuck}/settle`, { action: 'confirm', note: 'a valid note' })).status, 409, 'cannot be settled twice');
+    for (const [who, method, p, body] of [['li', 'DELETE', `/contributions/${stuck}`], ['bo', 'POST', `/contributions/${stuck}/confirm`], ['li', 'PATCH', `/contributions/${stuck}`, { amount: 5 }]]) {
+      assert.equal((await s.call(who, method, p, body)).status, 404, `${method} ${p}`);
+    }
+    assert.equal((await s.repo.getContribution(stuck)).status, 'removed', 'row survives');
+  } finally { await s.close(); }
+});
+
+test('admin invites show the email the person joined with and flag a difference', async () => {
+  const { s, admin } = await adminSetup();
+  try {
+    const made = await s.call('asha', 'POST', '/invites', { email: 'a@x.example' });
+    await s.call('bee', 'GET', '/me', null, null, { 'x-invite-token': tokenOf(made.body.link), 'x-test-email': 'b@y.example' });
+    const same = await s.call('asha', 'POST', '/invites', { email: 'cat@example.com' });
+    await s.call('cat', 'GET', '/me', null, null, { 'x-invite-token': tokenOf(same.body.link) });
+    await s.call('asha', 'POST', '/invites', { email: 'open@example.com' });
+    const list = (await admin('GET', '/invites')).body.invites;
+    const diff = list.find((i) => i.email === 'a@x.example');
+    assert.equal(diff.state, 'accepted');
+    assert.equal(diff.joinedEmail, 'b@y.example');
+    assert.equal(list.find((i) => i.email === 'cat@example.com').joinedEmail, 'cat@example.com');
+    assert.equal(list.find((i) => i.email === 'open@example.com').joinedEmail, null);
   } finally { await s.close(); }
 });

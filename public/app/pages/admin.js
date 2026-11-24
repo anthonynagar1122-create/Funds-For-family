@@ -46,6 +46,7 @@
       invites: () => `${heading('Invites')}${data.length ? `<ul class="list">${data.map((i) => `<li>
         <p><strong>${esc(i.email)}</strong></p>
         <p class="muted">Invited by ${esc(i.inviterName)} on ${esc(day(i.createdAt))}. <span class="badge${i.state === 'open' ? '' : ' badge-warn'}">${esc(STATE_LABEL[i.state] ?? i.state)}</span></p>
+        ${i.joinedEmail ? `<p class="muted">Joined with ${esc(i.joinedEmail)}.${String(i.joinedEmail).toLowerCase() !== String(i.email).toLowerCase() ? ' <span class="badge badge-warn">This is different from the invited address</span>' : ''}</p>` : ''}
         ${i.state === 'open' ? `<button type="button" class="btn btn-secondary" data-act="revoke" data-id="${esc(i.id)}" aria-label="${esc(`Revoke invite for ${i.email}`)}">Revoke</button>` : ''}
         </li>`).join('')}</ul>` : empty('No invites yet.')}`,
 
@@ -73,7 +74,7 @@
       gaps: () => `${heading('Gaps')}${data.length ? `<ul class="list">${data.map((g) => `<li>
         <p><strong>${esc(g.borrowerName)}</strong> <span class="muted">(request ${esc(g.requestId)})</span></p>
         <p>${esc(g.purpose)}</p>
-        <p class="muted">${esc(g.eligibleVerifiers)} of ${esc(g.needed)} verifiers available. Make another member a verifier on the Members tab.</p>
+        <p class="muted">${esc(g.eligibleVerifiers)} of ${esc(g.needed)} verifiers available. <strong>Needs another verifier.</strong> Make another member a verifier on the Members tab.</p>
         </li>`).join('')}</ul>` : empty('Every request waiting for verification has enough verifiers.')}`,
 
       stats: () => `${heading('Stats')}<dl class="stats">
@@ -174,12 +175,13 @@
       },
     };
 
-    root.addEventListener('click', (ev) => {
+    // root outlives each render, so assign (not add) the handler: a repeat visit replaces the old one.
+    root.onclick = (ev) => {
       const tabBtn = ev.target.closest('[role="tab"]');
       if (tabBtn) { openTab(tabBtn.dataset.tab); return; }
       const btn = ev.target.closest('button[data-act]');
       if (btn && ACTIONS[btn.dataset.act]) run(btn, () => ACTIONS[btn.dataset.act](btn));
-    });
+    };
     $('#admin-tabs').addEventListener('keydown', (ev) => {
       const i = TABS.findIndex((t) => t.id === tab);
       const next = ev.key === 'ArrowRight' ? (i + 1) % TABS.length : ev.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : -1;

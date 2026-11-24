@@ -84,7 +84,8 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     },
     async del(id) { check(await db.from(table).delete().eq('id', id)); },
     async list(requestId) {
-      return list(check(await db.from(table).select().eq('request_id', requestId).order('id', { ascending: true })), m);
+      // A removed entry is an audit record only: get by id still returns it, lists never do.
+      return list(check(await db.from(table).select().eq('request_id', requestId).neq('status', 'removed').order('id', { ascending: true })), m);
     },
   });
   const entryRow = (m, row) => {
@@ -126,14 +127,20 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     async listUsers() { return list(check(await db.from('users').select().is('deleted_at', null).order('id', { ascending: true })), USER); },
     // limit is an integer, or null for the default. Returns the member, or null if the id is unknown.
     setInviteLimit: (id, limit) => maybe(db.from('users').update({ invite_limit: limit }).eq('id', id).select(), USER),
-    // Of the given ids, those who made a request or contributed to one.
-    async membersWhoActed(ids) {
-      if (ids.length === 0) return [];
+    // entries: [{ id, since }]. Made a request, or has a confirmed contribution, created at or after `since`.
+    async membersWhoActed(entries) {
+      if (entries.length === 0) return [];
+      const since = new Map(entries.map((e) => [e.id, new Date(e.since).getTime()]));
+      const ids = [...since.keys()];
       const [asBorrower, asContributor] = await Promise.all([
-        db.from('requests').select('borrower_id').in('borrower_id', ids),
-        db.from('contributions').select('contributor_id').in('contributor_id', ids),
+        db.from('requests').select('borrower_id, created_at').in('borrower_id', ids),
+        db.from('contributions').select('contributor_id, created_at').in('contributor_id', ids).eq('status', 'confirmed'),
       ]);
-      return [...new Set([...check(asBorrower).map((r) => r.borrower_id), ...check(asContributor).map((r) => r.contributor_id)])];
+      const after = (id, at) => new Date(at).getTime() >= since.get(id);
+      return [...new Set([
+        ...check(asBorrower).filter((r) => after(r.borrower_id, r.created_at)).map((r) => r.borrower_id),
+        ...check(asContributor).filter((r) => after(r.contributor_id, r.created_at)).map((r) => r.contributor_id),
+      ])];
     },
     // Name only (email is private). Parameterised: user text never goes into a filter string.
     async searchUsers(q, excludeId) {
@@ -255,9 +262,9 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       const [asBorrower, asContact, asContributor, asPayer, asLender, asVerifier] = await Promise.all([
         db.from('requests').select('id').eq('borrower_id', userId),
         db.from('requests').select('id').eq('nominee_id', userId),
-        db.from('contributions').select('request_id').eq('contributor_id', userId),
-        db.from('repayments').select('request_id').eq('payer_id', userId),
-        db.from('repayments').select('request_id').eq('lender_id', userId),
+        db.from('contributions').select('request_id').eq('contributor_id', userId).neq('status', 'removed'),
+        db.from('repayments').select('request_id').eq('payer_id', userId).neq('status', 'removed'),
+        db.from('repayments').select('request_id').eq('lender_id', userId).neq('status', 'removed'),
         db.from('verifications').select('request_id').eq('verifier_id', userId),
       ]);
       const ids = new Set([
