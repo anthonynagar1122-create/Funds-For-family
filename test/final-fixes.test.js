@@ -344,6 +344,12 @@ test('migration 0006 installs audited role management with last-admin protection
   assert.match(sql, /revoke all on function public\.admin_set_member_roles/);
   assert.match(sql, /grant execute on function public\.admin_set_member_roles/);
   assert.doesNotMatch(sql, /security definer/);
+  assert.match(sql, /add column if not exists assigned_to bigint/);
+  assert.match(sql, /create table if not exists public\.support_audit_events/);
+  assert.match(sql, /create or replace function public\.admin_assign_help_message/);
+  assert.match(sql, /create or replace function public\.admin_resolve_help_message/);
+  assert.match(sql, /support\.assigned/);
+  assert.match(sql, /support\.resolved/);
 });
 
 test('migrations 0002 and 0003 run inside a transaction', () => {
@@ -457,4 +463,32 @@ test('non-integer path ids are 404 and never reach the database', async () => {
       }
     }
   } finally { await close(); }
+});
+
+test('Supabase help assignment RPC maps camelCase JSON payload into repository fields', async () => {
+  const fakeFetch = async (url) => {
+    assert.match(String(url), /rpc\/admin_assign_help_message$/);
+    return new Response(JSON.stringify({ id:7,userId:2,body:'Support request body',createdAt:'2026-11-24T10:00:00Z',
+      resolvedAt:null,assignedTo:3,assignedBy:1,assignedAt:'2026-11-24T11:00:00Z' }),
+      {status:200,headers:{'content-type':'application/json'}});
+  };
+  const repo=createSupabaseRepo({url:'http://127.0.0.1:1',serviceRoleKey:'k',fetch:fakeFetch});
+  assert.deepEqual(await repo.assignHelpMessage({id:7,actorId:1,assigneeId:3}),{
+    id:7,userId:2,body:'Support request body',createdAt:'2026-11-24T10:00:00Z',resolvedAt:null,
+    assignedToId:3,assignedById:1,assignedAt:'2026-11-24T11:00:00Z',
+  });
+});
+
+test('Supabase support resolution RPC maps the returned JSON payload', async () => {
+  const fakeFetch = async (url) => {
+    assert.match(String(url), /rpc\/admin_resolve_help_message$/);
+    return new Response(JSON.stringify({ id:7,userId:2,body:'Support request body',createdAt:'2026-11-24T10:00:00Z',
+      resolvedAt:'2026-11-24T12:00:00Z',assignedTo:3,assignedBy:1,assignedAt:'2026-11-24T11:00:00Z' }),
+      {status:200,headers:{'content-type':'application/json'}});
+  };
+  const repo=createSupabaseRepo({url:'http://127.0.0.1:1',serviceRoleKey:'k',fetch:fakeFetch});
+  assert.deepEqual(await repo.resolveHelpMessage(7,'2026-11-24T12:00:00Z',1),{
+    id:7,userId:2,body:'Support request body',createdAt:'2026-11-24T10:00:00Z',
+    resolvedAt:'2026-11-24T12:00:00Z',assignedToId:3,assignedById:1,assignedAt:'2026-11-24T11:00:00Z',
+  });
 });

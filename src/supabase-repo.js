@@ -31,7 +31,8 @@ const INVITE = mapper({
   id: 'id', inviterId: 'inviter_id', email: 'email', tokenHash: 'token_hash', expiresAt: 'expires_at', createdAt: 'created_at',
   acceptedAt: 'accepted_at', acceptedUserId: 'accepted_user_id', revokedAt: 'revoked_at', supersededAt: 'superseded_at',
 });
-const HELP = mapper({ id: 'id', userId: 'user_id', body: 'body', createdAt: 'created_at', resolvedAt: 'resolved_at' });
+const HELP = mapper({ id: 'id', userId: 'user_id', body: 'body', createdAt: 'created_at', resolvedAt: 'resolved_at',
+  assignedToId: 'assigned_to', assignedById: 'assigned_by', assignedAt: 'assigned_at' });
 const REQUEST = mapper({
   id: 'id', borrowerId: 'borrower_id', trustedContactId: 'nominee_id', purpose: 'purpose', category: 'category',
   principalCents: 'principal_cents', repaymentDate: 'repayment_date', originalRepaymentDate: 'original_repayment_date',
@@ -143,6 +144,11 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
         .map((r) => ({ id:r.id, actorId:r.actor_id, targetUserId:r.target_user_id, eventType:r.event_type,
           beforeState:r.before_state, afterState:r.after_state, createdAt:r.created_at }));
     },
+    async listSupportAuditEvents({ limit = 100 } = {}) {
+      return check(await db.from('support_audit_events').select().order('id',{ascending:false}).limit(Math.min(Math.max(limit,1),200)))
+        .map((r)=>({id:r.id,actorId:r.actor_id,helpMessageId:r.help_message_id,eventType:r.event_type,
+          beforeState:r.before_state,afterState:r.after_state,createdAt:r.created_at}));
+    },
     async setVerifier(id, isVerifier) { check(await db.from('users').update({ is_verifier: !!isVerifier }).eq('id', id)); },
     // Name only (email is private). Parameterised: user text never goes into a filter string.
     async searchUsers(q, excludeId) {
@@ -233,9 +239,24 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       return [...rows.filter((m) => !m.resolvedAt), ...rows.filter((m) => m.resolvedAt)];
     },
     // Only an unresolved row is updated, so a second call keeps the first timestamp. Null if the id does not exist.
-    async resolveHelpMessage(id, at) {
-      await db.from('help_messages').update({ resolved_at: at }).eq('id', id).is('resolved_at', null);
-      return maybe(db.from('help_messages').select().eq('id', id), HELP);
+    async assignHelpMessage({ id, actorId, assigneeId }) {
+      const row=check(await db.rpc('admin_assign_help_message', {
+        p_actor_id:actorId, p_message_id:id, p_assignee_id:assigneeId,
+      }));
+      return {id:row.id,userId:row.userId,body:row.body,createdAt:row.createdAt,resolvedAt:row.resolvedAt,
+        assignedToId:row.assignedTo,assignedById:row.assignedBy,assignedAt:row.assignedAt};
+    },
+    async resolveHelpMessage(id, at, actorId) {
+      const row=check(await db.rpc('admin_resolve_help_message', {
+        p_actor_id:actorId, p_message_id:id,
+      }));
+      return {id:row.id,userId:row.userId,body:row.body,createdAt:row.createdAt,resolvedAt:row.resolvedAt,
+        assignedToId:row.assignedTo,assignedById:row.assignedBy,assignedAt:row.assignedAt};
+    },
+    async listSupportAuditEvents({ limit = 100 } = {}) {
+      return check(await db.from('support_audit_events').select().order('id',{ascending:false}).limit(Math.min(Math.max(limit,1),200)))
+        .map((r)=>({ id:r.id, actorId:r.actor_id, helpMessageId:r.help_message_id, eventType:r.event_type,
+          beforeState:r.before_state, afterState:r.after_state, createdAt:r.created_at }));
     },
 
     // ---- requests ----

@@ -258,21 +258,42 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   // The owner's own view, so it is the one place a sender's email is shown.
-  const helpView = (m, sender) => ({ id: m.id, body: m.body, createdAt: m.createdAt, resolvedAt: m.resolvedAt ?? null,
+  const helpView = (m, sender, assignee) => ({ id: m.id, body: m.body, createdAt: m.createdAt, resolvedAt: m.resolvedAt ?? null,
+    assignedToId:m.assignedToId ?? null, assignedAt:m.assignedAt ?? null, assignedToName:assignee?.name ?? null,
     userId: m.userId, name: sender?.name ?? 'Former member', email: sender?.email ?? null });
 
   api.get('/admin/help-messages', requireAdmin, async (_req, res) => {
     const rows = await repo.listHelpMessages();
-    const senders = new Map((await repo.getUsers([...new Set(rows.map((m) => m.userId))])).map((u) => [u.id, u]));
-    res.json({ messages: rows.map((m) => helpView(m, senders.get(m.userId))) });
+    const ids = [...new Set(rows.flatMap((m) => [m.userId,m.assignedToId]).filter(Boolean))];
+    const people = new Map((await repo.getUsers(ids)).map((u) => [u.id, u]));
+    res.json({ messages: rows.map((m) => helpView(m, people.get(m.userId), people.get(m.assignedToId))) });
   });
 
   api.post('/admin/help-messages/:id/resolve', requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id < 1) return fail(res, 404, 'Message not found');
-    const m = await repo.resolveHelpMessage(id, now().toISOString());
-    if (!m) return fail(res, 404, 'Message not found');
-    res.json({ message: helpView(m, await repo.getUser(m.userId)) });
+    try {
+      const m = await repo.resolveHelpMessage(id, now().toISOString(), req.user.id);
+      if (!m) return fail(res, 404, 'Message not found');
+      res.json({ message: helpView(m, await repo.getUser(m.userId), m.assignedToId ? await repo.getUser(m.assignedToId) : null) });
+    } catch (err) {
+      if (['42501','P0002'].includes(err?.code)) return fail(res, err.code === '42501' ? 403 : 404, String(err.message || 'Message not found'));
+      throw err;
+    }
+  });
+
+  api.post('/admin/help-messages/:id/assign', requireAdmin, async (req,res) => {
+    const id=parseId(req.params.id);
+    if (id===null) return fail(res,404,'Message not found');
+    const assigneeId=req.body?.assigneeId===null ? null : parseId(req.body?.assigneeId);
+    if (req.body?.assigneeId!==null && assigneeId===null) return fail(res,400,'Choose an active administrator or verifier','assigneeId');
+    try {
+      const m=await repo.assignHelpMessage({id,actorId:req.user.id,assigneeId});
+      res.json({message:helpView(m,await repo.getUser(m.userId),m.assignedToId?await repo.getUser(m.assignedToId):null)});
+    } catch(err) {
+      if (['42501','P0002','23514'].includes(err?.code)) return fail(res,err.code==='42501'?403:err.code==='P0002'?404:400,String(err.message||'Assignment rejected'));
+      throw err;
+    }
   });
 
   // Restricted administration: member roles are changed through one audited database transaction.
@@ -302,11 +323,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.get('/admin/audit-events', requireAdmin, async (_req, res) => {
-    const events = await repo.listAdminAuditEvents({ limit: 100 });
-    const ids = [...new Set(events.flatMap((e) => [e.actorId,e.targetUserId]))];
-    const names = new Map((await repo.getUsers(ids)).map((u) => [u.id, u.name]));
-    res.json({ events:events.map((e) => ({ ...e, actorName:names.get(e.actorId) ?? 'Former member',
-      targetName:names.get(e.targetUserId) ?? 'Former member' })) });
+    const [roles,support] = await Promise.all([
+      repo.listAdminAuditEvents({limit:100}), repo.listSupportAuditEvents({limit:100}),
+    ]);
+    const events=[...roles,...support].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,100);
+    const ids=[...new Set(events.flatMap((e)=>[e.actorId,e.targetUserId]).filter(Boolean))];
+    const names=new Map((await repo.getUsers(ids)).map((u)=>[u.id,u.name]));
+    res.json({events:events.map((e)=>({...e,actorName:names.get(e.actorId)??'Former member',
+      targetName:e.targetUserId?names.get(e.targetUserId)??'Former member':(e.helpMessageId?'Support message #'+e.helpMessageId:'—')}))});
   });
 
   api.get('/admin/operations', requireAdmin, async (_req, res) => {

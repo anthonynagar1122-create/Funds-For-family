@@ -189,9 +189,20 @@
         : '<p class="empty">No requests are waiting for your verification.</p>'}</section>`
       : '';
     const helpHtml = me.isAdmin
-      ? `<section aria-labelledby="support-inbox-title"><h2 id="support-inbox-title">Support inbox (${messages.filter((m) => !m.resolvedAt).length} open)</h2>${messages.length
-        ? `<ul class="cards">${messages.map((m) => `<li class="card"><div class="meta"><strong>${esc(m.name)}</strong><span>${esc(m.email || 'Email unavailable')}</span><span>${esc(new Date(m.createdAt).toLocaleString())}</span><span class="badge">${m.resolvedAt ? 'Resolved' : 'Open'}</span></div><p class="help-body">${esc(m.body)}</p>${m.resolvedAt ? '' : `<p class="row-actions"><button class="btn btn-secondary btn-sm" type="button" data-resolve-help="${esc(m.id)}">Mark resolved</button></p>`}</li>`).join('')}</ul>`
-        : '<p class="empty">There are no support messages yet.</p>'}</section>`
+      ? '<section aria-labelledby="support-inbox-title"><h2 id="support-inbox-title">Support inbox (' + messages.filter((m)=>!m.resolvedAt).length + ' open)</h2>' +
+        (messages.length ? '<ul class="cards">' + messages.map((m) => {
+          const options=members.filter((u)=>u.isAdmin||u.isVerifier).map((u)=>
+            '<option value="' + esc(u.id) + '" ' + (m.assignedToId===u.id?'selected':'') + '>' +
+            esc(u.name) + (u.isAdmin?' · Admin':' · Verifier') + '</option>').join('');
+          return '<li class="card"><div class="meta"><strong>' + esc(m.name) + '</strong><span>' +
+            esc(m.email || 'Email unavailable') + '</span><span>' + esc(new Date(m.createdAt).toLocaleString()) +
+            '</span><span class="badge">' + (m.resolvedAt?'Resolved':'Open') + '</span></div><p class="help-body">' +
+            esc(m.body) + '</p><p class="muted">' + (m.assignedToName?'Assigned to '+esc(m.assignedToName):'Unassigned') +
+            '</p><div class="row-actions"><label>Assignee <select data-assignee-for="' + esc(m.id) +
+            '"><option value="">Unassigned</option>' + options + '</select></label><button class="btn btn-secondary btn-sm" type="button" data-assign-help="' +
+            esc(m.id) + '">Save assignment</button>' + (m.resolvedAt?'':'<button class="btn btn-secondary btn-sm" type="button" data-resolve-help="' +
+            esc(m.id) + '">Mark resolved</button>') + '</div></li>';
+        }).join('') + '</ul>' : '<p class="empty">There are no support messages yet.</p>') + '</section>'
       : '';
     root.innerHTML = `<h1 id="workspace-title" tabindex="-1">${me.isAdmin ? 'Admin workspace' : 'Verifier workspace'}</h1>
       <p class="muted">Restricted operational tools. Access is determined by your account role.</p>
@@ -236,14 +247,20 @@
       root.addEventListener('click', async (event) => {
         const resolveButton = event.target.closest?.('[data-resolve-help]');
         const roleButton = event.target.closest?.('[data-save-roles]');
-        if (!me?.isAdmin || (!resolveButton && !roleButton)) return;
-        const button = resolveButton || roleButton;
+        const assignButton = event.target.closest?.('[data-assign-help]');
+        if (!me?.isAdmin || (!resolveButton && !roleButton && !assignButton)) return;
+        const button = resolveButton || roleButton || assignButton;
         button.disabled = true;
         try {
           if (resolveButton) {
             const id = resolveButton.getAttribute('data-resolve-help');
             await api('/admin/help-messages/' + encodeURIComponent(id) + '/resolve', { method: 'POST', body: {} });
             toast('Support message marked resolved.');
+          } else if (assignButton) {
+            const id=assignButton.getAttribute('data-assign-help');
+            const select=root.querySelector('[data-assignee-for="' + CSS.escape(id) + '"]');
+            await api('/admin/help-messages/' + encodeURIComponent(id) + '/assign', {method:'POST',body:{assigneeId:select?.value ? Number(select.value) : null}});
+            toast('Support assignment updated and audited.');
           } else {
             const card = roleButton.closest('[data-member-card]');
             const id = roleButton.getAttribute('data-save-roles');

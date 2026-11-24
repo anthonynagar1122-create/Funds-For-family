@@ -29,6 +29,7 @@ function createMemoryRepo() {
   const helpMessages = new Map();
   const financialIdempotency = new Map();
   const adminAuditEvents = [];
+  const supportAuditEvents = [];
 
   const entryApi = (store, add, get, update, del, list) => ({
     async [add](row) {
@@ -201,7 +202,7 @@ function createMemoryRepo() {
 
     // ---- help messages ----
     async addHelpMessage({ userId, body }) {
-      const m = { id: nextId(), userId, body, createdAt: new Date().toISOString(), resolvedAt: null };
+      const m = { id: nextId(), userId, body, createdAt: new Date().toISOString(), resolvedAt: null, assignedToId:null, assignedById:null, assignedAt:null };
       helpMessages.set(m.id, m);
       return copy(m);
     },
@@ -212,13 +213,32 @@ function createMemoryRepo() {
     async listHelpMessages() {
       return [...helpMessages.values()].sort((a, b) => (a.resolvedAt ? 1 : 0) - (b.resolvedAt ? 1 : 0) || a.id - b.id).map(copy);
     },
-    // Idempotent: an already resolved message keeps its first timestamp. Returns null if it does not exist.
-    async resolveHelpMessage(id, at) {
-      const m = helpMessages.get(id);
-      if (!m) return null;
-      if (!m.resolvedAt) m.resolvedAt = at;
+    async assignHelpMessage({ id, actorId, assigneeId }) {
+      const actor=users.get(actorId), m=helpMessages.get(id), assignee=assigneeId===null?null:users.get(assigneeId);
+      if (!actor?.isAdmin || actor.deletedAt) throw Object.assign(new Error('Admins only'),{code:'42501'});
+      if (!m) throw Object.assign(new Error('Support message not found'),{code:'P0002'});
+      if (assigneeId!==null && (!assignee || assignee.deletedAt || (!assignee.isAdmin && !assignee.isVerifier)))
+        throw Object.assign(new Error('Assignee must be an active administrator or verifier'),{code:'23514'});
+      const beforeState={assignedTo:m.assignedToId,assignedBy:m.assignedById,assignedAt:m.assignedAt};
+      m.assignedToId=assigneeId; m.assignedById=actorId; m.assignedAt=assigneeId===null?null:new Date().toISOString();
+      supportAuditEvents.push({id:supportAuditEvents.length+1,actorId,helpMessageId:id,eventType:assigneeId===null?'support.unassigned':'support.assigned',
+        beforeState,afterState:{assignedTo:assigneeId,assignedBy:actorId,assignedAt:m.assignedAt},createdAt:new Date().toISOString()});
       return copy(m);
     },
+    // Idempotent: an already resolved message keeps its first timestamp; only the first resolution is audited.
+    async resolveHelpMessage(id, at, actorId) {
+      const actor=users.get(actorId), m=helpMessages.get(id);
+      if (!actor?.isAdmin || actor.deletedAt) throw Object.assign(new Error('Admins only'),{code:'42501'});
+      if (!m) return null;
+      if (!m.resolvedAt) {
+        const beforeState={resolvedAt:null,assignedTo:m.assignedToId};
+        m.resolvedAt=at;
+        supportAuditEvents.push({id:supportAuditEvents.length+1,actorId,helpMessageId:id,eventType:'support.resolved',
+          beforeState,afterState:{resolvedAt:at,assignedTo:m.assignedToId},createdAt:at});
+      }
+      return copy(m);
+    },
+    async listSupportAuditEvents({limit=100}={}) { return supportAuditEvents.slice().reverse().slice(0,Math.min(Math.max(limit,1),200)).map(copy); },
 
     // ---- contributions and repayments ----
     // Synchronous check-and-write sections mirror the Postgres request-row lock semantics in tests.

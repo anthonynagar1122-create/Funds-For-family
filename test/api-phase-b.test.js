@@ -415,3 +415,59 @@ test('admin role management cannot remove the final administrator', async () => 
     assert.equal(audit.body.events.length, 0);
   } finally { await s.close(); }
 });
+
+
+test('admin can assign, reassign and unassign support messages with an audit trail', async () => {
+  const s = await setup({ ownerEmail:'owner@example.com' });
+  try {
+    const owner=(await s.call('owner','GET','/me')).body.user;
+    const member=(await s.call('member','GET','/me')).body.user;
+    const created=await s.call('member','POST','/help',{body:'Please help me update my account details'});
+    assert.equal(created.status,201);
+    const inbox=await s.call('owner','GET','/admin/help-messages');
+    const id=inbox.body.messages[0].id;
+    assert.equal(inbox.body.messages[0].assignedToId,null);
+    assert.equal((await s.call('member','POST','/admin/help-messages/'+id+'/assign',{assigneeId:owner.id})).status,403);
+    const invalid=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:member.id});
+    assert.equal(invalid.status,400);
+    const assigned=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:member.id+1000});
+    assert.equal(assigned.status,400);
+    const verifier=await s.repo.createUser({clerkId:'verifier-clerk',name:'verifier',email:'verifier@example.com',isVerifier:true});
+    const response=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:verifier.id});
+    assert.equal(response.status,200);
+    assert.equal(response.body.message.assignedToId,verifier.id);
+    assert.equal(response.body.message.assignedToName,'verifier');
+    const reassign=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:owner.id});
+    assert.equal(reassign.status,200);
+    assert.equal(reassign.body.message.assignedToId,owner.id);
+    const unassign=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:null});
+    assert.equal(unassign.status,200);
+    assert.equal(unassign.body.message.assignedToId,null);
+    const audit=await s.repo.listSupportAuditEvents();
+    assert.deepEqual(audit.map(e=>e.eventType),['support.unassigned','support.assigned','support.assigned']);
+    const adminAudit=await s.call('owner','GET','/admin/audit-events');
+    assert.equal(adminAudit.status,200);
+    assert.equal(adminAudit.body.events.filter(e=>e.eventType.startsWith('support.')).length,3);
+    assert.equal(audit[0].actorId,owner.id);
+    assert.equal(audit[0].helpMessageId,id);
+  } finally { await s.close(); }
+});
+
+test('support resolution is admin-only and writes a single audit event', async () => {
+  const s=await setup({ownerEmail:'owner@example.com'});
+  try {
+    const created=await s.call('member','POST','/help',{body:'I need help with my repayment history'});
+    assert.equal(created.status,201);
+    const id=(await s.call('owner','GET','/admin/help-messages')).body.messages[0].id;
+    assert.equal((await s.call('member','POST','/admin/help-messages/'+id+'/resolve')).status,403);
+    const first=await s.call('owner','POST','/admin/help-messages/'+id+'/resolve');
+    assert.equal(first.status,200);
+    assert.ok(first.body.message.resolvedAt);
+    const second=await s.call('owner','POST','/admin/help-messages/'+id+'/resolve');
+    assert.equal(second.status,200);
+    assert.equal(second.body.message.resolvedAt,first.body.message.resolvedAt);
+    const audit=await s.repo.listSupportAuditEvents();
+    assert.equal(audit.length,1);
+    assert.equal(audit[0].eventType,'support.resolved');
+  } finally { await s.close(); }
+});

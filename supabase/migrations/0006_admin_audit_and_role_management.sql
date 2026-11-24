@@ -77,4 +77,101 @@ $$;
 revoke all on function public.admin_set_member_roles(bigint,bigint,boolean,boolean) from public, anon, authenticated;
 grant execute on function public.admin_set_member_roles(bigint,bigint,boolean,boolean) to service_role;
 
+-- Support assignment is limited to administrators/verifiers and is audited in the same transaction.
+alter table public.help_messages
+  add column if not exists assigned_to bigint references public.users(id),
+  add column if not exists assigned_by bigint references public.users(id),
+  add column if not exists assigned_at timestamptz;
+create index if not exists help_messages_assignee_idx on public.help_messages (assigned_to, resolved_at, id desc);
+
+create table if not exists public.support_audit_events (
+  id bigint generated always as identity primary key,
+  actor_id bigint not null references public.users(id),
+  help_message_id bigint not null references public.help_messages(id),
+  event_type text not null check (event_type in ('support.assigned','support.unassigned','support.resolved')),
+  before_state jsonb not null,
+  after_state jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists support_audit_events_message_idx on public.support_audit_events (help_message_id, id desc);
+alter table public.support_audit_events enable row level security;
+revoke all on public.support_audit_events from anon, authenticated;
+grant all on public.support_audit_events to service_role;
+grant usage, select on sequence public.support_audit_events_id_seq to service_role;
+drop trigger if exists support_audit_append_only on public.support_audit_events;
+create trigger support_audit_append_only
+before update or delete or truncate on public.support_audit_events
+for each statement execute function public.reject_admin_audit_mutation();
+
+create or replace function public.admin_assign_help_message(
+  p_actor_id bigint, p_message_id bigint, p_assignee_id bigint
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+declare
+  v_before jsonb;
+  v_after jsonb;
+  v_event text;
+begin
+  if not exists (select 1 from public.users where id=p_actor_id and is_admin=true and deleted_at is null) then
+    raise exception 'Admins only' using errcode='42501';
+  end if;
+  if p_assignee_id is not null and not exists (
+    select 1 from public.users where id=p_assignee_id and deleted_at is null and (is_admin=true or is_verifier=true)
+  ) then raise exception 'Assignee must be an active administrator or verifier' using errcode='23514'; end if;
+  select jsonb_build_object('assignedTo',assigned_to,'assignedBy',assigned_by,'assignedAt',assigned_at)
+    into v_before from public.help_messages where id=p_message_id for update;
+  if v_before is null then raise exception 'Support message not found' using errcode='P0002'; end if;
+  update public.help_messages set assigned_to=p_assignee_id, assigned_by=p_actor_id,
+    assigned_at=case when p_assignee_id is null then null else now() end
+    where id=p_message_id
+    returning jsonb_build_object('id',id,'userId',user_id,'body',body,'createdAt',created_at,
+      'resolvedAt',resolved_at,'assignedTo',assigned_to,'assignedBy',assigned_by,'assignedAt',assigned_at) into v_after;
+  v_event := case when p_assignee_id is null then 'support.unassigned' else 'support.assigned' end;
+  insert into public.support_audit_events(actor_id,help_message_id,event_type,before_state,after_state)
+    values(p_actor_id,p_message_id,v_event,v_before,
+      jsonb_build_object('assignedTo',p_assignee_id,'assignedBy',p_actor_id,
+        'assignedAt',case when p_assignee_id is null then null else now() end));
+  return v_after;
+end;
+$$;
+revoke all on function public.admin_assign_help_message(bigint,bigint,bigint) from public, anon, authenticated;
+grant execute on function public.admin_assign_help_message(bigint,bigint,bigint) to service_role;
+
+create or replace function public.admin_resolve_help_message(p_actor_id bigint,p_message_id bigint)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+declare
+  v_before jsonb;
+  v_after jsonb;
+  v_resolved_at timestamptz;
+begin
+  if not exists (select 1 from public.users where id=p_actor_id and is_admin=true and deleted_at is null) then
+    raise exception 'Admins only' using errcode='42501';
+  end if;
+  select jsonb_build_object('resolvedAt',resolved_at,'assignedTo',assigned_to)
+    into v_before from public.help_messages where id=p_message_id for update;
+  if v_before is null then raise exception 'Support message not found' using errcode='P0002'; end if;
+  v_resolved_at := coalesce((v_before->>'resolvedAt')::timestamptz,now());
+  update public.help_messages set resolved_at=v_resolved_at where id=p_message_id and resolved_at is null;
+  select jsonb_build_object('id',id,'userId',user_id,'body',body,'createdAt',created_at,
+    'resolvedAt',resolved_at,'assignedTo',assigned_to,'assignedBy',assigned_by,'assignedAt',assigned_at)
+    into v_after from public.help_messages where id=p_message_id;
+  if v_before->>'resolvedAt' is null then
+    insert into public.support_audit_events(actor_id,help_message_id,event_type,before_state,after_state)
+      values(p_actor_id,p_message_id,'support.resolved',v_before,
+        jsonb_build_object('resolvedAt',v_resolved_at,'assignedTo',v_after->'assignedTo'));
+  end if;
+  return v_after;
+end;
+$$;
+revoke all on function public.admin_resolve_help_message(bigint,bigint) from public, anon, authenticated;
+grant execute on function public.admin_resolve_help_message(bigint,bigint) to service_role;
+
 commit;

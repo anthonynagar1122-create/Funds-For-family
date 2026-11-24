@@ -130,3 +130,13 @@ Remediation: open the Preview link, configure its staging secret, authenticate w
 - Focused local API, repository, and financial tests passed 62/62 before adding the migration assertion; rerun after all changes. npm audit --audit-level=high reported zero vulnerabilities.
 - Staging database connectivity timed out while applying migration 0006; application is not confirmed. Do not assume the admin endpoints are ready on a deployed preview until this migration is verified on staging and the new Preview is deployed.
 - Support assignment is still not implemented. It needs an explicit assignee model and audit/state contract before shipping; current support messages can be listed and resolved only.
+
+
+## Support assignment implementation — 2026-11-24
+
+- Added administrator-only support assignment and unassignment. Eligible assignees must be active administrators or verifiers.
+- Assignment changes and resolution are performed by Postgres RPCs with row locks and an append-only support_audit_events history. Functions use SECURITY INVOKER; EXECUTE is restricted to service_role.
+- Admin inbox displays assignee, assignment control, and resolve action. The unified admin audit endpoint includes role and support events.
+- API tests cover member denial, invalid/inactive assignees, assign/reassign/unassign, audit history, and idempotent resolution.
+- Focused API/repository/financial/migration tests: 65/65 passed before the final unified-audit assertion; rerun full suite after it.
+- Staging migration application remains unverified due database connectivity failure. The branch migration must be applied and checked in isolated staging before Preview acceptance.
