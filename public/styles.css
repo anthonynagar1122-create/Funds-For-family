@@ -106,7 +106,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
   #primary-nav .tab { flex: 1 1 0; min-width: 44px; flex-direction: column; padding: var(--space-1) 0; font-size: .75rem; border-radius: var(--radius-sm); }
   .tab-new { margin: 0 var(--space-1); }
   .topbar { padding: var(--space-3) var(--space-4); }
-  body:has(#primary-nav:not([hidden])) { padding-bottom: 72px; }
+  body:has(#primary-nav:not([hidden])) { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+  body:has(#primary-nav:not([hidden])) .toast { bottom: calc(72px + env(safe-area-inset-bottom) + var(--space-2)); max-width: calc(100vw - var(--space-8)); }
 }
 
 .offline-note { margin: 0; padding: var(--space-2) var(--space-4); background: #fff4d6; color: #5c4400; border-bottom: 1px solid #e6cf8a; text-align: center; font-weight: 600; }
