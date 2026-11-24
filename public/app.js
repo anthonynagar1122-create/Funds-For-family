@@ -145,6 +145,68 @@
     $('#profile-heading, #statement-heading')?.focus();
   }
 
+  // ---- Admin / verifier workspace ----
+  async function renderWorkspace() {
+    show('view-workspace');
+    const root = $('#workspace');
+    if (!me || (!me.isAdmin && !me.isVerifier)) {
+      root.innerHTML = '<h1 id="workspace-title" tabindex="-1">Workspace</h1><p class="empty">You do not have access to this workspace.</p>';
+      return;
+    }
+    root.innerHTML = '<p class="muted" role="status">Loading workspace…</p>';
+    let queue = [];
+    let messages = [];
+    if (me.isVerifier) {
+      try {
+        const data = await api('/home');
+        queue = (data.needsYou || []).filter((item) => item.kind === 'verify');
+      } catch (err) {
+        root.innerHTML = `<h1 id="workspace-title" tabindex="-1">Verification workspace</h1><p class="error" role="alert">${esc(err.message)}</p>`;
+        return;
+      }
+    }
+    if (me.isAdmin) {
+      try {
+        const data = await api('/admin/help-messages');
+        messages = data.messages || [];
+      } catch (err) {
+        root.innerHTML = `<h1 id="workspace-title" tabindex="-1">Admin workspace</h1><p class="error" role="alert">${esc(err.message)}</p>`;
+        return;
+      }
+    }
+    const queueHtml = me.isVerifier
+      ? `<section aria-labelledby="verification-queue-title"><h2 id="verification-queue-title">Verification queue (${queue.length})</h2>${queue.length
+        ? `<ul class="cards">${queue.map((item) => `<li class="card"><p class="card-title">Request awaiting your review</p><p class="muted">Review the purpose and available context before deciding.</p><a class="btn btn-primary btn-sm" href="#/request/${encodeURIComponent(item.requestId)}">Open request</a></li>`).join('')}</ul>`
+        : '<p class="empty">No requests are waiting for your verification.</p>'}</section>`
+      : '';
+    const helpHtml = me.isAdmin
+      ? `<section aria-labelledby="support-inbox-title"><h2 id="support-inbox-title">Support inbox (${messages.filter((m) => !m.resolvedAt).length} open)</h2>${messages.length
+        ? `<ul class="cards">${messages.map((m) => `<li class="card"><div class="meta"><strong>${esc(m.name)}</strong><span>${esc(m.email || 'Email unavailable')}</span><span>${esc(new Date(m.createdAt).toLocaleString())}</span><span class="badge">${m.resolvedAt ? 'Resolved' : 'Open'}</span></div><p class="help-body">${esc(m.body)}</p>${m.resolvedAt ? '' : `<p class="row-actions"><button class="btn btn-secondary btn-sm" type="button" data-resolve-help="${esc(m.id)}">Mark resolved</button></p>`}</li>`).join('')}</ul>`
+        : '<p class="empty">There are no support messages yet.</p>'}</section>`
+      : '';
+    root.innerHTML = `<h1 id="workspace-title" tabindex="-1">${me.isAdmin ? 'Admin workspace' : 'Verifier workspace'}</h1>
+      <p class="muted">Restricted operational tools. Access is determined by your account role.</p>
+      ${queueHtml}${helpHtml}`;
+    if (!root.dataset.resolveBound) {
+      root.dataset.resolveBound = '1';
+      root.addEventListener('click', async (event) => {
+        const button = event.target.closest?.('[data-resolve-help]');
+        if (!button || !me?.isAdmin) return;
+        const id = button.getAttribute('data-resolve-help');
+        button.disabled = true;
+        try {
+          await api(`/admin/help-messages/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: {} });
+          toast('Support message marked resolved.');
+          await renderWorkspace();
+        } catch (err) {
+          button.disabled = false;
+          toast(err.message || 'Could not update this message.');
+        }
+      });
+    }
+    $('#workspace-title')?.focus();
+  }
+
   // ---- Welcome ----
   // The API sends null until each step is done (an absent field is treated as done).
   const needsWelcome = (u) => u.welcomedAt === null || u.termsAcceptedAt === null;
@@ -177,6 +239,7 @@
   Router.register('request', guarded((id) => (id ? renderDetail(id) : renderActivity())));
   Router.register('circle', guarded(renderPeople));
   Router.register('profile', guarded((sub) => renderProfile(sub)));
+  Router.register('workspace', guarded(renderWorkspace));
   Router.register('welcome', guarded(renderWelcome));
   let routerStarted = false;
   function route() {
