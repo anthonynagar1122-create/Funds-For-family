@@ -13,7 +13,7 @@ Owner-authorized defensive review of the named Funds For Family repository, its 
 
 ## Evidence observed
 
-- Vercel preview deployment dpl_AYswQ2neGM6GVGc3TctwmAtcRaKz reported READY for the feature branch, commit 4c0bc8630f2437143c2cd684dcaa4475137218c7.
+- Latest Vercel preview deployment dpl_7TpKmMSH92L4YqayPXWEu1U2b4Fk reports READY for the feature branch, commit 3bcc0250ea3e799e0b1ed2a1aa0fb8b24db368a6. URL: https://funds-for-family-1bqcctc31-anthonynagar1122-7962s-projects.vercel.app.
 - The branch's Vercel Preview environment has a branch-specific staging SUPABASE_URL, Clerk publishable key and APP_URL; it does not have a branch-specific SUPABASE_SECRET_KEY.
 - The Vercel project has a production-only Supabase secret key. It was not read or copied. Do not copy this into Preview.
 - The branch's runtime configuration explicitly rejects a Preview URL containing the production project ref.
@@ -22,7 +22,7 @@ Owner-authorized defensive review of the named Funds For Family repository, its 
 - Staging performance advisor reports unused-index INFO notices (expected on an empty staging DB). Health advisor reported no findings.
 - Feature branch rules contain no interest-rate constant or interest accumulation function; limits use rupees/paise; trusted contact is not a guarantor.
 - Feature branch tests include auth, IDOR, role checks, validation, oversized body, escaping, secret checks, safe error messages, headers, and contribution/repayment permission cases.
-- No GitHub PR reviews exist yet. Branch is 60 commits ahead of main and 1 behind; PR remains draft, open, mergeable.
+- No GitHub PR reviews exist yet. PR #1 remains draft and open; the latest branch commit is 3bcc0250ea3e799e0b1ed2a1aa0fb8b24db368a6.
 
 ## Findings
 
@@ -91,17 +91,19 @@ Remediation: open the Preview link, configure its staging secret, authenticate w
 
 ## Retest status
 
-- Staging schema/RLS/advisors: inspected.
-- Branch configuration isolation: inspected; missing staging secret remains open.
-- Vercel Preview build: READY at the recorded deployment revision; newer changes require latest preview refresh.
-- Browser UI acceptance: not run on Preview.
+- Staging schema/RLS/advisors: inspected; health advisor has no findings.
+- Branch configuration isolation: inspected; branch-scoped Preview still has no SUPABASE_SECRET_KEY. The production-only secret was not accessed or copied.
+- Vercel Preview: READY for latest branch commit 3bcc0250ea3e799e0b1ed2a1aa0fb8b24db368a6 at https://funds-for-family-1bqcctc31-anthonynagar1122-7962s-projects.vercel.app.
+- GitHub Actions run 45394323912: 394/397 tests passed; 3 failed visual hash checks at 375px, 768px and 1440px. Navigation/role tests now pass. Visual baselines were not rewritten without screenshot review.
+- GitHub Actions staging integration job failed at its credential/target preflight; npm integration tests were not run.
+- Preview browser acceptance and Clerk sign-in were not completed because the available browser sandbox could not establish a connection to the Vercel preview.
 - Active penetration scan: not run.
 - Production change: none.
 
 ## Closure requirements
 
 - Add staging-only Supabase secret in Vercel Preview and redeploy.
-- Run full unit/API/E2E test suite and browser checks against preview.
+- Review and approve the three intentional landing visual changes, then update visual baselines and rerun CI; configure GitHub Actions staging secrets and run integration tests; complete browser/Clerk acceptance.
 - Implement and prove financial concurrency/idempotency guarantees.
 - Close copy mismatch via a controlled production release.
 - Obtain review approval and owner approval before merging/promoting.
