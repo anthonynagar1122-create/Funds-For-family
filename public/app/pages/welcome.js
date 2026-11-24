@@ -4,10 +4,13 @@
 
   // Three screens: your details and the terms, who you are connected with, and the rules.
   // ctx: { me, root, onUser(user), go(hash), toast(msg) }
+  // Progress and typed values live here so a re-render (hashchange) never resets the flow.
+  const saved = { step: 1, name: null, upi: null, terms: null };
+
   function render(ctx) {
     const { root } = ctx;
-    let step = 1;
     let user = ctx.me;
+    const state = saved;
     // A later answer (PATCH, accept-terms) does not repeat inviterName, so keep what /me gave us.
     const inviterName = ctx.me.inviterName ?? null;
     const merge = (u) => { user = { ...u, inviterName }; ctx.onUser(user); };
@@ -16,19 +19,19 @@
       <p class="muted" id="w-progress">Step ${n} of 3</p>${body}</div>`;
 
     function step1() {
-      const termsDone = !!user.termsAcceptedAt;
+      const termsDone = state.terms ?? !!user.termsAcceptedAt;
       root.innerHTML = shell(1, `
         <h1 id="welcome-title" tabindex="-1">Welcome to Funds For Family</h1>
         <p class="lede">Let's check your details. This takes a minute.</p>
         <form id="w-step-1" class="form welcome-form" novalidate>
           <div class="field">
             <label for="w-name">Your name</label>
-            <input id="w-name" name="name" type="text" autocomplete="name" maxlength="120" required value="${esc(user.name)}" aria-describedby="w-e-name">
+            <input id="w-name" name="name" type="text" autocomplete="name" maxlength="120" required value="${esc(state.name ?? user.name)}" aria-describedby="w-e-name">
             <p class="error" id="w-e-name" role="alert"></p>
           </div>
           <div class="field">
             <label for="w-upi">UPI ID (optional)</label>
-            <input id="w-upi" name="upiId" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="name@bank" value="${esc(user.upiId ?? '')}" aria-describedby="w-h-upi w-e-upi">
+            <input id="w-upi" name="upiId" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="name@bank" value="${esc(state.upi ?? user.upiId ?? '')}" aria-describedby="w-h-upi w-e-upi">
             <p class="hint" id="w-h-upi">Add it so people can pay you in one tap. You can change it later in Profile.</p>
             <p class="error" id="w-e-upi" role="alert"></p>
           </div>
@@ -44,7 +47,9 @@
       const form = root.querySelector('#w-step-1');
       const terms = root.querySelector('#w-terms');
       const cont = root.querySelector('#w-continue');
-      terms.addEventListener('change', () => { cont.disabled = !terms.checked; });
+      terms.addEventListener('change', () => { state.terms = terms.checked; cont.disabled = !terms.checked; });
+      root.querySelector('#w-name').addEventListener('input', (e) => { state.name = e.target.value; });
+      root.querySelector('#w-upi').addEventListener('input', (e) => { state.upi = e.target.value; });
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
         if (!terms.checked) return;
@@ -66,7 +71,7 @@
           cont.disabled = !terms.checked;
           return;
         }
-        step = 2; draw();
+        state.step = 2; draw();
       });
     }
 
@@ -80,12 +85,11 @@
           ${line}
           <p>Your circle is the people you trust enough to lend to or borrow from. A good next step is to invite one more person you know well.</p>
           <div class="row-actions">
-            <a class="btn btn-secondary" id="w-invite" href="#/circle">Invite someone</a>
             <button class="btn btn-primary" id="w-next" type="button">Next</button>
           </div>
-          <p class="hint">You can invite people any time from Circle.</p>
+          <p class="hint">You can invite people any time from Circle, once you finish here.</p>
         </div>`);
-      root.querySelector('#w-next').addEventListener('click', () => { step = 3; draw(); });
+      root.querySelector('#w-next').addEventListener('click', () => { state.step = 3; draw(); });
     }
 
     function step3() {
@@ -107,14 +111,15 @@
         btn.disabled = true;
         try { merge((await window.Api.post('/me/welcomed')).user); }
         catch (err) { root.querySelector('#w-e-form').textContent = err.message; btn.disabled = false; return; }
+        Object.assign(saved, { step: 1, name: null, upi: null, terms: null });
         ctx.go('#/home');
       });
     }
 
     function draw() {
-      [step1, step2, step3][step - 1]();
+      [step1, step2, step3][state.step - 1]();
       const h = root.querySelector('#welcome-title');
-      if (h && step > 1) h.focus();
+      if (h && state.step > 1) h.focus();
     }
     draw();
   }

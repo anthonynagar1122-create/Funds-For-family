@@ -48,7 +48,8 @@
     if (!nav) return;
     const tabs = me && me.isAdmin === true ? [...TABS, { id: 'admin', label: 'Admin' }] : TABS;
     const active = TAB_FOR[route.name];
-    nav.hidden = !me;
+    // The welcome flow is a focused screen: no navigation until it is finished.
+    nav.hidden = !me || me.welcomedAt === null || me.termsAcceptedAt === null;
     nav.innerHTML = tabs.map((t) => `<a class="tab ${t.cls || ''}" id="nav-${esc(t.id)}" href="#/${esc(t.id)}"${t.id === active ? ' aria-current="page"' : ''}>${esc(t.label)}</a>`).join('');
   }
 

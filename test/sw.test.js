@@ -68,3 +68,18 @@ test('source never caches POST or admin paths', () => {
   assert.ok(putCalls.length >= 1);
   assert.match(src, /x-from-sw-cache/);
 });
+
+test('stale-cache guard: every script under public/app is listed in SHELL_FILES', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { SHELL_FILES } = load();
+  const root = path.join(__dirname, '..', 'public');
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? walk(p) : [p];
+  });
+  const scripts = walk(path.join(root, 'app')).filter((f) => f.endsWith('.js') && !/\.test\.js$/.test(f))
+    .map((f) => '/' + path.relative(root, f).split(path.sep).join('/'));
+  assert.ok(scripts.length > 0);
+  for (const f of scripts) assert.ok(SHELL_FILES.includes(f), `${f} must be in SHELL_FILES`);
+});

@@ -140,3 +140,26 @@ test('a member who is already welcomed goes straight to home', { skip }, async (
     assert.match(page.url(), /#\/home$|#$|\/app\/$/);
   } finally { await ctx.close(); }
 });
+
+test('navigation is hidden during welcome, and a hashchange keeps the step and typed values', { skip }, async () => {
+  const { page, ctx } = await open();
+  try {
+    await page.waitForSelector('#w-name');
+    assert.equal(await page.locator('nav[aria-label="Primary"]:visible').count(), 0, 'no nav tabs while welcoming');
+    await page.fill('#w-name', 'Typed Name');
+    await page.fill('#w-upi', 'typed@okbank');
+    await page.check('#w-terms');
+    await page.evaluate(() => { location.hash = '#/circle'; });
+    await page.waitForSelector('#w-name');
+    assert.match(page.url(), /#\/welcome$/);
+    assert.equal(await page.inputValue('#w-name'), 'Typed Name');
+    assert.equal(await page.inputValue('#w-upi'), 'typed@okbank');
+    assert.equal(await page.isChecked('#w-terms'), true);
+    await page.click('#w-continue');
+    await page.waitForSelector('#w-step-2');
+    await page.evaluate(() => { location.hash = '#/requests'; });
+    await page.waitForSelector('#w-step-2');
+    assert.match(page.url(), /#\/welcome$/);
+    assert.equal(await page.locator('nav[aria-label="Primary"]:visible').count(), 0);
+  } finally { await ctx.close(); }
+});
