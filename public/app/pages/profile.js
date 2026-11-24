@@ -3,9 +3,10 @@
   const esc = window.Format.esc;
   const inr = (c) => window.Money.formatInr(c);
   const day = (iso) => (iso ? String(iso).slice(0, 10) : '');
-  const monthYear = (iso) => {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
+  // memberSince arrives as YYYY-MM (IST).
+  const monthYear = (ym) => {
+    const m = /^(\d{4})-(\d{2})/.exec(String(ym ?? ''));
+    return m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 15)).toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
   };
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 

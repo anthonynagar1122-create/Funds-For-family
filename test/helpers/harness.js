@@ -8,7 +8,7 @@ const { createMemoryRepo } = require('../../src/memory-repo');
 
 const DEFAULT_NOW = new Date('2026-11-20T12:00:00Z');
 
-async function setup({ admitAll = true, ownerEmail = '', now = DEFAULT_NOW, repo = createMemoryRepo() } = {}) {
+async function setup({ admitAll = true, ownerEmail = '', now = DEFAULT_NOW, repo = createMemoryRepo(), deleteClerkUser } = {}) {
   const sent = [];
   const logged = [];
   const clock = { now };
@@ -17,6 +17,7 @@ async function setup({ admitAll = true, ownerEmail = '', now = DEFAULT_NOW, repo
     now: () => clock.now,
     mailer: async (m) => { sent.push(m); },
     ownerEmail,
+    ...(deleteClerkUser ? { deleteClerkUser } : {}),
     admit: async () => admitAll,
     identify: async (req) => {
       const name = req.headers['x-test-user'];

@@ -109,7 +109,7 @@ test('trust history: facts for self and mutual connections only; never overdue o
     assert.deepEqual(Object.keys(self.trust).sort(), ['lentToCount', 'memberSince', 'repaidCount', 'repaidOnTimeCount']);
     assert.equal(self.trust.repaidCount, 2);
     assert.equal(self.trust.repaidOnTimeCount, 1);
-    assert.match(self.trust.memberSince, /^\d{4}-\d{2}/);
+    assert.match(self.trust.memberSince, /^\d{4}-\d{2}$/);
     assert.doesNotMatch(JSON.stringify(self.trust), /overdue|unpaid/i);
     const lender = (await s.call('lena', 'GET', `/users/${bid}`)).body.user;   // mutual
     assert.equal(lender.trust.repaidCount, 2);
@@ -222,5 +222,60 @@ test('DELETE /me anonymises the member, keeps ledger rows, and removes them from
     // The old sign-in can no longer act as that member: it is never mapped back to the deleted row.
     const again = await s.call('lena', 'GET', '/me');
     assert.notEqual(again.body.user?.id, lid);
+  } finally { await s.close(); }
+});
+
+test('DELETE /me is refused while the member is the trusted contact on an active request', async () => {
+  const s = await setup();
+  try {
+    const [bid, cid] = [await idOf(s.call, 'bina'), await idOf(s.call, 'cara')];
+    await s.repo.createRequest({ borrowerId: bid, trustedContactId: cid, purpose: 'School fees for the second term at college', category: 'education',
+      principalCents: 50000, repaymentDate: '2027-03-01', status: 'open' });
+    const r = await s.call('cara', 'DELETE', '/me', { confirm: 'DELETE' });
+    assert.equal(r.status, 409);
+    assert.match(r.body.error, /trusted contact/i);
+    assert.equal((await s.repo.getUser(cid)).deletedAt, null);
+  } finally { await s.close(); }
+});
+
+test('DELETE /me removes the Clerk user after anonymising; a Clerk failure is logged without personal data and still returns 200', async () => {
+  const calls = [];
+  const s = await setup({ deleteClerkUser: async (id) => { calls.push(id); } });
+  try {
+    await s.call('ana', 'GET', '/me');
+    const r = await s.call('ana', 'DELETE', '/me', { confirm: 'DELETE' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(calls, ['clerk_ana']);
+  } finally { await s.close(); }
+  const s2 = await setup({ deleteClerkUser: async () => { throw new Error('clerk down'); } });
+  try {
+    const id = await idOf(s2.call, 'bo');
+    const r = await s2.call('bo', 'DELETE', '/me', { confirm: 'DELETE' });
+    assert.equal(r.status, 200);
+    assert.equal((await s2.repo.getUser(id)).deletedAt !== null, true);
+    const logged = JSON.stringify(s2.logged.map((a) => a.map(String)));
+    assert.match(logged, /clerk down/);
+    assert.doesNotMatch(logged, /clerk_bo|bo@example\.com/);
+  } finally { await s2.close(); }
+});
+
+test('a deleted member signing in again is refused when joining is invite only', async () => {
+  const s = await setup({ admitAll: false, ownerEmail: 'owner@example.com' });
+  try {
+    const made = await s.call('owner', 'POST', '/invites', { email: 'kim@example.com' });
+    await s.call('kim', 'GET', '/me', null, null, { 'x-invite-token': tokenOf(made.body.link) });
+    assert.equal((await s.call('kim', 'DELETE', '/me', { confirm: 'DELETE' })).status, 200);
+    const again = await s.call('kim', 'GET', '/me');
+    assert.equal(again.status, 403);
+    assert.equal(again.body.code, 'invite_only');
+  } finally { await s.close(); }
+});
+
+test('POST /follows to a deleted member is 404', async () => {
+  const s = await setup();
+  try {
+    const gid = await idOf(s.call, 'gone');
+    await s.call('gone', 'DELETE', '/me', { confirm: 'DELETE' });
+    assert.equal((await s.call('asha', 'POST', '/follows', { userId: gid })).status, 404);
   } finally { await s.close(); }
 });

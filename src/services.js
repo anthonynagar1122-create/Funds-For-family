@@ -47,6 +47,7 @@ function buildProductionApp(env = process.env) {
     repo,
     identify,
     mailer,
+    deleteClerkUser: async (clerkId) => { await clerk.users.deleteUser(clerkId); },
     ownerEmail: env.OWNER_EMAIL || '',
     appUrl: env.APP_URL || 'http://localhost:3000',
     requiredApprovals: env.REQUIRED_APPROVALS ? Number(env.REQUIRED_APPROVALS) : undefined,

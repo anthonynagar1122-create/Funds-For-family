@@ -73,7 +73,7 @@ async function open(opts = {}, hash = '#/profile') {
   });
   await page.route('**/api/me/statement', (route) => json(route, 200, STATEMENT));
   await page.route('**/api/users/9', (route) => json(route, 200, { user: { id: 9, name: 'Asha Rao',
-    trust: { memberSince: '2026-03-14T00:00:00.000Z', repaidCount: 3, repaidOnTimeCount: 2, lentToCount: 5 } } }));
+    trust: { memberSince: '2026-03', repaidCount: 3, repaidOnTimeCount: 2, lentToCount: 5 } } }));
   await page.route('**/api/help', (route) => { state.helps.push(route.request().postDataJSON()); return json(route, 201, { ok: true }); });
   await page.route('**/api/home', (route) => json(route, 200, { needsYou: [], myRequests: [], myLending: [] }));
   await page.goto(`http://127.0.0.1:${server.address().port}/app/${hash}`, { waitUntil: 'load' });

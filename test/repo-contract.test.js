@@ -209,6 +209,8 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     const r = await repo.createRequest(req(b, c, { status: 'repaid' }));
     await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 50000, status: 'confirmed' });
     await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: l.id, amountCents: 50000, status: 'confirmed' });
+    const joined = await repo.createInvite({ inviterId: other.id, email: l.email, tokenHash: `${prefix}${uniq()}z`, expiresAt });
+    await repo.updateInvite(joined.id, { acceptedAt: new Date().toISOString(), acceptedUserId: l.id });
 
     const out = await repo.deleteAccount(l.id);
     assert.equal(out.id, l.id);
@@ -225,6 +227,8 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.deepEqual((await repo.connections(b.id)).following, [other.id], 'unrelated follows stay');
     assert.equal(await repo.getInvite(open.id), null);
     assert.ok(await repo.getInvite(kept.id));
+    assert.equal((await repo.getInvite(joined.id)).email, `deleted-${l.id}@deleted.invalid`, 'accepted invite no longer holds the real email');
+    assert.equal((await repo.getInvite(kept.id)).email.includes('deleted'), false);
     assert.equal((await repo.listContributions(r.id)).length, 1);
     assert.equal((await repo.listRepayments(r.id)).length, 1);
     assert.deepEqual(await repo.searchUsers('Former member', other.id), [], 'deleted members are not searchable');

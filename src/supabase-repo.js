@@ -137,6 +137,7 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       if (!user) return null;
       check(await db.from('follows').delete().eq('follower_id', id));
       check(await db.from('follows').delete().eq('followee_id', id));
+      check(await db.from('invites').update({ email: `deleted-${id}@deleted.invalid` }).eq('accepted_user_id', id));
       for (const column of ['inviter_id', 'accepted_user_id']) {
         check(await db.from('invites').delete().eq(column, id).is('accepted_at', null).is('revoked_at', null).is('superseded_at', null));
       }

@@ -132,7 +132,7 @@
   // ---- Profile and statement ----
   let clerkInstance = null;
   async function signOut() {
-    Api.clearSaved().catch(() => {});
+    await Api.clearSaved().catch(() => {});
     if (clerkInstance) await clerkInstance.signOut();
   }
   async function renderProfile(sub) {

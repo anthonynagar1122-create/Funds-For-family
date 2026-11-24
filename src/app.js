@@ -28,11 +28,13 @@ const INVITE_ONLY = {
  *   now         () => Date
  *   appUrl      string, used in email links
  *   ownerEmail  string; the member with this email is admitted as admin and verifier
+ *   deleteClerkUser async (clerkId) => void; removes the sign-in account after deletion, default no-op
  *   admit       async (identity) => boolean; extra admission rule, default none (invite only)
  *   requiredApprovals number, default rules.DEFAULT_REQUIRED_APPROVALS
  */
 function createApp({ repo, identify, mailer = async () => {}, now = () => new Date(), appUrl = 'http://localhost:3000',
-  requiredApprovals = rules.DEFAULT_REQUIRED_APPROVALS, logger = console, ownerEmail = '', admit = async () => false }) {
+  requiredApprovals = rules.DEFAULT_REQUIRED_APPROVALS, logger = console, ownerEmail = '', admit = async () => false,
+  deleteClerkUser = async () => {} }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '32kb' }));
@@ -227,9 +229,11 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       unsettledCount += contribs.filter((c) => open(c) && (c.contributorId === me || r.borrowerId === me)).length
         + repays.filter((p) => open(p) && (p.payerId === me || p.lenderId === me)).length;
     }
-    const reason = rules.deletionBlock({ activeCount, owedToMeCents, unsettledCount });
+    const reason = rules.deletionBlock({ activeCount, contactActiveCount: await repo.countActiveAsContact(me), owedToMeCents, unsettledCount });
     if (reason) return fail(res, 409, reason);
     await repo.deleteAccount(me);
+    // After the data is anonymised: remove the sign-in too. A failure must not undo or fail the deletion; log the message only.
+    try { await deleteClerkUser(req.user.clerkId); } catch (err) { logger.error('clerk user delete failed', err?.message); }
     res.json({ ok: true });
   });
 
@@ -272,7 +276,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const followeeId = Number(req.body?.userId);
     if (!Number.isInteger(followeeId)) return fail(res, 400, 'userId is required', 'userId');
     if (followeeId === req.user.id) return fail(res, 400, 'You cannot follow yourself', 'userId');
-    if (!(await repo.getUser(followeeId))) return fail(res, 404, 'User not found');
+    const target = await repo.getUser(followeeId);
+    if (!target || target.deletedAt) return fail(res, 404, 'User not found');
     await repo.addFollow(req.user.id, followeeId);
     res.status(201).json({ ok: true });
   });

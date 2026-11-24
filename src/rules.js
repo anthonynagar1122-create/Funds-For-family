@@ -296,7 +296,8 @@ function effectiveStatus(request, now) {
  * Why a member cannot delete their account yet, or null. Money is never forgotten: an active request, money owed to
  * the member as a lender, or any entry on their side still waiting to be settled all block deletion.
  */
-function deletionBlock({ activeCount = 0, owedToMeCents = 0, unsettledCount = 0 } = {}) {
+function deletionBlock({ activeCount = 0, contactActiveCount = 0, owedToMeCents = 0, unsettledCount = 0 } = {}) {
+  if (contactActiveCount > 0) return 'You are the trusted contact on an active request. Ask the borrower to choose someone else first.';
   if (activeCount > 0) return 'You have a request that is still active. Finish or withdraw it before deleting your account.';
   if (owedToMeCents > 0) return 'You are still owed money from a loan. Wait until it is repaid before deleting your account.';
   if (unsettledCount > 0) return 'Some payments are still waiting to be confirmed. Money is owed one way or the other until they are settled, so deleting your account has to wait.';
@@ -309,7 +310,7 @@ function deletionBlock({ activeCount = 0, owedToMeCents = 0, unsettledCount = 0 
  */
 function trustFacts({ createdAt, repaidRequests = [], lentToCount = 0 }) {
   const onTime = repaidRequests.filter((r) => r.repaidAt && r.repaymentDate && todayIst(new Date(r.repaidAt)) <= r.repaymentDate).length;
-  return { memberSince: createdAt ?? null, repaidCount: repaidRequests.length, repaidOnTimeCount: onTime, lentToCount };
+  return { memberSince: createdAt ? todayIst(new Date(createdAt)).slice(0, 7) : null, repaidCount: repaidRequests.length, repaidOnTimeCount: onTime, lentToCount };
 }
 
 module.exports = {
