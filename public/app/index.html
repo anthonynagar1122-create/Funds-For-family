@@ -38,51 +38,7 @@
       <p class="empty" id="feed-empty" hidden>No approved requests in your circle yet. Follow people to see their requests.</p>
     </section>
 
-    <section id="view-new" hidden aria-labelledby="new-title">
-      <h1 id="new-title">Request funds</h1>
-      <form id="new-form" class="form" novalidate>
-        <div class="field">
-          <label for="f-amount">Total amount (₹)</label>
-          <input id="f-amount" name="amount" type="text" inputmode="decimal" autocomplete="off" required aria-describedby="h-amount e-amount">
-          <p class="hint" id="h-amount">₹100 to ₹50,000</p>
-          <p class="error" id="e-amount" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-category">Category</label>
-          <select id="f-category" name="category" required aria-describedby="e-category">
-            <option value="">Choose a category</option>
-            <option value="education">Education</option>
-            <option value="medical">Medical</option>
-            <option value="home">Home</option>
-            <option value="family_event">Family event</option>
-            <option value="work">Work</option>
-            <option value="emergency">Emergency</option>
-            <option value="other">Other</option>
-          </select>
-          <p class="error" id="e-category" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-purpose">Purpose</label>
-          <textarea id="f-purpose" name="purpose" rows="4" minlength="20" required aria-describedby="h-purpose e-purpose"></textarea>
-          <p class="hint" id="h-purpose">Be specific. A verification team will check it.</p>
-          <p class="error" id="e-purpose" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-date">Repayment date</label>
-          <input id="f-date" name="repaymentDate" type="date" required aria-describedby="h-date e-date">
-          <p class="hint" id="h-date">Within the next 12 months.</p>
-          <p class="error" id="e-date" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-contact">Trusted contact</label>
-          <select id="f-contact" name="trustedContactId" required aria-describedby="h-contact e-trustedContactId"></select>
-          <p class="hint" id="h-contact">Someone you are mutually connected with. They help repay if you cannot.</p>
-          <p class="error" id="e-trustedContactId" role="alert"></p>
-        </div>
-        <p class="error" id="e-form" role="alert"></p>
-        <button class="btn btn-primary" type="submit">Submit request</button>
-      </form>
-    </section>
+    <section id="view-new" hidden aria-label="New request"><div id="new-root"></div></section>
 
     <section id="view-not-invited" hidden aria-labelledby="not-invited-title">
       <h1 id="not-invited-title">Not invited</h1>
@@ -139,6 +95,7 @@
   <script src="/app/card-model.js"></script>
   <script src="/app/pages/welcome.js"></script>
   <script src="/app/pages/home.js"></script>
+  <script src="/app/pages/new-request.js"></script>
   <script src="/app.js" defer></script>
   <script>
     if ('serviceWorker' in navigator) {

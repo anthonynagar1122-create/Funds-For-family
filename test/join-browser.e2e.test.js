@@ -121,7 +121,7 @@ test('submitting the form posts rupees as typed, category and trustedContactId',
     await page.fill('#f-purpose', 'Surgery bill for the operation in March');
     await page.fill('#f-date', '2027-03-01');
     await page.selectOption('#f-contact', '2');
-    await page.getByRole('button', { name: /submit/i }).click();
+    await page.getByRole('button', { name: /send request/i }).click();
     await page.waitForFunction(() => location.hash === '#request/7');
     assert.deepEqual(posted, { amount: '1,500', purpose: 'Surgery bill for the operation in March', category: 'medical', repaymentDate: '2027-03-01', trustedContactId: 2 });
   } finally { await ctx.close(); }

@@ -78,36 +78,10 @@
   // ---- New request ----
   async function renderNew() {
     show('view-new');
-    const sel = $('#f-contact');
-    sel.innerHTML = '<option value="">Loading members…</option>';
-    const { users } = await api('/users');
-    sel.innerHTML = '<option value="">Choose a trusted contact</option>' + users.map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
-    $('#f-date').min = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-    const limit = new Date(); limit.setMonth(limit.getMonth() + 12);
-    $('#f-date').max = limit.toISOString().slice(0, 10);
+    try { await NewRequestPage.render($('#new-root'), { toast, go: (h) => Router.go(h) }); }
+    catch (err) { $('#new-root').innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`; }
+    $('#new-title')?.focus();
   }
-
-  function clearErrors(form) {
-    form.querySelectorAll('.error').forEach((e) => (e.textContent = ''));
-    form.querySelectorAll('[aria-invalid]').forEach((e) => e.removeAttribute('aria-invalid'));
-  }
-
-  $('#new-form').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const form = ev.currentTarget;
-    clearErrors(form);
-    const fd = new FormData(form);
-    const body = { amount: String(fd.get('amount')).trim(), purpose: fd.get('purpose'), category: fd.get('category'), repaymentDate: fd.get('repaymentDate'), trustedContactId: Number(fd.get('trustedContactId')) };
-    try {
-      const { request } = await api('/requests', { method: 'POST', body });
-      toast('Request sent to your trusted contact');
-      Router.go(`#request/${request.id}`);
-    } catch (err) {
-      const field = err.field && document.getElementById(`e-${err.field}`);
-      if (field) { field.textContent = err.message; const input = field.previousElementSibling; input?.setAttribute('aria-invalid', 'true'); input?.focus?.(); }
-      else $('#e-form').textContent = err.message;
-    }
-  });
 
   // ---- Request detail ----
   // Minimal markup: the Phase B redesign replaces this page.
