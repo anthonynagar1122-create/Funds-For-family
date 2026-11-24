@@ -3,7 +3,7 @@
   const esc = (window.Format && window.Format.esc) || ((s) => String(s ?? ''));
 
   // Hash router. Hashes look like #/home, #/request/12. The older #feed, #people, #activity still work.
-  const ALIASES = { feed: 'home', '': 'home', people: 'circle', activity: 'requests', request: 'request' };
+  const ALIASES = { '': 'home', people: 'circle', activity: 'requests', request: 'request' };
   const renderers = new Map();
   let current = { name: 'home', params: [] };
   let onChange = null;
@@ -33,7 +33,7 @@
   }
 
   // Which tab is lit for each route.
-  const TAB_FOR = { home: 'home', request: 'requests', requests: 'requests', new: 'new', circle: 'circle', profile: 'profile', help: 'profile', admin: 'admin' };
+  const TAB_FOR = { home: 'home', feed: 'home', request: 'requests', requests: 'requests', new: 'new', circle: 'circle', profile: 'profile', help: 'profile', admin: 'admin' };
   const TABS = [
     { id: 'home', label: 'Home' },
     { id: 'requests', label: 'Requests' },

@@ -335,6 +335,19 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
         needsYou.push({ kind: 'verify', requestId: r.id });
       }
     }
+    // The other member's first name only, so the home page can say who each item is about. No email or UPI.
+    const nameCache = new Map();
+    const nameOf = async (id) => {
+      if (id === null || id === undefined) return null;
+      if (!nameCache.has(id)) nameCache.set(id, (await repo.getUser(id).catch(() => null))?.name ?? null);
+      return nameCache.get(id);
+    };
+    const reqById = new Map(mine.map((r) => [r.id, r]));
+    for (const n of needsYou) {
+      const r = reqById.get(n.requestId) ?? (await repo.getRequest(n.requestId).catch(() => null));
+      const otherId = n.fromUserId ?? (n.kind === 'repick_contact' ? r?.trustedContactId : r?.borrowerId);
+      n.otherName = await nameOf(otherId);
+    }
     res.json({ needsYou, myRequests, myLending });
   });
 

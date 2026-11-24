@@ -54,6 +54,7 @@ async function open({ inviterName = null, welcomedAt = null, termsAcceptedAt = n
   await page.route('**/api/me/accept-terms', (route) => { calls.push(['POST accept-terms']); user.termsAcceptedAt = '2026-11-20T12:00:00.000Z'; return json(route, 200, { user }); });
   await page.route('**/api/me/welcomed', (route) => { calls.push(['POST welcomed']); user.welcomedAt = '2026-11-20T12:00:00.000Z'; return json(route, 200, { user }); });
   await page.route('**/api/feed', (route) => json(route, 200, { requests: [] }));
+  await page.route('**/api/home', (route) => json(route, 200, { needsYou: [], myRequests: [], myLending: [] }));
   await page.goto(`http://127.0.0.1:${server.address().port}/app/#/home`, { waitUntil: 'load' });
   return { page, ctx, calls };
 }
@@ -102,7 +103,7 @@ test('three steps: save and accept terms, inviter line, rules, Finish goes home'
     await page.click('#w-finish');
     await page.waitForFunction(() => location.hash === '#/home');
     assert.ok(calls.some((c) => c[0] === 'POST welcomed'));
-    await page.waitForSelector('#view-feed:not([hidden])');
+    await page.waitForSelector('#view-home:not([hidden])');
   } finally { await ctx.close(); }
 });
 
@@ -136,7 +137,7 @@ test('a bad UPI shows its error on the field and stays on step 1', { skip }, asy
 test('a member who is already welcomed goes straight to home', { skip }, async () => {
   const { page, ctx } = await open({ welcomedAt: '2026-11-01T00:00:00.000Z', termsAcceptedAt: '2026-11-01T00:00:00.000Z' });
   try {
-    await page.waitForSelector('#view-feed:not([hidden])');
+    await page.waitForSelector('#view-home:not([hidden])');
     assert.match(page.url(), /#\/home$|#$|\/app\/$/);
   } finally { await ctx.close(); }
 });

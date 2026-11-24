@@ -856,6 +856,8 @@ test('home: confirm_contribution, fix_*, confirm_repayment, contact_decision, ve
     assert.equal(item.entryId, entryId);
     assert.equal(item.requestId, id);
     assert.equal(item.amountCents, 30000);
+    assert.equal(typeof item.otherName, 'string', 'names the other member');
+    assert.ok(!JSON.stringify(ann.needsYou).match(/email|upi/i), 'no email or UPI in needsYou');
     assert.equal(item.fromUserId, await idOf(call, 'ben'));
     assert.equal(ann.myRequests.length, 1);
     assert.equal((await call('ben', 'GET', '/home')).body.myLending.length, 1);

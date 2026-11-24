@@ -3,7 +3,7 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => Money.formatInr(cents);
   const esc = Format.esc;
-  const views = ['signed-out', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome'];
+  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome'];
   // An invite link looks like /app/#join=<token>. Keep the token for the first /api/me, then tidy the address bar.
   const joinMatch = /^#join=([^&]+)/.exec(location.hash);
   if (joinMatch) {
@@ -316,7 +316,13 @@
     if (needsWelcome(me) && Router.current().name !== 'welcome') { Router.go('#/welcome'); return undefined; }
     return fn(...args);
   };
-  Router.register('home', guarded(renderFeed));
+  async function renderHome() {
+    show('view-home');
+    try { await HomePage.render($('#home')); } catch (err) { $('#home').innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`; }
+    $('#home-title')?.focus();
+  }
+  Router.register('home', guarded(renderHome));
+  Router.register('feed', guarded(renderFeed)); // the older feed stays reachable at #/feed
   Router.register('new', guarded(renderNew));
   Router.register('requests', guarded(renderActivity));
   Router.register('request', guarded((id) => (id ? renderDetail(id) : renderActivity())));

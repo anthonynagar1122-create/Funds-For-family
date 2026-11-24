@@ -42,6 +42,7 @@ async function open(hash, { me = (route) => json(route, 200, { user: { id: 9, na
   await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
   await page.route('**/api/me', (route) => { meHeaders.push(route.request().headers()['x-invite-token']); return me(route); });
   await page.route('**/api/feed', (route) => json(route, 200, { requests: [] }));
+  await page.route('**/api/home', (route) => json(route, 200, { needsYou: [], myRequests: [], myLending: [] }));
   if (extra) await extra(page);
   await page.goto(`http://127.0.0.1:${server.address().port}/app/${hash}`, { waitUntil: 'load' });
   return { page, ctx, meHeaders };
@@ -50,7 +51,7 @@ async function open(hash, { me = (route) => json(route, 200, { user: { id: 9, na
 test('#join=abc is sent as x-invite-token on the first /api/me and cleared once accepted', { skip }, async () => {
   const { page, ctx, meHeaders } = await open('#join=abc');
   try {
-    await page.waitForSelector('#view-feed:not([hidden])');
+    await page.waitForSelector('#view-home:not([hidden])');
     assert.equal(meHeaders[0], 'abc');
     assert.equal(await page.evaluate(() => sessionStorage.getItem('ffjoin')), null, 'a used token is not kept');
     assert.doesNotMatch(await page.evaluate(() => location.hash), /join=/, 'token removed from the address bar');
@@ -69,7 +70,7 @@ test('a rejected join token stays in sessionStorage under ffjoin', { skip }, asy
 test('without a join hash no invite header is sent', { skip }, async () => {
   const { page, ctx, meHeaders } = await open('');
   try {
-    await page.waitForSelector('#view-feed:not([hidden])');
+    await page.waitForSelector('#view-home:not([hidden])');
     assert.equal(meHeaders[0], undefined);
   } finally { await ctx.close(); }
 });
@@ -81,7 +82,7 @@ test('a 403 invite_only shows the Not invited view', { skip }, async () => {
     const text = await page.locator('#view-not-invited').innerText();
     assert.match(text, /not invited/i);
     assert.match(text, /invite only/i);
-    assert.equal(await page.locator('#view-feed').isHidden(), true);
+    assert.equal(await page.locator('#view-home').isHidden(), true);
   } finally { await ctx.close(); }
 });
 

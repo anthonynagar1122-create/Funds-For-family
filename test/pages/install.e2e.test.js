@@ -119,7 +119,7 @@ test('service worker saved nothing for mutations or admin paths', { skip }, asyn
       for (const k of await caches.keys()) for (const r of await (await caches.open(k)).keys()) out.push(`${r.method} ${new URL(r.url).pathname}${new URL(r.url).search}`);
       return out;
     });
-    assert.ok(saved.some((s) => s === 'GET /api/feed'), 'allow-listed GET saved');
+    assert.ok(saved.some((s) => s === 'GET /api/home'), 'allow-listed GET saved');
     for (const s of saved) {
       assert.ok(s.startsWith('GET '), s);
       assert.ok(!/\/api\/(admin|invites)/.test(s), s);

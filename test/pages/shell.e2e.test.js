@@ -42,6 +42,7 @@ async function open(hash, { width = 1280, isAdmin = false } = {}) {
   await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
   await page.route('**/api/me', (route) => json(route, 200, { user: { id: 9, name: 'Asha Rao', email: 'a@example.com', isAdmin } }));
   await page.route('**/api/feed', (route) => json(route, 200, { requests: [] }));
+  await page.route('**/api/home', (route) => json(route, 200, { needsYou: [], myRequests: [], myLending: [] }));
   await page.route('**/api/connections', (route) => json(route, 200, { following: [], followers: [], mutual: [] }));
   await page.route('**/api/activity', (route) => json(route, 200, { borrowing: [], lending: [], repayments: { made: [], received: [] }, roles: { trustedContact: [], verifier: [] } }));
   await page.goto(`http://127.0.0.1:${server.address().port}/app/${hash}`, { waitUntil: 'load' });
@@ -86,7 +87,7 @@ test('#/circle renders the circle page and marks Circle as current', { skip }, a
 test('an unknown hash renders home', { skip }, async () => {
   const { page, ctx } = await open('#/nonsense/here');
   try {
-    await page.waitForSelector('#view-feed:not([hidden])');
+    await page.waitForSelector('#view-home:not([hidden])');
     assert.equal((await page.locator('[aria-current="page"]').innerText()).trim(), 'Home');
   } finally { await ctx.close(); }
 });

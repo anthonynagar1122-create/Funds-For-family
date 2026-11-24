@@ -29,6 +29,8 @@
       <button class="btn btn-primary" id="sign-in" type="button">Sign in to continue</button>
     </section>
 
+    <section id="view-home" hidden aria-label="Home"><div id="home"></div></section>
+
     <section id="view-feed" hidden aria-labelledby="feed-title">
       <h1 id="feed-title">Feed</h1>
       <p class="muted">Approved requests from people you follow and people who follow you.</p>
@@ -136,6 +138,7 @@
   <script src="/app/nav.js"></script>
   <script src="/app/card-model.js"></script>
   <script src="/app/pages/welcome.js"></script>
+  <script src="/app/pages/home.js"></script>
   <script src="/app.js" defer></script>
   <script>
     if ('serviceWorker' in navigator) {
