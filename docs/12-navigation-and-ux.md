@@ -1,5 +1,7 @@
 # Funds For Family — Navigation & Product Experience
 
+Decision status: **Owner-approved — separate Member and Admin/Verifier workspaces.** This document is the accepted direction for implementation; server-side role checks remain authoritative.
+
 ## Product promise
 
 Make trusted-circle borrowing and lending understandable at a glance. The interface should explain what needs attention, what money is recorded, who must act next, and what is already settled.
