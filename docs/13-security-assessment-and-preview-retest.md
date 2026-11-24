@@ -95,7 +95,8 @@ Remediation: open the Preview link, configure its staging secret, authenticate w
 - Branch configuration isolation: inspected; branch-scoped Preview still has no SUPABASE_SECRET_KEY. The production-only secret was not accessed or copied.
 - Vercel Preview: READY for code commit 6e93f493755a44b6d20ecf8a62c872490947c4b7 at https://funds-for-family-7df2g8hwr-anthonynagar1122-7962s-projects.vercel.app. Vercel's build status check is successful.
 - GitHub Actions run 45405823601: **397/397 unit, API and browser tests passed**, including visual baselines at 375px, 768px and 1440px and the updated role-aware navigation checks.
-- The staging integration job in run 45405823601 failed at credential preflight because the staging environment has neither STAGING_SUPABASE_URL nor STAGING_SUPABASE_SERVICE_ROLE_KEY. Integration tests were not run.
+- Follow-up run 45406310083 also passed the full **397/397** suite. The added `npm audit --audit-level=high` dependency gate passed.
+- The staging integration job in run 45406310083 failed at credential preflight because the staging environment has neither `STAGING_SUPABASE_URL` nor `STAGING_SUPABASE_SERVICE_ROLE_KEY`. Integration tests were not run.
 - Preview browser acceptance and Clerk sign-in were not completed because the available browser sandbox could not establish a connection to the Vercel preview.
 - Active penetration scan: not run.
 - Production change: none.
