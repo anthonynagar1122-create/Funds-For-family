@@ -79,6 +79,21 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.equal(await repo.claimInvite(2147483000, { acceptedAt: now }), null, 'unknown invite');
   });
 
+  test('contract: findInviteByAcceptedUser returns the invite this user accepted, or null', async () => {
+    const repo = await makeRepo();
+    const inviter = await mk(repo, 'fi');
+    const u = await mk(repo, 'fu');
+    const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 14 * 864e5).toISOString();
+    assert.equal(await repo.findInviteByAcceptedUser(u.id), null);
+    const inv = await repo.createInvite({ inviterId: inviter.id, email: `${uniq()}@x.test`, tokenHash: `${prefix}${uniq()}fi`, expiresAt, createdAt: now });
+    assert.equal(await repo.findInviteByAcceptedUser(u.id), null);
+    await repo.updateInvite(inv.id, { acceptedAt: now, acceptedUserId: u.id });
+    const found = await repo.findInviteByAcceptedUser(u.id);
+    assert.equal(found.id, inv.id);
+    assert.equal(found.inviterId, inviter.id);
+  });
+
   test('contract: updateUser can grant admin and verifier', async () => {
     const repo = await makeRepo();
     const u = await mk(repo, 'adm');

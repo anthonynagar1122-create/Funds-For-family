@@ -95,6 +95,9 @@ function createMemoryRepo() {
     },
     async getInvite(id) { return copy(invites.get(id)); },
     async findInviteByHash(hash) { return copy([...invites.values()].find((i) => i.tokenHash === hash)); },
+    async findInviteByAcceptedUser(userId) {
+      return copy([...invites.values()].filter((i) => i.acceptedUserId === userId).sort((a, b) => a.id - b.id)[0]);
+    },
     async findOpenInvitesByEmail(email) {
       const e = email.toLowerCase();
       return [...invites.values()].filter((i) => i.email.toLowerCase() === e && !i.acceptedAt && !i.revokedAt && !i.supersededAt).map(copy);

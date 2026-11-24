@@ -150,6 +150,10 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     },
     getInvite: (id) => maybe(db.from('invites').select().eq('id', id), INVITE),
     findInviteByHash: (hash) => maybe(db.from('invites').select().eq('token_hash', hash), INVITE),
+    async findInviteByAcceptedUser(userId) {
+      const rows = check(await db.from('invites').select().eq('accepted_user_id', userId).order('id', { ascending: true }).limit(1));
+      return rows && rows.length ? INVITE.toObj(rows[0]) : null;
+    },
     async findOpenInvitesByEmail(email) {
       // Email comparison is case-insensitive: ilike with wildcards escaped matches the whole address.
       return list(check(await db.from('invites').select().ilike('email', likeEscape(email))

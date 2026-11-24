@@ -3,7 +3,7 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => Money.formatInr(cents);
   const esc = Format.esc;
-  const views = ['signed-out', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile'];
+  const views = ['signed-out', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome'];
   // An invite link looks like /app/#join=<token>. Keep the token for the first /api/me, then tidy the address bar.
   const joinMatch = /^#join=([^&]+)/.exec(location.hash);
   if (joinMatch) {
@@ -296,15 +296,33 @@
     $('#profile-card').innerHTML = `<p>${Format.avatar(me)} <strong>${esc(me.name)}</strong></p><p class="muted">${esc(me.email)}</p>`;
   }
 
+  // ---- Welcome ----
+  // The API sends null until each step is done (an absent field is treated as done).
+  const needsWelcome = (u) => u.welcomedAt === null || u.termsAcceptedAt === null;
+  function renderWelcome() {
+    show('view-welcome');
+    WelcomePage.render({
+      me, root: $('#welcome'), toast,
+      go: (h) => Router.go(h),
+      onUser: (u) => { me = u; Nav.setUser(u); },
+    });
+  }
+
   // ---- Routing ----
   // Renderers only run for a signed-in member.
-  const guarded = (fn) => (...args) => (me ? fn(...args) : undefined);
+  // A member who has not finished the welcome flow is sent to #/welcome first.
+  const guarded = (fn) => (...args) => {
+    if (!me) return undefined;
+    if (needsWelcome(me) && Router.current().name !== 'welcome') { Router.go('#/welcome'); return undefined; }
+    return fn(...args);
+  };
   Router.register('home', guarded(renderFeed));
   Router.register('new', guarded(renderNew));
   Router.register('requests', guarded(renderActivity));
   Router.register('request', guarded((id) => (id ? renderDetail(id) : renderActivity())));
   Router.register('circle', guarded(renderPeople));
   Router.register('profile', guarded(renderProfile));
+  Router.register('welcome', guarded(renderWelcome));
   let routerStarted = false;
   function route() {
     if (!me) return undefined;

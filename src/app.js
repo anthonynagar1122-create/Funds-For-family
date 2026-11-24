@@ -147,7 +147,13 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   api.get('/health', (_req, res) => res.json({ ok: true }));
   api.use(requireUser);
 
-  api.get('/me', (req, res) => res.json({ user: publicUser(req.user, req.user.id) }));
+  api.get('/me', async (req, res) => {
+    const user = publicUser(req.user, req.user.id);
+    const invite = await repo.findInviteByAcceptedUser(req.user.id);
+    const inviter = invite ? await repo.getUser(invite.inviterId) : null;
+    user.inviterName = inviter ? inviter.name : null;
+    res.json({ user });
+  });
 
   api.patch('/me', async (req, res) => {
     const patch = {};
@@ -168,12 +174,13 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.post('/me/accept-terms', async (req, res) => {
-    const updated = await repo.updateUser(req.user.id, { termsAcceptedAt: now().toISOString() });
+    // Idempotent: a second call keeps the first timestamp.
+    const updated = req.user.termsAcceptedAt ? req.user : await repo.updateUser(req.user.id, { termsAcceptedAt: now().toISOString() });
     res.json({ user: publicUser(updated, req.user.id) });
   });
 
   api.post('/me/welcomed', async (req, res) => {
-    const updated = await repo.updateUser(req.user.id, { welcomedAt: now().toISOString() });
+    const updated = req.user.welcomedAt ? req.user : await repo.updateUser(req.user.id, { welcomedAt: now().toISOString() });
     res.json({ user: publicUser(updated, req.user.id) });
   });
 
