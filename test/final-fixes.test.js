@@ -494,10 +494,12 @@ test('Supabase support resolution RPC maps the returned JSON payload', async () 
 });
 
 
+
 test('migration 0007 indexes audit actor and support assignment foreign keys', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const sql = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '0007_index_audit_actor_foreign_keys.sql'), 'utf8');
+  const statements = sql.toLowerCase().replace(/\\s+/g, ' ').split(';');
   for (const [table, column] of [
     ['admin_audit_events','actor_id'],
     ['support_audit_events','actor_id'],
@@ -505,6 +507,9 @@ test('migration 0007 indexes audit actor and support assignment foreign keys', (
     ['financial_audit_events','actor_id'],
     ['financial_idempotency','actor_id'],
   ]) {
-    assert.match(sql, new RegExp('create index if not exists [a-z_]+ on public\\.' + table + ' \\(' + column + '\\)'));
+    assert.ok(statements.some((statement) =>
+      statement.includes('create index if not exists') &&
+      statement.includes('on public.' + table + ' (' + column + ')')),
+    'missing actor foreign-key index for ' + table + '.' + column);
   }
 });
