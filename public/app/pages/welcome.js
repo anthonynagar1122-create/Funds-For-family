@@ -38,7 +38,7 @@
           <div class="field">
             <label class="check" for="w-terms">
               <input id="w-terms" name="terms" type="checkbox" ${termsDone ? 'checked' : ''} aria-describedby="w-e-form">
-              <span>I agree to the rules on the last step, and I understand that no money moves through this app.</span>
+              <span>I agree to the <a href="#/terms">terms of use</a> and the <a href="#/privacy">privacy notice</a>, and to the rules on the last step. I understand that no money moves through this app.</span>
             </label>
           </div>
           <p class="error" id="w-e-form" role="alert"></p>

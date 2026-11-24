@@ -3,7 +3,7 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => Money.formatInr(cents);
   const esc = Format.esc;
-  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome', 'view-admin'];
+  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome', 'view-legal', 'view-admin'];
   // An invite link looks like /app/#join=<token>. Keep the token for the first /api/me, then tidy the address bar.
   const joinMatch = /^#join=([^&]+)/.exec(location.hash);
   if (joinMatch) {
@@ -14,6 +14,7 @@
   let usersById = new Map();
 
   function show(id) {
+    if (legalShown && id === 'signed-out') return; // a visitor reading the terms stays on them
     for (const v of views) { const el = document.getElementById(v); if (el) el.hidden = v !== id; }
     if (id !== 'signed-out') $('#main').focus();
   }
@@ -166,11 +167,25 @@
     });
   }
 
+  // ---- Terms and privacy: static, open to everyone ----
+  let legalShown = false;
+  function renderLegal(kind) {
+    legalShown = true;
+    show('view-legal');
+    LegalPage.render($('#legal'), kind);
+    $('#legal-heading')?.focus();
+  }
+
   // ---- Routing ----
   // Renderers only run for a signed-in member.
   // A member who has not finished the welcome flow is sent to #/welcome first.
   const guarded = (fn) => (...args) => {
-    if (!me) return undefined;
+    if (!me) {
+      // Someone leaving the terms or privacy page before sign-in is shown the sign-in panel.
+      if (legalShown) { legalShown = false; show('signed-out'); }
+      return undefined;
+    }
+    legalShown = false;
     if (needsWelcome(me) && Router.current().name !== 'welcome') { Router.go('#/welcome'); return undefined; }
     return fn(...args);
   };
@@ -188,6 +203,8 @@
   Router.register('profile', guarded((sub) => renderProfile(sub)));
   Router.register('welcome', guarded(renderWelcome));
   Router.register('admin', guarded(renderAdmin));
+  Router.register('terms', () => renderLegal('terms'));
+  Router.register('privacy', () => renderLegal('privacy'));
   let routerStarted = false;
   function route() {
     if (!me) return undefined;
@@ -195,6 +212,8 @@
     routerStarted = true;
     return Router.start();
   }
+  // The terms and privacy pages need no sign-in, so the router starts at once when the address asks for one.
+  if (/^#\/(terms|privacy)\/?$/.test(location.hash)) { routerStarted = true; Router.start(); }
 
   // ---- Clerk sign-in ----
   async function boot() {

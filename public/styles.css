@@ -135,3 +135,6 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .stats { display: grid; gap: var(--space-3); margin: 0; }
 .stats dt { color: var(--color-ink-500); }
 .stats dd { margin: 0; font-size: 1.75rem; font-weight: 700; }
+
+/* Draft notice on the terms and privacy pages */
+.notice { background: var(--color-surface); border: 1px solid var(--color-border); border-left: 4px solid var(--color-brand-600, #1f6f5c); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin: 0 0 var(--space-6); }

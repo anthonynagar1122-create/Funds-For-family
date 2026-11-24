@@ -9,7 +9,7 @@ const CACHE_VERSION = 'ff-v10';
 const SHELL_FILES = [
   '/app/', '/app/index.html', '/styles.css', '/app.js',
   '/app/money.js', '/app/format.js', '/app/api.js', '/app/nav.js', '/app/card-model.js',
-  '/app/pages/welcome.js', '/app/pages/home.js', '/app/pages/new-request.js', '/app/pages/request.js', '/app/pages/circle.js', '/app/pages/profile.js', '/app/pages/admin.js', '/vendor/qr.js',
+  '/app/pages/welcome.js', '/app/pages/home.js', '/app/pages/new-request.js', '/app/pages/request.js', '/app/pages/circle.js', '/app/pages/profile.js', '/app/pages/admin.js', '/app/pages/legal.js', '/vendor/qr.js',
   '/icons/icon-192.png', '/icons/icon-512.png', '/manifest.webmanifest',
 ];
 const API_ALLOW = ['/api/home', '/api/feed', '/api/me', '/api/activity'];

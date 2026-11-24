@@ -98,6 +98,8 @@
           <button class="btn btn-secondary" type="submit" id="delete-go" disabled>Delete my account</button>
         </form>
       </section>
+      <section aria-labelledby="legal-h"><h2 id="legal-h">Terms and privacy</h2>
+        <p><a id="terms-link" href="#/terms">Terms of use</a> · <a id="privacy-link" href="#/privacy">Privacy notice</a></p></section>
       <section aria-label="Sign out"><button class="btn btn-secondary" type="button" id="sign-out">Sign out</button></section>`;
 
     const $ = (s) => root.querySelector(s);

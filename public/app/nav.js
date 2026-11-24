@@ -33,7 +33,7 @@
   }
 
   // Which tab is lit for each route.
-  const TAB_FOR = { home: 'home', feed: 'home', request: 'requests', requests: 'requests', new: 'new', circle: 'circle', profile: 'profile', help: 'profile', admin: 'admin' };
+  const TAB_FOR = { home: 'home', feed: 'home', request: 'requests', requests: 'requests', new: 'new', circle: 'circle', profile: 'profile', help: 'profile', terms: 'profile', privacy: 'profile', admin: 'admin' };
   const TABS = [
     { id: 'home', label: 'Home' },
     { id: 'requests', label: 'Requests' },
