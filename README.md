@@ -28,7 +28,7 @@ npm test                  # unit and API tests (no external services needed)
 npm start                 # http://localhost:3000
 ```
 
-The database schema is in `supabase/migrations/0001_init.sql`. Apply it to your Supabase project with the SQL editor or `supabase db push`.
+The database schema and subsequent changes are versioned in `supabase/migrations/`. Apply all migrations in order with the Supabase CLI (`supabase db push`) against the intended environment. Do not apply staging-only test data or credentials to production. The security preview branch currently includes atomic financial ledger migrations (0004–0005), audited Admin/Support workflows (0006), and audit actor foreign-key indexes (0007).
 
 ## Deploy
 See [docs/05-integration.md](docs/05-integration.md#deployment-order). In short: migrate Supabase, set Clerk and Resend keys, import the repo into Vercel, then promote a verifier with `node scripts/make-verifier.js <email>`.
