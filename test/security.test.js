@@ -167,7 +167,8 @@ test('access: a stranger cannot record a repayment on someone else\'s loan', asy
     const nat = (await s.call('nat', 'GET', '/me')).body.user;
     const id = (await s.call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
     const r = await s.call('zed', 'POST', `/requests/${id}/repayments`, { amount: 10 });
-    assert.equal(r.status, 403);
+    // 404, not 403: outside the borrower's circle the request's existence is not revealed.
+    assert.equal(r.status, 404);
   } finally { await s.close(); }
 });
 
@@ -268,17 +269,18 @@ test('hygiene: public folder contains no environment, git or source files', () =
   for (const name of pub) assert.doesNotMatch(name, /^\.env|^\.git|\.(js\.map|ts)$/);
 });
 
-test('headers: HSTS and clickjacking protection on every page; CSP on the landing page', () => {
+test('headers: HSTS, clickjacking protection and a baseline CSP on every page', () => {
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
-  const collect = (sources) => Object.fromEntries(cfg.headers
-    .filter((h) => sources.includes(h.source))
+  const site = Object.fromEntries(cfg.headers
+    .filter((h) => h.source === '/(.*)')
     .flatMap((h) => h.headers.map((x) => [x.key, x.value])));
-  const site = collect(['/(.*)']);
   assert.match(site['Strict-Transport-Security'] || '', /max-age=\d{7,}/);
   assert.match(site['Strict-Transport-Security'] || '', /includeSubDomains/);
   assert.equal(site['X-Frame-Options'], 'DENY');
-  const landing = collect(['/']);
-  assert.match(landing['Content-Security-Policy'] || '', /default-src 'self'/);
-  assert.match(landing['Content-Security-Policy'] || '', /frame-ancestors 'none'/);
-  assert.match(landing['Content-Security-Policy'] || '', /object-src 'none'/);
+  // The app loads Clerk from its CDN, so script/connect sources are not locked down here.
+  // These directives cannot break sign-in and still block plugins, <base> hijacking and framing.
+  const csp = site['Content-Security-Policy'] || '';
+  assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /base-uri 'self'/);
+  assert.match(csp, /frame-ancestors 'none'/);
 });

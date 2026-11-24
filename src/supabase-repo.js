@@ -62,8 +62,31 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
         followers: check(b).map((r) => r.follower_id),
       };
     },
-    async addInvite({ inviterId, email, token }) {
+    async addInvite({ inviterId, email = null, token }) {
       check(await db.from('invites').insert({ inviter_id: inviterId, email, token }));
+    },
+    async getInviteByToken(token) {
+      const { data, error } = await db.from('invites').select().eq('token', token).maybeSingle();
+      if (error) throw new Error(`Supabase: ${error.message}`);
+      return camel(data);
+    },
+    async markInviteAccepted(token, at) {
+      check(await db.from('invites').update({ accepted_at: at }).eq('token', token).is('accepted_at', null));
+    },
+    // Every follow where either side is one of the given members.
+    async followsTouching(userIds) {
+      if (userIds.length === 0) return [];
+      const [a, b] = await Promise.all([
+        // Only follows made BY these members are used (see rules.suggestConnections). Capped for large circles.
+        db.from('follows').select('follower_id, followee_id').in('follower_id', userIds).limit(5000),
+        Promise.resolve({ data: [], error: null }),
+      ]);
+      const seen = new Set();
+      return [...check(a), ...check(b)].filter((r) => {
+        const k = `${r.follower_id}>${r.followee_id}`;
+        if (seen.has(k)) return false;
+        seen.add(k); return true;
+      }).map((r) => ({ followerId: r.follower_id, followeeId: r.followee_id }));
     },
     async createRequest(row) {
       const data = check(await db.from('requests').insert({
@@ -86,6 +109,16 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
     async listFeed(borrowerIds) {
       if (borrowerIds.length === 0) return [];
       return many(check(await db.from('requests').select().in('borrower_id', borrowerIds).order('id', { ascending: false }).limit(100)));
+    },
+    // Requests still awaiting a verification decision, oldest first.
+    // excludeDecidedBy: skip requests this verifier already decided on (done in the query, so the limit never hides newer ones).
+    async listPendingRequests({ excludeDecidedBy } = {}) {
+      let q = db.from('requests').select().eq('status', 'pending_verification');
+      if (excludeDecidedBy != null) {
+        const decided = check(await db.from('verifications').select('request_id').eq('verifier_id', excludeDecidedBy)).map((v) => v.request_id);
+        if (decided.length > 0) q = q.not('id', 'in', `(${decided.map(Number).join(',')})`);
+      }
+      return many(check(await q.order('id', { ascending: true }).limit(200)));
     },
     async listRequestsForMember(userId) {
       const [asParty, asLender, asPayer, asVerifier] = await Promise.all([

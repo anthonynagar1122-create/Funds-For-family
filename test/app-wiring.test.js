@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const APP = path.join(__dirname, '..', 'public', 'app');
+const APP = path.join(__dirname, '..', 'public');
 const read = (p) => fs.readFileSync(p, 'utf8');
 
 test('the app page loads the card model before the app script', () => {

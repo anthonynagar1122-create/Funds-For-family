@@ -23,7 +23,7 @@ test.before(async () => {
   if (!pw) return;
   server = http.createServer((req, res) => {
     let rel = req.url.split('?')[0];
-    if (rel === '/app/' || rel === '/app') rel = '/app/index.html';
+    if (rel === '/') rel = '/index.html';
     const file = path.join(PUBLIC, path.normalize(rel));
     if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
@@ -45,12 +45,13 @@ async function openDetail(viewer, request) {
     await page.route('**/api/me', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: viewer.id, name: 'Viewer', email: 'v@example.com', isVerifier: viewer.isVerifier } }) }));
     await page.route('**/api/users/**', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 1, name: 'Ann', isVerifier: false } }) }));
     await page.route('**/api/requests/1', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ request }) }));
-    await page.goto(`http://127.0.0.1:${server.address().port}/app/#request/1`, { waitUntil: 'load' });
+    await page.goto(`http://127.0.0.1:${server.address().port}/#request/1`, { waitUntil: 'load' });
     await page.waitForSelector('#detail h1', { state: 'attached' });
     return {
       verify: await page.locator('#verify-form').count(),
       repay: await page.locator('#repay-form').count(),
       fund: await page.locator('#fund-form').count(),
+      nudge: await page.locator('#detail [data-share-invite]').count(),
     };
   } finally { await ctx.close(); }
 }
@@ -92,4 +93,11 @@ test('a member sees the fund form only on an open request they did not create', 
   assert.equal(f.fund, 1);
   const own = await openDetail({ id: 1, isVerifier: false }, base({ status: 'open' }));
   assert.equal(own.fund, 0);
+});
+
+test('growth: the borrower sees "Get it funded faster" on their own waiting or open request only', { skip }, async () => {
+  assert.equal((await openDetail({ id: 1, isVerifier: false }, base({}))).nudge, 1, 'pending, borrower');
+  assert.equal((await openDetail({ id: 1, isVerifier: false }, base({ status: 'open' }))).nudge, 1, 'open, borrower');
+  assert.equal((await openDetail({ id: 1, isVerifier: false }, base({ status: 'funded', remainingCents: 0, raisedCents: 50000 }))).nudge, 0, 'funded');
+  assert.equal((await openDetail({ id: 9, isVerifier: false }, base({ status: 'open' }))).nudge, 0, 'someone else');
 });

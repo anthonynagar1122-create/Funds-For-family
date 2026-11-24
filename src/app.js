@@ -38,6 +38,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   }
 
   const api = express.Router();
+  const INVITE_TTL_DAYS = 30;
 
   // Express 4 does not catch promise rejections from async handlers. Route them to the error handler,
   // so a failing dependency returns a generic 500 instead of hanging the request.
@@ -94,31 +95,93 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ following: await load(following), followers: await load(followers), mutual: await load(mutualIds) });
   });
 
+  // Create an invite. With an email it is also sent by email; without one it is a link to share (WhatsApp, SMS…).
   api.post('/invites', async (req, res) => {
-    const email = String(req.body?.email ?? '').trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email', 'email');
+    const raw = req.body?.email;
+    const email = raw === undefined || raw === null || raw === '' ? null : String(raw).trim().toLowerCase();
+    if (email !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email', 'email');
     const token = require('crypto').randomBytes(24).toString('base64url');
     await repo.addInvite({ inviterId: req.user.id, email, token, createdAt: now().toISOString() });
     const link = `${appUrl}/?invite=${token}`;
-    await safeMail({
-      to: email,
-      subject: `${req.user.name} invited you to Funds For Family`,
-      html: `<p>${escapeHtml(req.user.name)} invited you to join Funds For Family.</p><p><a href="${link}">Accept the invitation</a></p>`,
-    });
-    res.status(201).json({ ok: true });
+    if (email) {
+      await safeMail({
+        to: email,
+        subject: `${req.user.name} invited you to Funds For Family`,
+        html: `<p>${escapeHtml(req.user.name)} invited you to join Funds For Family.</p><p><a href="${link}">Accept the invitation</a></p>`,
+      });
+    }
+    res.status(201).json({ link });
+  });
+
+  // Accept an invite link: the inviter and the new member follow each other, so each is in the other's circle.
+  // A link can be shared with several people (for example a family group chat).
+  api.post('/invites/accept', async (req, res) => {
+    const token = String(req.body?.token ?? '');
+    const invite = token.length >= 16 && token.length <= 64 ? await repo.getInviteByToken(token) : null;
+    if (!invite) return fail(res, 404, 'This invitation link is not valid');
+    if (invite.inviterId === req.user.id) return fail(res, 400, 'This is your own invitation link');
+    const created = Date.parse(invite.createdAt);
+    if (Number.isFinite(created) && now().getTime() - created > INVITE_TTL_DAYS * 86400000) {
+      return fail(res, 410, 'This invitation link has expired. Ask for a new one.');
+    }
+    const inviter = await repo.getUser(invite.inviterId);
+    if (!inviter) return fail(res, 404, 'This invitation link is not valid');
+    await repo.addFollow(req.user.id, inviter.id);
+    await repo.addFollow(inviter.id, req.user.id);
+    await repo.markInviteAccepted(token, now().toISOString());
+    res.json({ inviter: publicUser(inviter, req.user.id) });
+  });
+
+  // People to connect with: those who follow you, then people your connections know, ranked by mutual connections.
+  api.get('/suggestions', async (req, res) => {
+    const { following, followers } = await repo.connections(req.user.id);
+    const edges = await repo.followsTouching(following.slice(0, 200));
+    const picks = rules.suggestConnections({ meId: req.user.id, following, followers, edges });
+    const names = new Map();
+    const nameOf = async (id) => { if (!names.has(id)) names.set(id, (await repo.getUser(id))?.name ?? 'Member'); return names.get(id); };
+    const suggestions = [];
+    for (const p of picks) {
+      const u = await repo.getUser(p.id);
+      if (!u) continue;
+      const mutualNames = await Promise.all(p.mutualIds.slice(0, 3).map(nameOf));
+      suggestions.push({
+        user: publicUser(u, req.user.id),
+        mutualCount: p.mutualIds.length,
+        mutualNames,
+        reason: p.followsYou ? 'Follows you' : `${p.mutualIds.length} mutual connection${p.mutualIds.length === 1 ? '' : 's'}`,
+      });
+    }
+    res.json({ suggestions });
   });
 
   api.get('/feed', async (req, res) => {
     const { following, followers } = await repo.connections(req.user.id);
+    // Borrowers who chose this member (they follow the member), plus the member's own requests.
     const ids = rules.FEED_MODE === 'mutual'
-      ? following.filter((id) => followers.includes(id))
-      : [...new Set([...following, ...followers, req.user.id])];
+      ? [...following.filter((id) => followers.includes(id)), req.user.id]
+      : [...new Set([...followers, req.user.id])];
     const rows = (await repo.listFeed(ids)).filter((r) => rules.isFeedStatus(r.status));
     const withRaised = await Promise.all(rows.map(async (r) => {
       const raisedCents = (await repo.listContributions(r.id)).reduce((sum, c) => sum + c.amountCents, 0);
       return { ...summarise(r, now()), raisedCents };
     }));
     res.json({ requests: withRaised });
+  });
+
+  // The verifier's to-do list: pending requests this member may still decide on.
+  // Uses the same rule as POST /verify, so the list never offers a request the verify call would refuse.
+  api.get('/verification-queue', async (req, res) => {
+    if (!req.user.isVerifier) return fail(res, 403, 'Only verification team members can verify');
+    const pending = await repo.listPendingRequests({ excludeDecidedBy: req.user.id });
+    const open = [];
+    for (const r of pending) {
+      const allowed = rules.canVerify({ verifier: req.user, requestBorrowerId: r.borrowerId, requestNomineeId: r.nomineeId, requestStatus: r.status });
+      if (!allowed.ok) continue;
+      const verifs = await repo.listVerifications(r.id);
+      if (verifs.some((v) => v.verifierId === req.user.id)) continue;
+      open.push({ ...summarise(r, now()), approvals: verifs.filter((v) => v.decision === 'approve').length, requiredApprovals });
+    }
+    res.json({ requests: open });
   });
 
   // The member's ledger. Built from requests they borrowed plus requests raised by their connections
@@ -159,6 +222,22 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json(out);
   });
 
+  // Load a request only if the signed-in member may see it (rules.canSeeRequest). Otherwise answer 404,
+  // so members outside the circle cannot even learn that the request exists.
+  async function loadVisibleRequest(req, res) {
+    const r = await repo.getRequest(Number(req.params.id));
+    if (!r) { fail(res, 404, 'Request not found'); return null; }
+    const me = req.user.id;
+    const [{ followers }, verifs, contribs, repays] = await Promise.all([
+      repo.connections(me), repo.listVerifications(r.id), repo.listContributions(r.id), repo.listRepayments(r.id),
+    ]);
+    const involved = verifs.some((v) => v.verifierId === me) || contribs.some((c) => c.contributorId === me) || repays.some((p) => p.payerId === me);
+    if (!rules.canSeeRequest({ viewer: req.user, request: r, viewerFollowers: followers, involved })) {
+      fail(res, 404, 'Request not found'); return null;
+    }
+    return r;
+  }
+
   api.post('/requests', async (req, res) => {
     const { errors, value } = rules.validateRequest(req.body, { borrowerId: req.user.id, now: now() });
     const first = Object.keys(errors)[0];
@@ -176,14 +255,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.get('/requests/:id', async (req, res) => {
-    const r = await repo.getRequest(Number(req.params.id));
-    if (!r) return fail(res, 404, 'Request not found');
+    const r = await loadVisibleRequest(req, res);
+    if (!r) return;
     res.json({ request: await detail(r) });
   });
 
   api.post('/requests/:id/verify', async (req, res) => {
-    const r = await repo.getRequest(Number(req.params.id));
-    if (!r) return fail(res, 404, 'Request not found');
+    const r = await loadVisibleRequest(req, res);
+    if (!r) return;
     const decision = req.body?.decision;
     if (decision !== 'approve' && decision !== 'reject') return fail(res, 400, 'decision must be approve or reject', 'decision');
     const check = rules.canVerify({ verifier: req.user, requestBorrowerId: r.borrowerId, requestNomineeId: r.nomineeId, requestStatus: r.status });
@@ -205,8 +284,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.post('/requests/:id/contributions', async (req, res) => {
-    const r = await repo.getRequest(Number(req.params.id));
-    if (!r) return fail(res, 404, 'Request not found');
+    const r = await loadVisibleRequest(req, res);
+    if (!r) return;
     const amountCents = toCents(req.body?.amount);
     if (amountCents === null) return fail(res, 400, 'Amount must be a positive number with at most 2 decimals', 'amount');
     const raisedCents = (await repo.listContributions(r.id)).reduce((s, c) => s + c.amountCents, 0);
@@ -225,8 +304,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   api.post('/requests/:id/repayments', async (req, res) => {
-    const r = await repo.getRequest(Number(req.params.id));
-    if (!r) return fail(res, 404, 'Request not found');
+    const r = await loadVisibleRequest(req, res);
+    if (!r) return;
     if (req.user.id !== r.borrowerId && req.user.id !== r.nomineeId) {
       return fail(res, 403, 'Only the borrower or nominee can record repayments');
     }

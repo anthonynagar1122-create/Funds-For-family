@@ -47,6 +47,12 @@ function createMemoryRepo() {
     async listFeed(borrowerIds) {
       return [...requests.values()].filter((r) => borrowerIds.includes(r.borrowerId)).sort((a, b) => b.id - a.id);
     },
+    // Requests still awaiting a verification decision, oldest first.
+    // excludeDecidedBy: skip requests this verifier already decided on.
+    async listPendingRequests({ excludeDecidedBy } = {}) {
+      const decided = new Set(verifications.filter((v) => v.verifierId === excludeDecidedBy).map((v) => v.requestId));
+      return [...requests.values()].filter((r) => r.status === 'pending_verification' && !decided.has(r.id)).sort((a, b) => a.id - b.id);
+    },
     async listVerifications(requestId) { return verifications.filter((v) => v.requestId === requestId); },
     // Every request a member is part of: as borrower or nominee, or with a contribution, repayment or decision.
     async listRequestsForMember(userId) {
@@ -65,7 +71,14 @@ function createMemoryRepo() {
     async addContribution(row) { contributions.push(row); },
     async listRepayments(requestId) { return repayments.filter((p) => p.requestId === requestId); },
     async addRepayment(row) { repayments.push(row); },
-    async addInvite(row) { invites.push(row); },
+    async addInvite(row) { invites.push({ email: null, acceptedAt: null, ...row }); },
+    async getInviteByToken(token) { return invites.find((i) => i.token === token) ?? null; },
+    async markInviteAccepted(token, at) { const i = invites.find((x) => x.token === token); if (i && !i.acceptedAt) i.acceptedAt = at; },
+    // Every follow where either side is one of the given members.
+    async followsTouching(userIds) {
+      const ids = new Set(userIds);
+      return follows.filter((f) => ids.has(f.followerId) || ids.has(f.followeeId)).map((f) => ({ ...f }));
+    },
     _state: { users, follows, invites, requests, verifications, contributions, repayments },
   };
 }

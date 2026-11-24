@@ -46,7 +46,7 @@ Colours are bound to the `Card tokens` variables (`color/surface`, `color/canvas
 ## 3. Motion and interaction
 - Cards are not interactive by default and do not hover.
 - A linked card (`a.card`) gets a border and shadow change over 150 ms, ease-out, with a 3 px focus ring.
-- No motion on card content beyond the reveal rule in `docs/11-landing-page-spec.md`.
+- No motion on card content. (The landing page and its reveal rule were removed on 2026-11-24; see `docs/superpowers/specs/2026-11-24-task-focused-app-design.md`.)
 
 ## 4. Accessibility
 - Titles are headings (h3) inside each card, in logical order.

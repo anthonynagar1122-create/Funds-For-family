@@ -3,103 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="robots" content="noindex">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Funds For Family</title>
-  <meta name="description" content="Request and fund small loans within your trusted family and community circle.">
-  <link rel="stylesheet" href="/styles.css">
-  <script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>
+  <!-- The app moved to the site root. Keep old links (/app/#new, /app/#request/12) working. -->
+  <script src="/app/redirect.js"></script>
+  <noscript><meta http-equiv="refresh" content="0; url=/"></noscript>
 </head>
-<body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <header class="topbar">
-    <a class="brand" href="/">Funds For Family</a>
-    <nav aria-label="Primary">
-      <button class="btn btn-ghost" id="nav-feed" type="button">Feed</button>
-      <button class="btn btn-ghost" id="nav-new" type="button">Request funds</button>
-      <button class="btn btn-ghost" id="nav-people" type="button">People</button>
-      <button class="btn btn-ghost" id="nav-activity" type="button">My activity</button>
-    </nav>
-    <div id="auth-slot"></div>
-  </header>
-
-  <main id="main" tabindex="-1">
-    <section id="signed-out" class="panel" hidden>
-      <h1>Help family and friends, with purpose and trust.</h1>
-      <p class="lede">Request a small amount, have its purpose verified by a team, and let people in your circle fund it. Repay on the due date.</p>
-      <button class="btn btn-primary" id="sign-in" type="button">Sign in to continue</button>
-    </section>
-
-    <section id="view-feed" hidden aria-labelledby="feed-title">
-      <h1 id="feed-title">Feed</h1>
-      <p class="muted">Approved requests from people you follow and people who follow you.</p>
-      <ul class="cards" id="feed-list"></ul>
-      <p class="empty" id="feed-empty" hidden>No approved requests in your circle yet. Follow people to see their requests.</p>
-    </section>
-
-    <section id="view-new" hidden aria-labelledby="new-title">
-      <h1 id="new-title">Request funds</h1>
-      <form id="new-form" class="form" novalidate>
-        <div class="field">
-          <label for="f-amount">Total amount (USD)</label>
-          <input id="f-amount" name="amount" type="number" min="0.01" step="0.01" required aria-describedby="e-amount">
-          <p class="error" id="e-amount" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-purpose">Purpose</label>
-          <textarea id="f-purpose" name="purpose" rows="4" minlength="20" required aria-describedby="h-purpose e-purpose"></textarea>
-          <p class="hint" id="h-purpose">Be specific. A verification team will check it.</p>
-          <p class="error" id="e-purpose" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-date">Repayment date</label>
-          <input id="f-date" name="repaymentDate" type="date" required aria-describedby="e-date">
-          <p class="hint">Interest starts accruing after this date.</p>
-          <p class="error" id="e-date" role="alert"></p>
-        </div>
-        <div class="field">
-          <label for="f-nominee">Nominee (repays if you cannot)</label>
-          <select id="f-nominee" name="nomineeId" required aria-describedby="e-nominee"></select>
-          <p class="error" id="e-nominee" role="alert"></p>
-        </div>
-        <p class="error" id="e-form" role="alert"></p>
-        <button class="btn btn-primary" type="submit">Submit for verification</button>
-      </form>
-    </section>
-
-    <section id="view-activity" hidden aria-labelledby="activity-title">
-      <h1 id="activity-title">My activity</h1>
-      <h2>Borrowing</h2><div id="activity-borrowing"></div>
-      <h2>Lending</h2><div id="activity-lending"></div>
-      <h2>Repayments</h2><div id="activity-repayments"></div>
-      <h2>Roles</h2><div id="activity-roles"></div>
-    </section>
-
-    <section id="view-detail" hidden aria-labelledby="detail-title">
-      <div id="detail"></div>
-    </section>
-
-    <section id="view-people" hidden aria-labelledby="people-title">
-      <h1 id="people-title">People</h1>
-      <form id="search-form" class="inline-form" role="search">
-        <label for="f-search" class="sr-only">Search members by name or email</label>
-        <input id="f-search" type="search" placeholder="Search by name or email" minlength="2">
-        <button class="btn btn-secondary" type="submit">Search</button>
-      </form>
-      <ul class="list" id="search-results"></ul>
-      <h2>Your connections</h2>
-      <ul class="list" id="connections"></ul>
-      <h2>Invite someone</h2>
-      <form id="invite-form" class="inline-form">
-        <label for="f-invite" class="sr-only">Email address to invite</label>
-        <input id="f-invite" type="email" placeholder="name@example.com" required>
-        <button class="btn btn-secondary" type="submit">Send invite</button>
-      </form>
-      <p class="muted" id="invite-status" role="status"></p>
-    </section>
-
-    <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
-  </main>
-  <script src="/app/card-model.js"></script>
-  <script src="/app.js" defer></script>
-</body>
+<body><p><a href="/">Open Funds For Family</a></p></body>
 </html>

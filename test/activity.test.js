@@ -46,8 +46,10 @@ async function community({ repo, call }) {
   }
   await repo.setVerifier(ids.vee, true);
   await repo.setVerifier(ids.wes, true);
+  // Ann's circle: mutual follows, as an accepted invite creates (only the borrower's chosen people see her requests).
   for (const name of ['nat', 'lee', 'vee', 'wes']) {
     await call(name, 'POST', '/follows', { userId: ids.ann });
+    await call('ann', 'POST', '/follows', { userId: ids[name] });
   }
   return ids;
 }
@@ -202,16 +204,21 @@ test('ledger rows never include email addresses', async () => {
   } finally { await ctx.close(); }
 });
 
-test('a lender sees a loan from a borrower outside their network', async () => {
+test('a lender keeps the loan in their ledger after leaving the borrower\'s network', async () => {
   const s = await setup();
   try {
     const ids = await community(s);
     const id = (await s.call('ann', 'POST', '/requests', validRequest(ids.nat))).body.request.id;
     await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
-    // Sam has no connection to Ann; he is only a lender here.
+    // Only the borrower's circle can fund (design 2026-11-24). Sam joins Ann's circle, lends, then leaves it.
+    const outsider = await s.call('sam', 'POST', `/requests/${id}/contributions`, { amount: 100 });
+    assert.equal(outsider.status, 404, 'outside the circle the request is not visible');
+    const samId = (await s.call('sam', 'GET', '/me')).body.user.id;
+    await s.call('ann', 'POST', '/follows', { userId: samId });
     const funded = await s.call('sam', 'POST', `/requests/${id}/contributions`, { amount: 100 });
     assert.equal(funded.status, 201);
+    await s.call('ann', 'DELETE', `/follows/${samId}`);
     const r = await s.call('sam', 'GET', '/activity');
     assert.equal(r.status, 200);
     assert.equal(r.body.lending.length, 1, 'the loan appears in the lender ledger');

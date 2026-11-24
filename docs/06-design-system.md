@@ -3,27 +3,31 @@
 Source of truth in code: `public/styles.css` (CSS custom properties). The same names should be used as Figma variables when a design file exists.
 
 ## Tokens
+Visual language adapted from the reference demo at routemaster-society-management.vercel.app: slate neutrals, an indigo-to-violet brand gradient, compact type, 16 px cards, uppercase status pills and a segmented navigation.
+
 | Group | Token | Value | Use |
 |---|---|---|---|
-| Colour | `--color-brand-600` | `#1f6f5c` | Primary buttons, progress |
-| Colour | `--color-brand-700` | `#185a4a` | Links, primary hover |
-| Colour | `--color-brand-100` | `#e3f2ee` | Badges |
-| Colour | `--color-ink-900` / `-700` / `-500` | `#14201c` / `#3b4a45` / `#5f6f69` | Text hierarchy |
-| Colour | `--color-canvas` / `--color-surface` | `#f6f7f5` / `#ffffff` | Page / cards |
-| Colour | `--color-border` | `#d9dfdc` | Dividers, inputs |
-| Colour | `--color-danger-700` / `--color-success-700` | `#a4262c` / `#1d6b35` | Errors / funded states |
-| Colour | `--color-focus` | `#0b57d0` | Focus ring (3:1 against surfaces) |
-| Space | `--space-1` … `--space-8` | 4, 8, 12, 16, 24, 32 px | Spacing scale |
-| Radius | `--radius-sm` / `-md` / `-lg` | 6 / 10 / 16 px | Inputs / cards / panels |
-| Type | `--font-sans` | system UI stack | No webfont download |
-| Elevation | `--shadow-1` | subtle 1px | Cards |
+| Colour | `--color-brand-600` / `-700` | `#4f46e5` / `#4338ca` | Primary buttons, links, progress, brand tile |
+| Colour | `--color-brand-50` / `-100` / `-200` / `-300` | `#eef2ff` / `#e0e7ff` / `#c7d2fe` / `#a5b4fc` | Callouts, text on gradient, card hover border |
+| Colour | `--color-accent-700` | `#6d28d9` | End stop of `--gradient-brand` (135°, indigo-600 → violet-700) |
+| Colour | `--color-ink-900` / `-700` / `-600` / `-500` / `-400` | slate `#0f172a` / `#334155` / `#475569` / `#64748b` / `#94a3b8` | Text hierarchy |
+| Colour | `--color-canvas` / `--color-surface` / `--color-subtle` | `#f6f7fb` / `#ffffff` / `#f1f5f9` | Page / cards / segmented nav track |
+| Colour | `--color-border` / `-strong` | `#e2e8f0` / `#cbd5e1` | Card borders / inputs |
+| Colour | status pairs (`-100` background, `-700/-800` text) | rose, emerald, amber, sky | Badges: danger, ok, warn, neutral |
+| Space | `--space-1` … `--space-8` | 4, 8, 12, 16, 20, 24, 32 px | Spacing scale |
+| Radius | `--radius-sm` / `-md` / `-lg` / `-xl` | 8 / 12 / 16 / 24 px | Nav items / buttons, inputs / cards / hero panels |
+| Type | `--font-sans` / `--font-mono` | `ui-sans-serif` system stack / `ui-monospace` | Body / card eyebrows ("REQUEST #12") |
+| Elevation | `--shadow-1` / `--shadow-2` | slate, 1–3 px / 4–6 px | Cards at rest / on hover |
 
 ## Components
 | Component | Variants | States | Notes |
 |---|---|---|---|
 | Button | primary, secondary, ghost | default, hover, focus-visible, disabled | Minimum 44px target height |
 | Input / textarea / select | — | default, focus-visible, invalid (`aria-invalid`) | Label always visible; errors linked with `aria-describedby` |
-| Badge | brand, warn, danger, ok | — | Status text is always present (never colour alone) |
+| Badge | primary, neutral, warn, danger, ok | — | Uppercase bold pill; status text is always present (never colour alone) |
+| Segmented nav | — | default, hover, current (`aria-current="page"`) | Slate track, white raised current item |
+| Hero panel | — | — | `--gradient-brand`, 24 px radius, white text, translucent stat tiles |
+| KPI tile / section card / callout | — | — | Uppercase label + large figure / grouped rows / indigo-tinted note |
 | Card | — | default | Request summaries in the feed |
 | Progress bar | — | `role="progressbar"` with values | Funding progress |
 | Toast | — | visible / hidden, `aria-live="polite"` | Confirmations only |
