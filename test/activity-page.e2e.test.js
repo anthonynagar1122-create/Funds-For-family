@@ -21,7 +21,7 @@ test.before(async () => {
   if (!pw) return;
   server = http.createServer((req, res) => {
     let rel = req.url.split('?')[0];
-    if (rel === '/app/' || rel === '/app') rel = '/app/index.html';
+    if (rel === '/') rel = '/index.html';
     const file = path.join(PUBLIC, path.normalize(rel));
     if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
@@ -44,7 +44,7 @@ async function openActivity(activity) {
     await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
     await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
     await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify(activity) }));
-    await page.goto(`http://127.0.0.1:${server.address().port}/app/#activity`, { waitUntil: 'load' });
+    await page.goto(`http://127.0.0.1:${server.address().port}/#activity`, { waitUntil: 'load' });
     await page.waitForSelector('#activity-lending', { state: 'attached' });
     return page;
   } finally { /* context closed by caller */ }
@@ -58,7 +58,7 @@ test('the activity page has four groups: borrowing, lending, repayments, roles',
   await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
   await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify(EMPTY) }));
-  await page.goto(`http://127.0.0.1:${server.address().port}/app/#activity`, { waitUntil: 'load' });
+  await page.goto(`http://127.0.0.1:${server.address().port}/#activity`, { waitUntil: 'load' });
   await page.waitForSelector('#activity-lending', { state: 'attached' });
   for (const g of ['borrowing', 'lending', 'repayments', 'roles']) {
     assert.equal(await page.locator(`#activity-${g}`).count(), 1, `group ${g} present`);
@@ -74,7 +74,7 @@ test('an empty ledger shows an empty state in every group, not an error', { skip
   await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
   await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify(EMPTY) }));
-  await page.goto(`http://127.0.0.1:${server.address().port}/app/#activity`, { waitUntil: 'load' });
+  await page.goto(`http://127.0.0.1:${server.address().port}/#activity`, { waitUntil: 'load' });
   // The groups exist before the API replies, so wait for the empty states the renderer adds.
   await page.waitForFunction(() => document.querySelectorAll('#view-activity .empty').length === 4, null, { timeout: 3000 });
   const empties = await page.locator('#view-activity .empty').count();
@@ -90,7 +90,7 @@ test('each activity row links to its request detail page', { skip }, async () =>
   await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
   await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...EMPTY, lending: [ROW] }) }));
-  await page.goto(`http://127.0.0.1:${server.address().port}/app/#activity`, { waitUntil: 'load' });
+  await page.goto(`http://127.0.0.1:${server.address().port}/#activity`, { waitUntil: 'load' });
   await page.waitForSelector('#activity-lending a', { state: 'attached' });
   const href = await page.locator('#activity-lending a').first().getAttribute('href');
   assert.equal(href, '#request/5');
@@ -105,7 +105,7 @@ test('the activity page never shows an email address', { skip }, async () => {
   await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
   await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...EMPTY, lending: [ROW] }) }));
-  await page.goto(`http://127.0.0.1:${server.address().port}/app/#activity`, { waitUntil: 'load' });
+  await page.goto(`http://127.0.0.1:${server.address().port}/#activity`, { waitUntil: 'load' });
   await page.waitForSelector('#activity-lending a', { state: 'attached' });
   const text = await page.locator('#view-activity').innerText();
   assert.doesNotMatch(text, /@/);

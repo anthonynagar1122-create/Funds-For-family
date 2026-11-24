@@ -41,6 +41,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Component display rules must never un-hide an element marked hidden. */
+[hidden] { display: none !important; }
 html, body { margin: 0; background: var(--color-canvas); color: var(--color-ink-900); font: 16px/1.5 var(--font-sans); -webkit-font-smoothing: antialiased; }
 h1 { font-size: 1.5rem; line-height: 1.25; font-weight: 700; margin: 0 0 var(--space-2); letter-spacing: -.01em; }
 h2 { font-size: 1.125rem; line-height: 1.4; font-weight: 700; margin: var(--space-8) 0 var(--space-3); }
@@ -189,3 +191,39 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 @media (max-width: 600px) { main { padding: var(--space-6) var(--space-4); } .panel, .panel-hero { padding: var(--space-6); } }
+
+/* ---- Sign-in screen: one line, one button ---- */
+.signin { max-width: 520px; margin: 8vh auto 0; text-align: center; display: grid; justify-items: center; gap: var(--space-3); }
+.signin h1 { margin: 0; }
+.signin .lede { margin: 0 0 var(--space-2); }
+.brand-tile-lg { width: 56px; height: 56px; font-size: 1.25rem; border-radius: var(--radius-md); background: rgba(255, 255, 255, .15); }
+.btn-lg { min-height: 52px; padding: 14px 28px; font-size: 1rem; }
+
+/* ---- Home: task tiles and the "Needs you now" list ---- */
+.tiles { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: var(--space-6); }
+.tile {
+  font: inherit; text-align: left; cursor: pointer; text-decoration: none; color: var(--color-ink-900);
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-2);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  padding: var(--space-4); min-height: 64px; box-shadow: var(--shadow-1);
+}
+.tile:hover { border-color: var(--color-brand-300); box-shadow: var(--shadow-2); color: var(--color-ink-900); }
+.tile[hidden] { display: none; }
+.tile-icon { font-size: 1.5rem; line-height: 1; }
+.tile-label { font-weight: 700; }
+.tile-count { min-width: 28px; padding: 2px 8px; border-radius: 999px; background: var(--color-brand-50); color: var(--color-brand-700); font-weight: 700; font-size: .875rem; text-align: center; }
+.tile-primary { background-color: var(--color-brand-600); background-image: var(--gradient-brand); border-color: transparent; color: #fff; }
+.tile-primary:hover { color: #fff; border-color: transparent; }
+.list-heading { margin: 0 0 var(--space-3); }
+.group-title { display: flex; align-items: center; gap: var(--space-2); font-size: 1rem; margin: 0 0 var(--space-3); }
+.group-count { font-size: .75rem; font-weight: 700; color: var(--color-ink-500); background: var(--color-subtle); border-radius: 999px; padding: 1px 8px; }
+.section-card:focus { outline: none; }
+.task { justify-content: space-between; }
+.task.is-urgent { border-color: var(--color-danger-700); background: var(--color-danger-100); }
+.task-main { min-width: 0; flex: 1 1 260px; }
+.task-title { font-weight: 700; color: var(--color-ink-900); text-decoration: none; }
+.task-title:hover { color: var(--color-brand-700); }
+.task-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--space-2); font-size: .8125rem; color: var(--color-ink-500); margin: 4px 0 0; }
+.task .btn { flex: none; }
+#home-empty p { margin: 0 0 var(--space-3); }
+@media (max-width: 600px) { .tiles { grid-template-columns: 1fr 1fr; } .task .btn { width: 100%; } }

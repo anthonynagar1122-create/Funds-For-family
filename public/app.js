@@ -3,11 +3,11 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => `$${(cents / 100).toFixed(2)}`;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const views = ['signed-out', 'view-feed', 'view-new', 'view-detail', 'view-people', 'view-activity'];
+  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-detail', 'view-people', 'view-activity'];
   let me = null;
   let usersById = new Map();
 
-  const navFor = { 'view-feed': 'nav-feed', 'view-new': 'nav-new', 'view-people': 'nav-people', 'view-activity': 'nav-activity', 'view-detail': 'nav-feed' };
+  const navFor = { 'view-home': 'nav-home', 'view-new': 'nav-home', 'view-detail': 'nav-home', 'view-feed': 'nav-feed', 'view-people': 'nav-people', 'view-activity': 'nav-activity' };
 
   function show(id) {
     for (const v of views) { const el = document.getElementById(v); if (el) el.hidden = v !== id; }
@@ -16,6 +16,7 @@
       const btn = document.getElementById(navId);
       if (btn) { if (navFor[id] === navId) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current'); }
     }
+    $('#primary-nav').hidden = id === 'signed-out';
     if (id !== 'signed-out') $('#main').focus();
   }
 
@@ -57,6 +58,74 @@
     const [cls, label] = map[status] ?? ['', status];
     return `<span class="badge ${cls}">${esc(label)}</span>`;
   }
+
+  // ---- Home: what needs this member now ----
+  // Three sources: requests to verify (verifiers only), requests to repay (borrower or nominee),
+  // and open requests in the member's circle they could fund. Each item carries one action.
+  const GROUPS = [
+    { key: 'repay', title: 'To repay', action: 'Record repayment' },
+    { key: 'verify', title: 'To verify', action: 'Review' },
+    { key: 'fund', title: 'To fund', action: 'Contribute' },
+  ];
+
+  async function renderHome() {
+    show('view-home');
+    const safe = (p) => p.catch(() => null);
+    const [feed, activity, queue] = await Promise.all([
+      safe(api('/feed')),
+      safe(api('/activity')),
+      me.isVerifier ? safe(api('/verification-queue')) : Promise.resolve({ requests: [] }),
+    ]);
+
+    const repayById = new Map();
+    for (const r of [...(activity?.borrowing ?? []), ...(activity?.roles?.nominee ?? [])]) {
+      if (r.status === 'funded' || r.status === 'overdue') repayById.set(r.requestId, r);
+    }
+    const items = {
+      repay: [...repayById.values()]
+        .sort((a, b) => (b.status === 'overdue') - (a.status === 'overdue') || String(a.repaymentDate).localeCompare(String(b.repaymentDate)))
+        .map((r) => ({ id: r.requestId, purpose: r.purpose, status: r.status, sub: `${r.myRole === 'nominee' ? 'You are nominee' : 'Your request'} · repay by ${r.repaymentDate}` })),
+      verify: (queue?.requests ?? []).map((r) => ({ id: r.id, purpose: r.purpose, status: r.status,
+        sub: `${money(r.principalCents)} · ${r.approvals ?? 0} of ${r.requiredApprovals ?? 2} approvals` })),
+      fund: (feed?.requests ?? []).filter((r) => r.status === 'open' && r.borrowerId !== me.id).map((r) => ({ id: r.id, purpose: r.purpose, status: r.status,
+        sub: `${money(r.raisedCents ?? 0)} of ${money(r.principalCents)} raised · due ${r.repaymentDate}` })),
+    };
+
+    $('#tile-verify').hidden = !me.isVerifier;
+    // A source that failed shows "–", never a false zero.
+    const sourceFailed = { repay: activity === null, verify: queue === null, fund: feed === null };
+    for (const g of GROUPS) {
+      $(`#count-${g.key}`).textContent = sourceFailed[g.key] ? '–' : String(items[g.key].length);
+      $(`#tile-${g.key}`).dataset.failed = sourceFailed[g.key] ? '1' : '';
+    }
+
+    const failed = Object.values(sourceFailed).some(Boolean);
+    const html = GROUPS.filter((g) => items[g.key].length > 0).map((g) => `
+      <div class="section-card" id="group-${g.key}" tabindex="-1">
+        <h3 class="group-title">${esc(g.title)} <span class="group-count">${items[g.key].length}</span></h3>
+        <ul class="list task-list">${items[g.key].map((it) => `
+          <li class="task${it.status === 'overdue' ? ' is-urgent' : ''}">
+            <div class="task-main">
+              <p class="card-eyebrow">Request #${esc(it.id)}</p>
+              <a class="task-title" href="#request/${esc(it.id)}">${esc(String(it.purpose ?? '').slice(0, 90))}</a>
+              <p class="task-sub">${statusBadge(it.status)} <span>${esc(it.sub)}</span></p>
+            </div>
+            <a class="btn btn-primary btn-sm" href="#request/${esc(it.id)}">${esc(g.action)}</a>
+          </li>`).join('')}
+        </ul>
+      </div>`).join('');
+    $('#home-groups').innerHTML = (failed ? '<p class="error" role="alert">Some tasks could not be loaded. Refresh to try again.</p>' : '') + html;
+    $('#home-empty').hidden = html !== '' || failed;
+  }
+
+  document.addEventListener('click', (ev) => {
+    const jump = ev.target.closest('[data-jump]');
+    if (!jump) return;
+    const group = document.getElementById(`group-${jump.dataset.jump}`);
+    if (group) { group.scrollIntoView({ block: 'start' }); group.focus({ preventScroll: true }); }
+    else if (jump.dataset.failed === '1') toast('Could not load this list. Refresh to try again.');
+    else toast(`Nothing to ${jump.dataset.jump} right now`);
+  });
 
   // ---- Feed ----
   async function renderFeed() {
@@ -126,7 +195,7 @@
     const can = (id) => card.actions.some((a) => a.id === id);
 
     $('#detail').innerHTML = `
-      <p><a class="detail-back" href="#feed">← Back to feed</a></p>
+      <p><a class="detail-back" href="#home">← Home</a></p>
       <p class="card-eyebrow">Request #${esc(r.id)}</p>
       <h1 id="detail-title">${esc(r.purpose)}</h1>
       <div class="meta">${statusBadge(r.status)}<span>Requested by ${esc(borrower)}</span><span>Nominee: ${esc(nominee)}</span></div>
@@ -150,6 +219,7 @@
         <form id="fund-form" class="form">
           <div class="field"><label for="c-amount">Contribute (USD, up to ${money(r.remainingCents)})</label>
             <input id="c-amount" type="number" min="0.01" step="0.01" max="${(r.remainingCents / 100).toFixed(2)}" required>
+            <p class="hint">Record what you are lending. No money moves through this app.</p>
             <p class="error" id="e-fund" role="alert"></p></div>
           <button class="btn btn-primary" type="submit">Contribute</button>
         </form>` : ''}
@@ -157,16 +227,22 @@
         <form id="repay-form" class="form">
           <div class="field"><label for="p-amount">Record a repayment (USD)</label>
             <input id="p-amount" type="number" min="0.01" step="0.01" required>
+            <p class="hint">Record money you have already paid back. No money moves through this app.</p>
             <p class="error" id="e-repay" role="alert"></p></div>
           <button class="btn btn-primary" type="submit">Record repayment</button>
         </form>` : ''}
-      <p class="callout" style="margin-top:24px">Payments are recorded here for transparency. No money moves through this app.</p>`;
+      `;
+    // Land on the one thing this member can do here.
+    // On desktop, put the cursor in the action without scrolling past the request details.
+    // On touch devices, do not pop up the keyboard over the details.
+    const firstAction = $('#detail form textarea, #detail form input, #detail form button');
+    if (firstAction && window.matchMedia('(pointer: fine)').matches) firstAction.focus({ preventScroll: true });
 
     const verify = $('#verify-form');
     verify?.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const decision = ev.submitter.value;
-      try { await api(`/requests/${id}/verify`, { method: 'POST', body: { decision, note: $('#v-note').value } }); toast('Decision recorded'); renderDetail(id); }
+      try { await api(`/requests/${id}/verify`, { method: 'POST', body: { decision, note: $('#v-note').value } }); toast('Decision recorded'); location.hash = '#home'; }
       catch (err) { toast(err.message); }
     });
     $('#fund-form')?.addEventListener('submit', async (ev) => {
@@ -254,18 +330,21 @@
   // ---- Routing ----
   async function route() {
     if (!me) return;
-    const hash = location.hash.replace(/^#/, '') || 'feed';
+    const hash = location.hash.replace(/^#/, '') || 'home';
     if (hash.startsWith('request/')) return renderDetail(hash.split('/')[1]);
     if (hash === 'new') return renderNew();
     if (hash === 'people') return renderPeople();
     if (hash === 'activity') return renderActivity();
-    return renderFeed();
+    if (hash === 'feed') return renderFeed();
+    return renderHome();
   }
   window.addEventListener('hashchange', route);
-  $('#nav-feed').addEventListener('click', () => (location.hash = '#feed'));
-  $('#nav-new').addEventListener('click', () => (location.hash = '#new'));
-  $('#nav-people').addEventListener('click', () => (location.hash = '#people'));
-  $('#nav-activity').addEventListener('click', () => (location.hash = '#activity'));
+  // Clicking the current section re-renders it (no hashchange fires for the same hash).
+  const go = (hash) => () => { if (location.hash === hash) route(); else location.hash = hash; };
+  $('#nav-home').addEventListener('click', go('#home'));
+  $('#nav-feed').addEventListener('click', go('#feed'));
+  $('#nav-people').addEventListener('click', go('#people'));
+  $('#nav-activity').addEventListener('click', go('#activity'));
 
   // ---- Clerk sign-in ----
   async function boot() {

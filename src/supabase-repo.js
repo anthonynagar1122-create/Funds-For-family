@@ -87,6 +87,16 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
       if (borrowerIds.length === 0) return [];
       return many(check(await db.from('requests').select().in('borrower_id', borrowerIds).order('id', { ascending: false }).limit(100)));
     },
+    // Requests still awaiting a verification decision, oldest first.
+    // excludeDecidedBy: skip requests this verifier already decided on (done in the query, so the limit never hides newer ones).
+    async listPendingRequests({ excludeDecidedBy } = {}) {
+      let q = db.from('requests').select().eq('status', 'pending_verification');
+      if (excludeDecidedBy != null) {
+        const decided = check(await db.from('verifications').select('request_id').eq('verifier_id', excludeDecidedBy)).map((v) => v.request_id);
+        if (decided.length > 0) q = q.not('id', 'in', `(${decided.map(Number).join(',')})`);
+      }
+      return many(check(await q.order('id', { ascending: true }).limit(200)));
+    },
     async listRequestsForMember(userId) {
       const [asParty, asLender, asPayer, asVerifier] = await Promise.all([
         db.from('requests').select('id').or(`borrower_id.eq.${userId},nominee_id.eq.${userId}`),

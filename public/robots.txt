@@ -1,5 +1,2 @@
 User-agent: *
 Allow: /
-Disallow: /app/
-Disallow: /prototype/
-Sitemap: https://funds-for-family.vercel.app/sitemap.xml

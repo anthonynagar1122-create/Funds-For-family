@@ -47,6 +47,12 @@ function createMemoryRepo() {
     async listFeed(borrowerIds) {
       return [...requests.values()].filter((r) => borrowerIds.includes(r.borrowerId)).sort((a, b) => b.id - a.id);
     },
+    // Requests still awaiting a verification decision, oldest first.
+    // excludeDecidedBy: skip requests this verifier already decided on.
+    async listPendingRequests({ excludeDecidedBy } = {}) {
+      const decided = new Set(verifications.filter((v) => v.verifierId === excludeDecidedBy).map((v) => v.requestId));
+      return [...requests.values()].filter((r) => r.status === 'pending_verification' && !decided.has(r.id)).sort((a, b) => a.id - b.id);
+    },
     async listVerifications(requestId) { return verifications.filter((v) => v.requestId === requestId); },
     // Every request a member is part of: as borrower or nominee, or with a contribution, repayment or decision.
     async listRequestsForMember(userId) {

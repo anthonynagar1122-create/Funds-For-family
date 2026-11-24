@@ -2,267 +2,133 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="robots" content="noindex">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Funds For Family: request and fund small loans with trust</title>
-  <meta name="description" content="Request a small amount, have its purpose verified by a team, and let people in your circle fund it. Clear rules, a named nominee, and repayment on the due date.">
   <meta name="theme-color" content="#4f46e5">
-  <link rel="canonical" href="https://funds-for-family.vercel.app/">
-  <meta property="og:site_name" content="Funds For Family">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="Funds For Family: request and fund small loans with trust">
-  <meta property="og:description" content="Small loans within your trusted circle, with verified purpose and clear rules.">
-  <meta property="og:url" content="https://funds-for-family.vercel.app/">
+  <title>Funds For Family</title>
+  <meta name="description" content="Small loans within your trusted circle, verified before funding.">
+  <meta property="og:title" content="Funds For Family">
+  <meta property="og:description" content="Small loans within your trusted circle, verified before funding.">
   <meta property="og:image" content="https://funds-for-family.vercel.app/og-image.png">
-  <meta property="og:image:width" content="1200">
-  <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Funds For Family: ask for a small amount, and let your circle help with clear rules.">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Funds For Family: request and fund small loans with trust">
-  <meta name="twitter:description" content="Small loans within your trusted circle, with verified purpose and clear rules.">
-  <meta name="twitter:image" content="https://funds-for-family.vercel.app/og-image.png">
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "Organization",
-        "name": "Funds For Family",
-        "url": "https://funds-for-family.vercel.app/",
-        "logo": "https://funds-for-family.vercel.app/og-image.png"
-      },
-      {
-        "@type": "SoftwareApplication",
-        "name": "Funds For Family",
-        "url": "https://funds-for-family.vercel.app/",
-        "applicationCategory": "FinanceApplication",
-        "operatingSystem": "Web",
-        "description": "Request a small amount, have its purpose verified by a team, and let people in your circle fund it."
-      }
-    ]
-  }
-  </script>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/landing.css">
-  <script src="/landing.js" defer></script>
+  <script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>
 </head>
-<body class="landing">
+<body>
   <a class="skip-link" href="#main">Skip to content</a>
-
-  <header class="site-header">
-    <div class="container header-row">
-      <a class="brand-link" href="/" aria-label="Funds For Family home">
+  <header class="topbar">
+    <div class="topbar-row">
+      <a class="brand" href="#home">
         <span class="brand-tile" aria-hidden="true">FF</span>
-        <span class="brand-text"><span class="brand-name">Funds For Family</span><span class="brand-sub">Trusted circle lending</span></span>
+        <span class="brand-text"><span class="brand-name">Funds For Family</span></span>
       </a>
-      <nav aria-label="Primary" class="site-nav header-nav segmented">
-        <a href="#how-it-works"><span class="nav-icon" aria-hidden="true">🧭</span>How it works</a>
-        <a href="#interest"><span class="nav-icon" aria-hidden="true">📈</span>Interest</a>
-        <a href="#faq"><span class="nav-icon" aria-hidden="true">💬</span>Questions</a>
+      <nav aria-label="Primary" class="segmented" id="primary-nav" hidden>
+        <button id="nav-home" type="button"><span class="nav-icon" aria-hidden="true">🏠</span>Home</button>
+        <button id="nav-feed" type="button"><span class="nav-icon" aria-hidden="true">💸</span>Fund</button>
+        <button id="nav-activity" type="button"><span class="nav-icon" aria-hidden="true">📒</span>My activity</button>
+        <button id="nav-people" type="button"><span class="nav-icon" aria-hidden="true">👥</span>People</button>
       </nav>
-      <a class="btn btn-secondary btn-sm header-cta" href="/app/">Sign in</a>
+      <div id="auth-slot"></div>
     </div>
   </header>
 
   <main id="main" tabindex="-1">
-    <!-- 1. Hero -->
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="container">
-        <div class="hero-panel">
-          <div class="hero-grid">
-            <div class="hero-copy reveal-group">
-              <p class="eyebrow">Trusted lending for family and friends</p>
-              <h1 id="hero-title" class="hero-h1">Ask for a small amount. Let your circle help.</h1>
-              <p class="lead">Every request is verified before anyone funds it. Interest starts only after the due date.</p>
-              <div class="cta-row">
-                <a class="btn btn-primary btn-lg" href="/app/#new" data-magnetic>Start a request</a>
-                <a class="btn btn-ghost btn-lg" href="#how-it-works">See how it works</a>
-              </div>
-              <p class="disclaimer">Funds For Family records and verifies requests. It does not move money or give financial advice.</p>
-            </div>
+    <section id="signed-out" class="panel panel-hero signin" hidden aria-labelledby="signin-title">
+      <span class="brand-tile brand-tile-lg" aria-hidden="true">FF</span>
+      <h1 id="signin-title">Funds For Family</h1>
+      <p class="lede">Small loans within your trusted circle, verified before funding.</p>
+      <button class="btn btn-primary btn-lg" id="sign-in" type="button">Sign in</button>
+    </section>
 
-            <aside class="example-card" aria-labelledby="example-title" data-zoom>
-              <p class="card-kicker" id="example-title">Example request · step by step</p>
-              <dl class="example-list">
-                <div><dt>Purpose</dt><dd>School fees for the second term</dd></div>
-                <div><dt>Amount requested</dt><dd>$1,000.00</dd></div>
-                <div><dt>Verification</dt><dd><span class="badge badge-ok">2 of 2 approvals</span></dd></div>
-                <div><dt>Nominee</dt><dd>Sam, repays if the borrower cannot</dd></div>
-                <div><dt>Repay by</dt><dd>1 March</dd></div>
-              </dl>
-              <p class="card-foot">After the due date, simple interest of 12% a year accrues daily until repaid.</p>
-            </aside>
-          </div>
-
-          <ul class="hero-stats" aria-label="The rules at a glance">
-            <li><span class="stat-value">2</span><span class="stat-label">Approvals to open a request</span></li>
-            <li><span class="stat-value">1</span><span class="stat-label">Named nominee on every request</span></li>
-            <li><span class="stat-value">0%</span><span class="stat-label">Interest before the due date</span></li>
-            <li><span class="stat-value">12%</span><span class="stat-label">A year, simple, after it</span></li>
-          </ul>
-        </div>
+    <section id="view-home" hidden aria-labelledby="home-title">
+      <h1 id="home-title" class="sr-only">Home</h1>
+      <div class="tiles" role="group" aria-label="Tasks">
+        <a class="tile tile-primary" href="#new" id="tile-new"><span class="tile-icon" aria-hidden="true">➕</span><span class="tile-label">Request funds</span></a>
+        <button class="tile" type="button" data-jump="verify" id="tile-verify" hidden><span class="tile-icon" aria-hidden="true">🛡️</span><span class="tile-label">Verify</span><span class="tile-count" id="count-verify">0</span></button>
+        <button class="tile" type="button" data-jump="fund" id="tile-fund"><span class="tile-icon" aria-hidden="true">💸</span><span class="tile-label">Fund</span><span class="tile-count" id="count-fund">0</span></button>
+        <button class="tile" type="button" data-jump="repay" id="tile-repay"><span class="tile-icon" aria-hidden="true">🧾</span><span class="tile-label">Repay</span><span class="tile-count" id="count-repay">0</span></button>
+      </div>
+      <h2 class="list-heading">Needs you now</h2>
+      <div id="home-groups"></div>
+      <div class="empty" id="home-empty" hidden>
+        <p>Nothing needs you right now.</p>
+        <a class="btn btn-primary" href="#new">Request funds</a>
       </div>
     </section>
 
-    <!-- 2. Trust strip -->
-    <section class="trust-strip" aria-label="Three protections">
-      <div class="container trust-grid">
-        <div class="trust-item reveal">
-          <h2 class="trust-title"><span class="card-icon" aria-hidden="true">✅</span>Verified purpose</h2>
-          <p>Two independent approvals before funding.</p>
+    <section id="view-feed" hidden aria-labelledby="feed-title">
+      <h1 id="feed-title">Fund</h1>
+      <ul class="cards" id="feed-list"></ul>
+      <p class="empty" id="feed-empty" hidden>No requests in your circle yet. Follow people in People.</p>
+    </section>
+
+    <section id="view-new" hidden aria-labelledby="new-title">
+      <h1 id="new-title">Request funds</h1>
+      <form id="new-form" class="form" novalidate>
+        <div class="field">
+          <label for="f-amount">Amount (USD)</label>
+          <input id="f-amount" name="amount" type="number" inputmode="decimal" min="0.01" step="0.01" required aria-describedby="e-amount">
+          <p class="error" id="e-amount" role="alert"></p>
         </div>
-        <div class="trust-item reveal">
-          <h2 class="trust-title"><span class="card-icon" aria-hidden="true">🤝</span>A named nominee</h2>
-          <p>Someone you know is named on every request.</p>
+        <div class="field">
+          <label for="f-purpose">Purpose</label>
+          <textarea id="f-purpose" name="purpose" rows="3" minlength="20" required aria-describedby="h-purpose e-purpose"></textarea>
+          <p class="hint" id="h-purpose">Be specific: the verification team checks it.</p>
+          <p class="error" id="e-purpose" role="alert"></p>
         </div>
-        <div class="trust-item reveal">
-          <h2 class="trust-title"><span class="card-icon" aria-hidden="true">🔍</span>No hidden interest</h2>
-          <p>The same rule for everyone. Amount due is always shown.</p>
+        <div class="field">
+          <label for="f-date">Repay by</label>
+          <input id="f-date" name="repaymentDate" type="date" required aria-describedby="h-date e-date">
+          <p class="hint" id="h-date">Interest (12% a year) starts after this date.</p>
+          <p class="error" id="e-date" role="alert"></p>
         </div>
+        <div class="field">
+          <label for="f-nominee">Nominee (repays if you cannot)</label>
+          <select id="f-nominee" name="nomineeId" required aria-describedby="e-nominee"></select>
+          <p class="error" id="e-nominee" role="alert"></p>
+        </div>
+        <p class="error" id="e-form" role="alert"></p>
+        <button class="btn btn-primary" type="submit">Submit for verification</button>
+      </form>
+    </section>
+
+    <section id="view-activity" hidden aria-labelledby="activity-title">
+      <h1 id="activity-title">My activity</h1>
+      <div class="section-card"><h2>Borrowing</h2><div id="activity-borrowing"></div></div>
+      <div class="section-card"><h2>Lending</h2><div id="activity-lending"></div></div>
+      <div class="section-card"><h2>Repayments</h2><div id="activity-repayments"></div></div>
+      <div class="section-card"><h2>Roles</h2><div id="activity-roles"></div></div>
+    </section>
+
+    <section id="view-detail" hidden aria-labelledby="detail-title">
+      <div id="detail"></div>
+    </section>
+
+    <section id="view-people" hidden aria-labelledby="people-title">
+      <h1 id="people-title">People</h1>
+      <form id="search-form" class="inline-form" role="search">
+        <label for="f-search" class="sr-only">Search members by name or email</label>
+        <input id="f-search" type="search" placeholder="Search by name or email" minlength="2">
+        <button class="btn btn-secondary" type="submit">Search</button>
+      </form>
+      <ul class="list" id="search-results"></ul>
+      <div class="section-card">
+        <h2>Your connections</h2>
+        <ul class="list" id="connections"></ul>
+      </div>
+      <div class="section-card">
+        <h2>Invite someone</h2>
+        <form id="invite-form" class="inline-form">
+          <label for="f-invite" class="sr-only">Email address to invite</label>
+          <input id="f-invite" type="email" placeholder="Email address" required>
+          <button class="btn btn-secondary" type="submit">Send invite</button>
+        </form>
+        <p class="muted" id="invite-status" role="status"></p>
       </div>
     </section>
 
-    <!-- 3. How it works -->
-    <section class="section" id="how-it-works" aria-labelledby="how-title">
-      <div class="container">
-        <header class="section-head reveal">
-          <h2 id="how-title">Four steps from request to repayment</h2>
-          <p class="section-sub">How it works: the same path for every request, recorded at every step.</p>
-        </header>
-        <ol class="steps">
-          <li class="step" data-zoom data-tilt data-spotlight>
-            <span class="step-icon" aria-hidden="true">📝</span>
-            <h3>Request</h3>
-            <span class="step-num">Step 1 · Borrower</span>
-            <p>Amount, purpose, due date, nominee.</p>
-          </li>
-          <li class="step" data-zoom data-tilt data-spotlight>
-            <span class="step-icon" aria-hidden="true">🛡️</span>
-            <h3>Verify</h3>
-            <span class="step-num">Step 2 · Verification team</span>
-            <p>Two approvals open it. One rejection closes it.</p>
-          </li>
-          <li class="step" data-zoom data-tilt data-spotlight>
-            <span class="step-icon" aria-hidden="true">💸</span>
-            <h3>Fund</h3>
-            <span class="step-num">Step 3 · Your circle</span>
-            <p>Anyone signed in can contribute, up to the balance left.</p>
-          </li>
-          <li class="step" data-zoom data-tilt data-spotlight>
-            <span class="step-icon" aria-hidden="true">🧾</span>
-            <h3>Repay</h3>
-            <span class="step-num">Step 4 · Borrower or nominee</span>
-            <p>The borrower or nominee records repayments until paid in full.</p>
-          </li>
-        </ol>
-      </div>
-    </section>
-
-    <!-- 4. Interest example -->
-    <section class="section section-tint" id="interest" aria-labelledby="interest-title">
-      <div class="container split">
-        <div class="reveal">
-          <p class="eyebrow">Interest, worked through</p>
-          <h2 id="interest-title">Interest starts after the due date, not before</h2>
-          <p>Simple interest at 12% a year, from the day after the due date.</p>
-          <p class="callout">Example: $1,000.00, repaid 10 days late. The amount due is always shown on the request.</p>
-        </div>
-        <div class="calc" data-zoom role="group" aria-labelledby="calc-title">
-          <p class="card-kicker" id="calc-title">Example</p>
-          <table class="calc-table">
-            <caption class="sr-only">Amount due for a $1,000.00 request repaid 10 days after the due date</caption>
-            <tbody>
-              <tr><th scope="row">Principal</th><td>$1,000.00</td></tr>
-              <tr><th scope="row">Days late</th><td><span class="badge badge-danger">10 days</span></td></tr>
-              <tr><th scope="row">Interest (12% a year, simple)</th><td>$3.29</td></tr>
-              <tr class="calc-total"><th scope="row">Amount due</th><td>$1,003.29</td></tr>
-            </tbody>
-          </table>
-          <p class="muted small">Calculated as principal × 12% × days late ÷ 365, rounded to the cent.</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- 5. Built for trust -->
-    <section class="section" id="features" aria-labelledby="features-title">
-      <div class="container">
-        <header class="section-head reveal">
-          <h2 id="features-title">Everything is recorded, and nothing is hidden</h2>
-          <p class="section-sub">Built for trust: four rules the app enforces for every member.</p>
-        </header>
-        <div class="feature-grid">
-          <article class="feature" data-zoom>
-            <h3><span class="card-icon" aria-hidden="true">👥</span>Your network, not the public</h3>
-            <p>The feed shows requests from people you follow and people who follow you. You choose who to connect with.</p>
-          </article>
-          <article class="feature" data-zoom>
-            <h3><span class="card-icon" aria-hidden="true">📒</span>A record of every decision</h3>
-            <p>Each verification, contribution and repayment is stored with its time and author, and shown on the request.</p>
-          </article>
-          <article class="feature" data-zoom>
-            <h3><span class="card-icon" aria-hidden="true">⚖️</span>Separation of roles</h3>
-            <p>Borrowers cannot verify or fund their own requests. Nominees cannot verify the request they are named on.</p>
-          </article>
-          <article class="feature" data-zoom>
-            <h3><span class="card-icon" aria-hidden="true">🚦</span>Clear status at a glance</h3>
-            <p>Each request shows whether it is <span class="badge badge-warn">Awaiting verification</span> <span class="badge badge-neutral">Open</span> <span class="badge badge-ok">Funded</span> <span class="badge badge-ok">Repaid</span> or <span class="badge badge-danger">Overdue</span>, with the amount still needed.</p>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <!-- 6. FAQ -->
-    <section class="section section-tint" id="faq" aria-labelledby="faq-title">
-      <div class="container">
-        <header class="section-head reveal">
-          <h2 id="faq-title">Questions people ask before lending</h2>
-          <p class="section-sub">Straight answers about money, verification and interest.</p>
-        </header>
-        <div class="faq reveal">
-          <details>
-            <summary>Does Funds For Family move money?</summary>
-            <p>No. The app records requests, verifications, contributions and repayments. Any transfer of money happens outside the app, and that part is not yet connected to a payment provider.</p>
-          </details>
-          <details>
-            <summary>Who checks the purpose of a request?</summary>
-            <p>A verification team reviews each request. A request opens for funding only after two distinct approvals. A single rejection closes it. A verifier cannot decide on a request where they are the borrower or the nominee.</p>
-          </details>
-          <details>
-            <summary>What is a nominee?</summary>
-            <p>A nominee is a member named on the request who agrees to repay if the borrower does not. The borrower picks the nominee from their connections in the app.</p>
-          </details>
-          <details>
-            <summary>When does interest start?</summary>
-            <p>Interest starts the day after the repayment date. It is simple interest at 12% a year, accrued daily, and the amount due is always shown on the request.</p>
-          </details>
-          <details>
-            <summary>Can I contribute any amount?</summary>
-            <p>Yes, up to the balance still needed. You cannot contribute to your own request, and a request stops accepting money once it is fully funded.</p>
-          </details>
-        </div>
-      </div>
-    </section>
-
-    <!-- 7. Final CTA -->
-    <section class="final-cta" aria-labelledby="final-title">
-      <div class="container reveal">
-        <h2 id="final-title">Start with one request, or sign in to see your circle</h2>
-        <div class="cta-row cta-center">
-          <a class="btn btn-primary btn-lg" href="/app/#new" data-magnetic>Start a request</a>
-          <a class="btn btn-secondary btn-lg" href="/app/">Sign in</a>
-        </div>
-        <p class="disclaimer">Funds For Family records and verifies requests. It does not move money or give financial advice.</p>
-      </div>
-    </section>
+    <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
   </main>
-
-  <footer class="site-footer">
-    <div class="container footer-row">
-      <p class="muted small">&copy; <span id="year">2026</span> Funds For Family. Built for trusted circles.</p>
-      <nav aria-label="Footer" class="site-nav small">
-        <a href="/app/">App</a>
-        <a href="#faq">Questions</a>
-      </nav>
-    </div>
-  </footer>
+  <script src="/app/card-model.js"></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>

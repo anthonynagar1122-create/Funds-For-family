@@ -121,6 +121,22 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ requests: withRaised });
   });
 
+  // The verifier's to-do list: pending requests this member may still decide on.
+  // Uses the same rule as POST /verify, so the list never offers a request the verify call would refuse.
+  api.get('/verification-queue', async (req, res) => {
+    if (!req.user.isVerifier) return fail(res, 403, 'Only verification team members can verify');
+    const pending = await repo.listPendingRequests({ excludeDecidedBy: req.user.id });
+    const open = [];
+    for (const r of pending) {
+      const allowed = rules.canVerify({ verifier: req.user, requestBorrowerId: r.borrowerId, requestNomineeId: r.nomineeId, requestStatus: r.status });
+      if (!allowed.ok) continue;
+      const verifs = await repo.listVerifications(r.id);
+      if (verifs.some((v) => v.verifierId === req.user.id)) continue;
+      open.push({ ...summarise(r, now()), approvals: verifs.filter((v) => v.decision === 'approve').length, requiredApprovals });
+    }
+    res.json({ requests: open });
+  });
+
   // The member's ledger. Built from requests they borrowed plus requests raised by their connections
   // (the same discovery scope as the feed). Repo has no lookup by participant, so requests outside that scope are not listed.
   api.get('/activity', async (req, res) => {

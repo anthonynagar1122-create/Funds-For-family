@@ -13,8 +13,8 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 | Data access (Supabase) | **Not working in production** | `SUPABASE_URL` set; `SUPABASE_SERVICE_ROLE_KEY` **missing** |
 | Email (Resend) | **Not working in production** | `RESEND_API_KEY` and `EMAIL_FROM` **missing** (email is skipped with a warning) |
 | Application features | Implemented in code and tested against an in-memory store; **not verified against the real database** | API tests use `memory-repo`; `supabase-repo` has no integration test yet |
-| Live product UI (`/app/`) | Shell only until sign-in works | depends on the three missing secrets |
-| Domain | Canonical and sitemap use `funds-for-family.vercel.app`, which another project owns | `APP_URL` points there too |
+| Live product UI (`/`; `/app/` redirects there) | Shell only until sign-in works | depends on the three missing secrets |
+| Domain | OG image URL uses `funds-for-family.vercel.app`, which another project owns | `APP_URL` points there too |
 
 **Conclusion:** the code path is complete end to end, but the production environment cannot run it. The blocking work is configuration plus one integration test suite, not new features.
 
@@ -34,7 +34,7 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 | I-10 | Verifier queue page | Verifiers need a place to act | P1 | Not built (API only) |
 | I-11 | Support and dispute workflow | Operational trust | P2 | Not built |
 | I-12 | Admin: flags, audit view, verifier management | Operations | P2 | Not built (script only) |
-| I-13 | Interactive product previews and scroll storytelling on the landing page | Differentiation | P2 | Effects shipped; previews not built |
+| I-13 | Interactive product previews and scroll storytelling on the landing page | Differentiation | P2 | Dropped: landing page removed 2026-11-24 (task-focused app) |
 | I-14 | Multi-currency and locale formatting | International use | P3 | Not built; currency decision open |
 | I-15 | Payments integration | Moves real money | Blocked | Not started; legal gate |
 
@@ -50,7 +50,7 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 
 ### J1 — Join and sign in
 1. Visitor lands on `/`, selects "Sign in".
-2. Clerk email-code or social sign-in opens; success returns the browser to `/app/`.
+2. Clerk email-code or social sign-in opens; success returns the browser to `/`.
 3. Server verifies the Clerk session, creates or updates the member profile once (keyed by Clerk subject).
 4. Member sees the feed (empty state offers Find people and Invite someone).
 - Errors: cancelled sign-in, expired code, rate limit, network failure — each shows a message and a retry.
@@ -114,11 +114,11 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 
 ## 6. Non-functional requirements
 
-- **Security:** server-side authorisation on every write; service-role key server-only; no email exposure to other members; CSP and HSTS on the landing page; input ceilings; generic 500 responses.
+- **Security:** server-side authorisation on every write; service-role key server-only; no email exposure to other members; HSTS and a baseline CSP (object-src, base-uri, frame-ancestors) on every page; input ceilings; generic 500 responses.
 - **Accessibility:** WCAG 2.2 AA; keyboard operable; visible focus; 44 px targets; reduced motion honoured.
-- **Performance:** static landing page; no third-party scripts on the landing page; the signed-in app loads Clerk's scripts only.
+- **Performance:** a single app page; the only third-party script is Clerk's.
 - **Reliability:** async errors reach the error handler; a failing dependency returns 500, never a hang.
-- **Privacy:** data minimisation; emails visible to their owner only; no tracking on the landing page.
+- **Privacy:** data minimisation; emails visible to their owner only; no tracking scripts.
 - **Observability (not built):** structured logs with request id; error monitoring; uptime check.
 
 ## 7. Known gaps (must close before live use)
@@ -154,7 +154,7 @@ Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 
 | D-1 | Set `CLERK_SECRET_KEY` in Vercel production | Sign-in and every API call | Owner |
 | D-2 | Set `SUPABASE_SERVICE_ROLE_KEY` in Vercel production | Every data read and write | Owner |
 | D-3 | Set `RESEND_API_KEY` and `EMAIL_FROM` (verified domain) | Invites and notices | Owner |
-| D-4 | Choose the public domain; update `APP_URL`, canonical, sitemap and OG URLs | Links and SEO point at a domain we don't control | Owner |
+| D-4 | Choose the public domain; update `APP_URL` and OG URLs | Links and SEO point at a domain we don't control | Owner |
 | D-5 | Clerk production instance (needs an owned domain) | Development keys cannot serve real users | Owner |
 | D-6 | Launch currency | Money fields are currently USD | Owner |
 | D-7 | Legal review: nominee role and NBFC-P2P classification (research report §5) | Live lending must not start before this | Owner with counsel |
