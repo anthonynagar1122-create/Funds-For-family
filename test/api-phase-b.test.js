@@ -367,3 +367,51 @@ test('resolve: sets resolvedAt once (idempotent), 404 when missing, 403 for a me
     assert.equal(s.sent.length, 0);
   } finally { await s.close(); }
 });
+
+test('admin member management is role-gated and role changes are audited', async () => {
+  const s = await setup({ ownerEmail: 'owner@example.com' });
+  try {
+    const owner = await s.call('owner', 'GET', '/me');
+    const member = await s.call('member', 'GET', '/me');
+    assert.equal(owner.body.user.isAdmin, true);
+    assert.equal(member.body.user.isAdmin, false);
+    assert.equal((await s.call('member', 'GET', '/admin/members')).status, 403);
+    assert.equal((await s.call('member', 'GET', '/admin/audit-events')).status, 403);
+    assert.equal((await s.call('member', 'GET', '/admin/operations')).status, 403);
+    const listed = await s.call('owner', 'GET', '/admin/members');
+    assert.equal(listed.status, 200);
+    assert.ok(listed.body.members.some((u) => u.id === member.body.user.id));
+    const invalid = await s.call('owner', 'PATCH', '/admin/members/' + member.body.user.id + '/roles', { isAdmin: true });
+    assert.equal(invalid.status, 400);
+    const changed = await s.call('owner', 'PATCH', '/admin/members/' + member.body.user.id + '/roles', { isAdmin: false, isVerifier: true });
+    assert.equal(changed.status, 200);
+    assert.equal(changed.body.member.isVerifier, true);
+    assert.equal((await s.call('member', 'GET', '/me')).body.user.isVerifier, true);
+    const audit = await s.call('owner', 'GET', '/admin/audit-events');
+    assert.equal(audit.status, 200);
+    assert.equal(audit.body.events.length, 1);
+    assert.equal(audit.body.events[0].actorName, 'owner');
+    assert.equal(audit.body.events[0].targetName, 'member');
+    assert.deepEqual(audit.body.events[0].beforeState, { isAdmin: false, isVerifier: false });
+    assert.deepEqual(audit.body.events[0].afterState, { isAdmin: false, isVerifier: true });
+    const ops = await s.call('owner', 'GET', '/admin/operations');
+    assert.equal(ops.status, 200);
+    assert.equal(ops.body.metrics.members, 2);
+    assert.equal(ops.body.metrics.admins, 1);
+    assert.equal(ops.body.metrics.verifiers, 2);
+  } finally { await s.close(); }
+});
+
+test('admin role management cannot remove the final administrator', async () => {
+  const s = await setup({ ownerEmail: 'owner@example.com' });
+  try {
+    const owner = (await s.call('owner', 'GET', '/me')).body.user;
+    const response = await s.call('owner', 'PATCH', '/admin/members/' + owner.id + '/roles', { isAdmin: false, isVerifier: false });
+    assert.equal(response.status, 409);
+    assert.match(response.body.error, /last administrator/i);
+    const stillAdmin = await s.call('owner', 'GET', '/me');
+    assert.equal(stillAdmin.body.user.isAdmin, true);
+    const audit = await s.call('owner', 'GET', '/admin/audit-events');
+    assert.equal(audit.body.events.length, 0);
+  } finally { await s.close(); }
+});

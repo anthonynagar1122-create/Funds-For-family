@@ -119,3 +119,14 @@ Remediation: open the Preview link, configure its staging secret, authenticate w
 - Staging security advisor now reports 14 INFO-only `rls_enabled_no_policy` notices (the 12 existing server-only tables plus the two new private tables); health advisor remains clear. No broad policies were added.
 - Migration history includes a no-op `atomic_financial_ledger` entry created during an earlier migration invocation, followed by the actual `atomic_financial_ledger_implementation` migration. The latter is the migration containing the SQL above. This extra empty history entry does not change schema state, but should be reconciled in the repository's migration bookkeeping before future migration automation.
 - F-03 is partially remediated but remains open until the staging GitHub Actions integration job runs against the new RPCs and the concurrent request test passes against Postgres. The staging GitHub secrets are still not configured. No production DB or deployment was changed.
+
+
+## Admin workspace implementation — 2026-11-24
+
+- Added restricted admin API endpoints for member listing/search, role updates, operations metrics and recent admin audit events. Each endpoint requires the server-resolved administrator role.
+- Added a transactional admin_set_member_roles RPC (SECURITY INVOKER, service-role EXECUTE only). It serializes concurrent role changes, prevents removal of the final administrator, and records before/after role states in admin_audit_events.
+- The admin audit table is RLS-enabled, unavailable to anon/authenticated, and protected against row UPDATE/DELETE. No member-management operation writes role flags directly from a client.
+- The admin workspace now displays member and role controls, operational counts, and recent administrative audit events. Existing verifier queue and support inbox remain.
+- Focused local API, repository, and financial tests passed 62/62 before adding the migration assertion; rerun after all changes. npm audit --audit-level=high reported zero vulnerabilities.
+- Staging database connectivity timed out while applying migration 0006; application is not confirmed. Do not assume the admin endpoints are ready on a deployed preview until this migration is verified on staging and the new Preview is deployed.
+- Support assignment is still not implemented. It needs an explicit assignee model and audit/state contract before shipping; current support messages can be listed and resolved only.

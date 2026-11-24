@@ -156,6 +156,9 @@
     root.innerHTML = '<p class="muted" role="status">Loading workspace…</p>';
     let queue = [];
     let messages = [];
+    let members = [];
+    let metrics = null;
+    let auditEvents = [];
     if (me.isVerifier) {
       try {
         const data = await api('/home');
@@ -167,8 +170,13 @@
     }
     if (me.isAdmin) {
       try {
-        const data = await api('/admin/help-messages');
-        messages = data.messages || [];
+        const results = await Promise.all([
+          api('/admin/help-messages'), api('/admin/members'), api('/admin/operations'), api('/admin/audit-events'),
+        ]);
+        messages = results[0].messages || [];
+        members = results[1].members || [];
+        metrics = results[2].metrics || null;
+        auditEvents = results[3].events || [];
         messages.sort((a, b) => Number(Boolean(a.resolvedAt)) - Number(Boolean(b.resolvedAt)) || new Date(b.createdAt) - new Date(a.createdAt));
       } catch (err) {
         root.innerHTML = `<h1 id="workspace-title" tabindex="-1">Admin workspace</h1><p class="error" role="alert">${esc(err.message)}</p>`;
@@ -188,20 +196,66 @@
     root.innerHTML = `<h1 id="workspace-title" tabindex="-1">${me.isAdmin ? 'Admin workspace' : 'Verifier workspace'}</h1>
       <p class="muted">Restricted operational tools. Access is determined by your account role.</p>
       ${queueHtml}${helpHtml}`;
+    if (me.isAdmin) {
+      const metricItems = metrics ? [
+        ['Members', metrics.members], ['Admins', metrics.admins], ['Verifiers', metrics.verifiers],
+        ['Requests', metrics.requests], ['Awaiting contact', metrics.awaitingContact],
+        ['Awaiting verification', metrics.pendingVerification], ['Open funding', metrics.openFunding],
+        ['Funded', metrics.funded], ['Open support', metrics.supportOpen],
+      ] : [];
+      const metricSection = document.createElement('section');
+      metricSection.setAttribute('aria-labelledby', 'operations-title');
+      metricSection.innerHTML = '<h2 id="operations-title">Operations overview</h2><ul class="cards">' +
+        metricItems.map(([label, value]) => '<li class="card"><p class="muted">' + esc(label) + '</p><strong>' + esc(value) + '</strong></li>').join('') +
+        '</ul>';
+      root.appendChild(metricSection);
+      const memberSection = document.createElement('section');
+      memberSection.setAttribute('aria-labelledby', 'member-management-title');
+      memberSection.innerHTML = '<h2 id="member-management-title">Members &amp; access (' + members.length + ')</h2>' +
+        '<p class="muted">Role changes are recorded in the append-only admin audit log. Deleted accounts are not shown.</p>' +
+        '<ul class="cards">' + members.map((m) =>
+          '<li class="card" data-member-card="' + esc(m.id) + '"><div class="meta"><strong>' + esc(m.name) +
+          '</strong><span>' + esc(m.email || 'Email unavailable') + '</span><span>Member #' + esc(m.id) + '</span></div>' +
+          '<div class="row-actions"><label><input type="checkbox" data-role-admin ' + (m.isAdmin ? 'checked' : '') +
+          '> Administrator</label><label><input type="checkbox" data-role-verifier ' + (m.isVerifier ? 'checked' : '') +
+          '> Verifier</label><button class="btn btn-secondary btn-sm" type="button" data-save-roles="' + esc(m.id) +
+          '">Save access</button></div></li>').join('') + '</ul>';
+      root.appendChild(memberSection);
+      const auditSection = document.createElement('section');
+      auditSection.setAttribute('aria-labelledby', 'audit-events-title');
+      auditSection.innerHTML = '<h2 id="audit-events-title">Recent admin audit events</h2>' +
+        (auditEvents.length ? '<ul class="list">' + auditEvents.map((e) =>
+          '<li><strong>' + esc(e.eventType) + '</strong> · ' + esc(e.actorName) + ' → ' + esc(e.targetName) +
+          '<span class="muted">' + esc(new Date(e.createdAt).toLocaleString()) + '</span><span class="muted">' +
+          esc(JSON.stringify(e.beforeState)) + ' → ' + esc(JSON.stringify(e.afterState)) + '</span></li>').join('') + '</ul>'
+          : '<p class="empty">No administrative changes have been recorded.</p>');
+      root.appendChild(auditSection);
+    }
     if (!root.dataset.resolveBound) {
       root.dataset.resolveBound = '1';
       root.addEventListener('click', async (event) => {
-        const button = event.target.closest?.('[data-resolve-help]');
-        if (!button || !me?.isAdmin) return;
-        const id = button.getAttribute('data-resolve-help');
+        const resolveButton = event.target.closest?.('[data-resolve-help]');
+        const roleButton = event.target.closest?.('[data-save-roles]');
+        if (!me?.isAdmin || (!resolveButton && !roleButton)) return;
+        const button = resolveButton || roleButton;
         button.disabled = true;
         try {
-          await api(`/admin/help-messages/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: {} });
-          toast('Support message marked resolved.');
+          if (resolveButton) {
+            const id = resolveButton.getAttribute('data-resolve-help');
+            await api('/admin/help-messages/' + encodeURIComponent(id) + '/resolve', { method: 'POST', body: {} });
+            toast('Support message marked resolved.');
+          } else {
+            const card = roleButton.closest('[data-member-card]');
+            const id = roleButton.getAttribute('data-save-roles');
+            const isAdmin = !!card?.querySelector('[data-role-admin]')?.checked;
+            const isVerifier = !!card?.querySelector('[data-role-verifier]')?.checked;
+            await api('/admin/members/' + encodeURIComponent(id) + '/roles', { method: 'PATCH', body: { isAdmin, isVerifier } });
+            toast('Member access updated and audited.');
+          }
           await renderWorkspace();
         } catch (err) {
           button.disabled = false;
-          toast(err.message || 'Could not update this message.');
+          toast(err.message || 'Could not update this workspace record.');
         }
       });
     }

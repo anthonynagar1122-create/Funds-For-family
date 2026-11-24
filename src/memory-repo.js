@@ -28,6 +28,7 @@ function createMemoryRepo() {
   const repayments = new Map();
   const helpMessages = new Map();
   const financialIdempotency = new Map();
+  const adminAuditEvents = [];
 
   const entryApi = (store, add, get, update, del, list) => ({
     async [add](row) {
@@ -68,6 +69,24 @@ function createMemoryRepo() {
     },
     async getUser(id) { return copy(users.get(id)); },
     async getUsers(ids) { return ids.map((id) => users.get(id)).filter(Boolean).map(copy); },
+    async listUsers({ query = '', limit = 100 } = {}) {
+      const q = String(query).trim().toLowerCase();
+      return [...users.values()].filter((u) => !u.deletedAt && (!q || `${u.name} ${u.email}`.toLowerCase().includes(q)))
+        .sort((a,b)=>b.id-a.id).slice(0, Math.min(Math.max(limit,1),200)).map(copy);
+    },
+    async setMemberRoles({ actorId, targetUserId, isAdmin, isVerifier }) {
+      const actor = users.get(actorId), target = users.get(targetUserId);
+      if (!actor?.isAdmin || actor.deletedAt) throw Object.assign(new Error('Admins only'), { code:'42501' });
+      if (!target || target.deletedAt) throw Object.assign(new Error('Member not found'), { code:'P0002' });
+      const beforeState = { isAdmin: !!target.isAdmin, isVerifier: !!target.isVerifier };
+      const admins = [...users.values()].filter((u)=>u.isAdmin && !u.deletedAt).length;
+      if (target.isAdmin && !isAdmin && admins <= 1) throw Object.assign(new Error('The last administrator cannot be removed'), { code:'23514' });
+      target.isAdmin = !!isAdmin; target.isVerifier = !!isVerifier;
+      adminAuditEvents.push({ id: adminAuditEvents.length+1, actorId, targetUserId, eventType:'member.roles_updated',
+        beforeState, afterState:{ isAdmin:target.isAdmin, isVerifier:target.isVerifier }, createdAt:new Date().toISOString() });
+      return { id:target.id, name:target.name, email:target.email, isAdmin:target.isAdmin, isVerifier:target.isVerifier };
+    },
+    async listAdminAuditEvents({ limit = 100 } = {}) { return adminAuditEvents.slice().reverse().slice(0, Math.min(Math.max(limit,1),200)).map(copy); },
     async setVerifier(id, isVerifier) { users.get(id).isVerifier = !!isVerifier; },
     async searchUsers(q, excludeId) {
       const s = q.toLowerCase();

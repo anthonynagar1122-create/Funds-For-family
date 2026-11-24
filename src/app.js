@@ -275,6 +275,57 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ message: helpView(m, await repo.getUser(m.userId)) });
   });
 
+  // Restricted administration: member roles are changed through one audited database transaction.
+  api.get('/admin/members', requireAdmin, async (req, res) => {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+    const users = await repo.listUsers({ query, limit: 100 });
+    res.json({ members: users.map((u) => ({ id:u.id, name:u.name, email:u.email, isAdmin:!!u.isAdmin,
+      isVerifier:!!u.isVerifier, createdAt:u.createdAt, deletedAt:u.deletedAt ?? null })) });
+  });
+
+  api.patch('/admin/members/:id/roles', requireAdmin, async (req, res) => {
+    const targetUserId = parseId(req.params.id);
+    if (targetUserId === null) return fail(res, 404, 'Member not found');
+    if (typeof req.body?.isAdmin !== 'boolean' || typeof req.body?.isVerifier !== 'boolean') {
+      return fail(res, 400, 'Choose both administrator and verifier roles', 'roles');
+    }
+    try {
+      const member = await repo.setMemberRoles({ actorId:req.user.id, targetUserId,
+        isAdmin:req.body.isAdmin, isVerifier:req.body.isVerifier });
+      if (!member) return fail(res, 404, 'Member not found');
+      res.json({ member });
+    } catch (err) {
+      if (['42501','P0002','23514'].includes(err?.code)) return fail(res, err.code === '42501' ? 403 : err.code === 'P0002' ? 404 : 409,
+        String(err.message || 'Role update rejected').replace(/^Supabase:\s*/, ''));
+      throw err;
+    }
+  });
+
+  api.get('/admin/audit-events', requireAdmin, async (_req, res) => {
+    const events = await repo.listAdminAuditEvents({ limit: 100 });
+    const ids = [...new Set(events.flatMap((e) => [e.actorId,e.targetUserId]))];
+    const names = new Map((await repo.getUsers(ids)).map((u) => [u.id, u.name]));
+    res.json({ events:events.map((e) => ({ ...e, actorName:names.get(e.actorId) ?? 'Former member',
+      targetName:names.get(e.targetUserId) ?? 'Former member' })) });
+  });
+
+  api.get('/admin/operations', requireAdmin, async (_req, res) => {
+    const statuses = ['awaiting_contact','contact_declined','pending_verification','rejected','open','funded','repaid','withdrawn'];
+    const [users, requests, messages, events] = await Promise.all([
+      repo.listUsers({ limit:200 }),
+      Promise.all(statuses.map((status) => repo.listRequestsByStatus(status))),
+      repo.listHelpMessages(),
+      repo.listAdminAuditEvents({ limit:10 }),
+    ]);
+    const rows = requests.flat();
+    res.json({ metrics:{ members:users.length, admins:users.filter((u)=>u.isAdmin).length,
+      verifiers:users.filter((u)=>u.isVerifier).length, requests:rows.length,
+      awaitingContact:rows.filter((r)=>r.status==='awaiting_contact').length,
+      pendingVerification:rows.filter((r)=>r.status==='pending_verification').length,
+      openFunding:rows.filter((r)=>r.status==='open').length, funded:rows.filter((r)=>r.status==='funded').length,
+      supportOpen:messages.filter((m)=>!m.resolvedAt).length }, recentAuditEvents:events.length });
+  });
+
   api.post('/me/accept-terms', async (req, res) => {
     // Idempotent: a second call keeps the first timestamp.
     const updated = req.user.termsAcceptedAt ? req.user : await repo.updateUser(req.user.id, { termsAcceptedAt: now().toISOString() });

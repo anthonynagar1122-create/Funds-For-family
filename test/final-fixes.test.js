@@ -333,6 +333,19 @@ test('migration 0004 installs transactional ledger RPCs, private idempotency, an
   assert.match(attribution, /v_actor_id := nullif\(v_row->>'lender_id'/);
 });
 
+test('migration 0006 installs audited role management with last-admin protection', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '0006_admin_audit_and_role_management.sql'), 'utf8').toLowerCase();
+  assert.match(sql, /create table if not exists public\.admin_audit_events/);
+  assert.match(sql, /before update or delete on public\.admin_audit_events/);
+  assert.match(sql, /create or replace function public\.admin_set_member_roles/);
+  assert.match(sql, /security invoker/);
+  assert.match(sql, /order by id for update/);
+  assert.match(sql, /last administrator cannot be removed/);
+  assert.match(sql, /revoke all on function public\.admin_set_member_roles/);
+  assert.match(sql, /grant execute on function public\.admin_set_member_roles/);
+  assert.doesNotMatch(sql, /security definer/);
+});
+
 test('migrations 0002 and 0003 run inside a transaction', () => {
   for (const f of ['0002_customer_ready.sql', '0003_fix_upi_check.sql']) {
     const sql = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', f), 'utf8')

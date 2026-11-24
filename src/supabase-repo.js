@@ -121,6 +121,26 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       if (ids.length === 0) return [];
       return list(check(await db.from('users').select().in('id', ids)), USER);
     },
+    async listUsers({ query = '', limit = 100 } = {}) {
+      const cap = Math.min(Math.max(limit, 1), 200);
+      const base = () => db.from('users').select().order('id', { ascending: false }).limit(cap);
+      if (!query) return list(check(await base()), USER);
+      const byName = await base().ilike('name', '%' + likeEscape(query) + '%');
+      const nameRows = check(byName);
+      if (nameRows.length) return list(nameRows, USER);
+      return list(check(await base().ilike('email', '%' + likeEscape(query) + '%')), USER);
+    },
+    async setMemberRoles({ actorId, targetUserId, isAdmin, isVerifier }) {
+      const row = check(await db.rpc('admin_set_member_roles', {
+        p_actor_id: actorId, p_target_user_id: targetUserId, p_is_admin: isAdmin, p_is_verifier: isVerifier,
+      }));
+      return { id: row.id, name: row.name, email: row.email, isAdmin: row.is_admin, isVerifier: row.is_verifier };
+    },
+    async listAdminAuditEvents({ limit = 100 } = {}) {
+      return check(await db.from('admin_audit_events').select().order('id', { ascending: false }).limit(Math.min(Math.max(limit, 1), 200)))
+        .map((r) => ({ id:r.id, actorId:r.actor_id, targetUserId:r.target_user_id, eventType:r.event_type,
+          beforeState:r.before_state, afterState:r.after_state, createdAt:r.created_at }));
+    },
     async setVerifier(id, isVerifier) { check(await db.from('users').update({ is_verifier: !!isVerifier }).eq('id', id)); },
     // Name only (email is private). Parameterised: user text never goes into a filter string.
     async searchUsers(q, excludeId) {
