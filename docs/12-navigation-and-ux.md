@@ -12,16 +12,16 @@ Make trusted-circle borrowing and lending understandable at a glance. The interf
 
 1. **Home** — one-screen summary and next best action.
 2. **Discover** — requests from the member's permitted network; filters for open, nearing deadline and recently funded.
-3. **My requests** — borrowing requests grouped by Draft/Waiting for contact/Verification/Open/Funded/Overdue/Repaid.
-4. **My lending** — requests the member has funded, amount sent, amount confirmed, amount repaid and amount still owed.
-5. **Activity** — a chronological personal ledger: contributions sent, receipts confirmed, repayments made/received, verification actions and invite events.
-6. **My circle** — following/followers, mutual connections, invitations and trusted-contact eligibility.
-7. **Help** — support messages and resolution status.
-8. **Profile & settings** — verified identity, UPI details, email preferences, privacy, terms and sign-out.
+3. **Activity** — borrowing, lending, repayments and role history in one chronological personal ledger.
+4. **New request** — focused request creation.
+5. **My circle** — following/followers, mutual connections, invitations and trusted-contact eligibility.
+6. **Profile & settings** — verified identity, UPI details, email preferences, help/support, privacy, terms and sign-out.
+
+The current implementation uses these six compact destinations; separate request and lending statements can be introduced as deeper views without adding more top-level mobile tabs.
 
 ### Admin / verifier workspace
 
-Keep this separate from member navigation and show it only when the server confirms the role.
+Keep this separate from member navigation and show it only when the server confirms the role. The implemented top-level entry is labelled **Admin** or **Verify** according to the server-provided role. The first release includes a verification queue and an admin support inbox; member administration and audit/operations tools remain planned, not yet implemented.
 
 - **Verification queue** — pending requests, evidence/context, independent decisions and reason capture.
 - **Member administration** — invite controls, verifier assignments, account support and role changes.
