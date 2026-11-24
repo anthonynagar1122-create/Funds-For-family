@@ -3,7 +3,7 @@
   const esc = (window.Format && window.Format.esc) || ((s) => String(s ?? ''));
 
   // Hash router. Hashes look like #/home, #/request/12. The older #feed, #people, #activity still work.
-  const ALIASES = { '': 'home', people: 'circle', activity: 'requests', request: 'request' };
+  const ALIASES = { '': 'home', people: 'circle', activity: 'requests', request: 'request', admin: 'workspace' };
   const renderers = new Map();
   let current = { name: 'home', params: [] };
   let onChange = null;
@@ -26,31 +26,33 @@
 
   function go(hash) {
     const h = String(hash);
-    const target = h.startsWith('#') ? h : '#/' + h; // a leading # is kept as given
+    const target = h.startsWith('#') ? h : '#/' + h;
     if (location.hash === target) return dispatch();
-    location.hash = target; // hashchange triggers dispatch
+    location.hash = target;
     return undefined;
   }
 
-  // Which tab is lit for each route.
-  const TAB_FOR = { home: 'home', feed: 'home', request: 'requests', requests: 'requests', new: 'new', circle: 'circle', profile: 'profile', help: 'profile', admin: 'admin' };
-  const TABS = [
+  const TAB_FOR = { home: 'home', feed: 'discover', request: 'activity', requests: 'activity', new: 'new', circle: 'circle', profile: 'profile', help: 'profile', workspace: 'workspace' };
+  const MEMBER_TABS = [
     { id: 'home', label: 'Home' },
-    { id: 'requests', label: 'Requests' },
+    { id: 'discover', label: 'Discover' },
+    { id: 'activity', label: 'Activity' },
     { id: 'new', label: '+ New', cls: 'tab-new' },
     { id: 'circle', label: 'Circle' },
     { id: 'profile', label: 'Profile' },
   ];
 
-  // Renders into <nav id="primary-nav">. The same markup is a top bar above 768px and a bottom tab bar below it (CSS).
   function renderNav(me, route = current) {
     const nav = document.getElementById('primary-nav');
     if (!nav) return;
-    const tabs = me && me.isAdmin === true ? [...TABS, { id: 'admin', label: 'Admin' }] : TABS;
+    const tabs = [...MEMBER_TABS];
+    if (me && (me.isAdmin === true || me.isVerifier === true)) tabs.push({ id: 'workspace', label: me.isAdmin ? 'Admin' : 'Verify', cls: 'tab-workspace' });
     const active = TAB_FOR[route.name];
-    // The welcome flow is a focused screen: no navigation until it is finished.
     nav.hidden = !me || me.welcomedAt === null || me.termsAcceptedAt === null;
-    nav.innerHTML = tabs.map((t) => `<a class="tab ${t.cls || ''}" id="nav-${esc(t.id)}" href="#/${esc(t.id)}"${t.id === active ? ' aria-current="page"' : ''}>${esc(t.label)}</a>`).join('');
+    nav.innerHTML = tabs.map((t) => {
+      const href = t.id === 'discover' ? '#/feed' : t.id === 'activity' ? '#/requests' : '#/' + t.id;
+      return `<a class="tab ${t.cls || ''}" id="nav-${esc(t.id)}" href="${href}"${t.id === active ? ' aria-current="page"' : ''}>${esc(t.label)}</a>`;
+    }).join('');
   }
 
   let navMe = null;

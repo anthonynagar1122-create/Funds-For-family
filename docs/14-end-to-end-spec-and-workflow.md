@@ -1,5 +1,7 @@
 # 14 — End-to-end specification, feature status and implementation workflow
 
+> **Superseded assumptions:** Read [docs/15-product-decisions.md](15-product-decisions.md) first. Its owner-approved decisions override older statements in this historical specification, including interest, trusted-contact obligations, currency and launch behavior. Interest remains disabled pending review.
+
 Status date: 2026-11-21. Baseline commit: `8488bc5` (deployment READY on Vercel).
 Companion documents: 01 idea, 03 specifications, 04 data model, 05 integration, 09 Figma, 11 landing spec, 12 cards, 13 landing effects.
 
