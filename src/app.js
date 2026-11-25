@@ -19,7 +19,18 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   deleteIdentity = async () => {}, rateLimits = {} }) {
   const app = express();
   app.disable('x-powered-by');
+  // Behind one proxy hop (Vercel), so req.ip is the client address from X-Forwarded-For.
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '32kb' }));
+
+  // Audit trail for sensitive actions. A failed write is logged but does not block the member's action.
+  const audit = async (req, action, { subjectType = null, subjectId = null, detail = null } = {}) => {
+    try {
+      await repo.recordEvent({ actorId: req.user?.id ?? null, action, subjectType, subjectId, detail, ip: req.ip ?? null });
+    } catch (err) {
+      logger.error('audit write failed', err?.message);
+    }
+  };
 
   // Per-member limits. Invites send email, so they get the tightest bound.
   const limitInvites = createRateLimiter({
@@ -154,6 +165,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     await repo.addFollow(req.user.id, inviter.id);
     await repo.addFollow(inviter.id, req.user.id);
     await repo.markInviteAccepted(token, now().toISOString());
+    await audit(req, 'invite.accept', { subjectType: 'user', subjectId: inviter.id });
     res.json({ inviter: publicUser(inviter, req.user.id) });
   });
 
@@ -301,6 +313,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (!check.ok) return fail(res, 403, check.reason);
     const note = String(req.body?.note ?? '').slice(0, 1000);
     await repo.addVerification({ requestId: r.id, verifierId: req.user.id, decision, note, createdAt: now().toISOString() });
+    await audit(req, 'request.verify', { subjectType: 'request', subjectId: r.id, detail: decision });
     const outcome = rules.verificationOutcome(await repo.listVerifications(r.id), requiredApprovals);
     if (outcome !== 'pending') {
       const status = outcome === 'approved' ? 'open' : 'rejected';
@@ -339,6 +352,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       return fail(res, 409, `Only ${result.remainingCents} cents remain to be funded`);
     }
     if (result.duplicate) return res.json({ request: await detail(await repo.getRequest(r.id)) });
+    await audit(req, 'contribution.create', { subjectType: 'request', subjectId: r.id, detail: String(amountCents) });
 
     await safeMail({
       to: req.user.email,
@@ -360,6 +374,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     }
     // Identity first: if this fails, nothing is changed and the member can retry.
     await deleteIdentity(req.user.clerkId);
+    // Audit first, so the anonymise step also clears this row's IP.
+    await audit(req, 'account.delete', { subjectType: 'user', subjectId: me });
     await repo.anonymizeUser(me);
     res.json({ ok: true });
   });
@@ -374,6 +390,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const amountCents = toCents(req.body?.amount);
     if (amountCents === null) return fail(res, 400, 'Amount must be a positive number with at most 2 decimals', 'amount');
     await repo.addRepayment({ requestId: r.id, payerId: req.user.id, amountCents, createdAt: now().toISOString() });
+    await audit(req, 'repayment.create', { subjectType: 'request', subjectId: r.id, detail: String(amountCents) });
     const paid = (await repo.listRepayments(r.id)).reduce((s, p) => s + p.amountCents, 0);
     const due = rules.amountDueCents(r.principalCents, r.repaymentDate, now(), annualRate);
     if (paid >= due) await repo.setRequestStatus(r.id, { status: 'repaid', repaidAt: now().toISOString() });

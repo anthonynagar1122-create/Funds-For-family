@@ -198,3 +198,51 @@ test('privacy policy is published and linked from the profile with a delete acti
   assert.match(page, /id="delete-account"/);
   assert.match(page, /href="\/privacy\.html"/);
 });
+
+test('member search matches names only, so an exact email cannot confirm membership', async () => {
+  const s = await setup();
+  try {
+    await s.call('ann', 'GET', '/me');
+    await s.call('bo', 'GET', '/me');
+    const byEmail = await s.call('bo', 'GET', `/users?q=${encodeURIComponent('bo@example.com')}`);
+    assert.equal(byEmail.status, 200);
+    assert.deepEqual(byEmail.body.users, [], 'an email query returns nobody');
+    const byName = await s.call('bo', 'GET', '/users?q=ann');
+    assert.equal(byName.body.users.length, 1, 'name search still works');
+  } finally { await s.close(); }
+});
+
+test('audit: contributions and account deletion are recorded with actor, subject and IP', async () => {
+  const s = await setup();
+  try {
+    const id = await openRequest(s, 10000, ['lee']);
+    await s.call('lee', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 40 },
+      { 'X-Forwarded-For': '203.0.113.7' });
+    const lee = (await s.call('lee', 'GET', '/me')).body.user;
+    const contrib = s.repo._state.auditEvents.find((e) => e.action === 'contribution.create');
+    assert.ok(contrib, 'contribution audited');
+    assert.equal(contrib.actorId, lee.id);
+    assert.equal(contrib.subjectId, id);
+    assert.equal(contrib.detail, '4000');
+    assert.ok(contrib.ip, 'IP recorded');
+
+    s.repo._state.requests.get(id).status = 'repaid';
+    await s.call('lee', 'DELETE', '/me');
+    const del = s.repo._state.auditEvents.find((e) => e.action === 'account.delete');
+    assert.ok(del, 'deletion audited');
+    assert.equal(del.actorId, lee.id);
+    assert.equal(del.ip, null, 'IP cleared on deletion');
+  } finally { await s.close(); }
+});
+
+test('audit: a failed audit write does not block the member action', async () => {
+  const errors = [];
+  const s = await setup({ logger: { error: (...a) => errors.push(a) } });
+  try {
+    s.repo.recordEvent = async () => { throw new Error('audit table missing'); };
+    const id = await openRequest(s, 10000, ['lee']);
+    const r = await s.call('lee', 'POST', `/requests/${id}/contributions`, { confirmedContact: true, amount: 40 });
+    assert.equal(r.status, 201, 'the contribution still succeeds');
+    assert.ok(errors.some((e) => String(e[0]).includes('audit write failed')));
+  } finally { await s.close(); }
+});
