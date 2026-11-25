@@ -177,11 +177,12 @@ test('the borrower repays each lender separately using lenderId', { skip }, asyn
   try {
     assert.equal(await page.locator('.repay-form').count(), 2);
     await page.locator('.repay-form[data-lender="6"] input[name="amount"]').fill('250');
+    await page.locator('.repay-form[data-lender="6"] input[name="utr"]').fill('UTRREPAY6');
     await page.locator('.repay-form[data-lender="6"] button').click();
     await page.waitForTimeout(100);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, '/api/requests/1/repayments');
-    assert.deepEqual(calls[0].body, { lenderId: 6, amount: '250', utr: '' });
+    assert.deepEqual(calls[0].body, { lenderId: 6, amount: '250', utr: 'UTRREPAY6' });
     assert.match(calls[0].idempotencyKey, /^[A-Za-z0-9._:-]{8,128}$/);
   } finally { await ctx.close(); }
 });
