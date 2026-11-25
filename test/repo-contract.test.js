@@ -254,7 +254,9 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     const again = await repo.resolveHelpMessage(m1.id, '2026-12-01T10:00:00.000Z', a.id);
     assert.equal(new Date(again.resolvedAt).getTime(), new Date(r.resolvedAt).getTime(), 'already resolved: kept');
     const at = r.resolvedAt;
-    assert.equal(await repo.resolveHelpMessage(999999999, at, a.id), null);
+    // An unknown message is null in memory and a P0002 error in Supabase; the route answers 404 for both.
+    const missing = await repo.resolveHelpMessage(999999999, at, a.id).catch((e) => e);
+    assert.ok(missing === null || missing.code === 'P0002', 'an unknown message is null or P0002');
     const all = (await repo.listHelpMessages()).filter((m) => [m1.id, m2.id, m3.id].includes(m.id));
     assert.deepEqual(all.map((m) => m.id), [m2.id, m3.id, m1.id], 'unresolved first (oldest first), then resolved');
   });
