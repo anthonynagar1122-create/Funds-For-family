@@ -164,7 +164,7 @@ test('a contribution correction that loses a cap race goes back to not_received 
     await connect(call, 'lee', 'ann');
     await connect(call, 'mo', 'ann');
     const lee = await idOf(call, 'lee'); const mo = await idOf(call, 'mo');
-    const mk = (contributorId, amountCents) => inner.addContribution({ requestId: id, contributorId, amountCents, status: 'not_received', utr: null, createdAt: '2026-11-20T12:00:00Z' });
+    const mk = (contributorId, amountCents) => inner.addContribution({ requestId: id, contributorId, amountCents, status: 'not_received', utr: `RACECON${contributorId}`, createdAt: '2026-11-20T12:00:00Z' });
     const a = await mk(lee, 10000); const b = await mk(mo, 10000);
     // Both correct to 30000 (cap 50000). Lee's correction lands first, in the gap after mo's check.
     before = () => inner.reviseContribution({ entryId: a.id, actorId: lee, amountCents: 30000, utr: null });
@@ -235,7 +235,7 @@ test('a repayment correction that loses a cap race goes back to not_received wit
   try {
     const id = await fundedRequest(call, inner, { lee: 200 });
     const lee = await idOf(call, 'lee'); const ann = await idOf(call, 'ann'); const cat = await idOf(call, 'cat');
-    const mk = (payerId, amountCents) => inner.addRepayment({ requestId: id, payerId, lenderId: lee, amountCents, status: 'not_received', createdAt: '2026-11-20T12:00:00Z' });
+    const mk = (payerId, amountCents) => inner.addRepayment({ requestId: id, payerId, lenderId: lee, amountCents, status: 'not_received', utr: `RACEREP${payerId}`, createdAt: '2026-11-20T12:00:00Z' });
     const a = await mk(cat, 5000); const b = await mk(ann, 5000);
     before = () => inner.reviseRepayment({ entryId: a.id, actorId: cat, amountCents: 15000, utr: null });
     const r = await call('ann', 'PATCH', `/repayments/${b.id}`, { amount: 100 });

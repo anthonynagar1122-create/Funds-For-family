@@ -5,6 +5,7 @@
   const UTR_RE = /^[A-Za-z0-9]{6,35}$/;
   const newIdempotencyKey = () => window.crypto?.randomUUID?.() || `ff-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const UTR_MSG = 'A UPI reference is 6 to 35 letters or digits';
+  const UTR_REQUIRED_MSG = 'Enter the UPI reference (UTR) from your payment: 6 to 35 letters or digits';
 
   const STATUS = {
     awaiting_contact: ['badge-warn', 'Waiting for trusted contact'], contact_declined: ['badge-danger', 'Trusted contact declined'],
@@ -115,8 +116,8 @@
           <div class="repay-pay" data-owed="${esc(l.owedCents)}"></div>
           <label for="p-amount-${esc(l.userId)}">Amount you repaid ${esc(name(l.userId))} (₹)</label>
           <input id="p-amount-${esc(l.userId)}" name="amount" type="text" inputmode="decimal" autocomplete="off" required>
-          <label for="p-utr-${esc(l.userId)}">UTR (optional)</label>
-          <input id="p-utr-${esc(l.userId)}" name="utr" type="text" autocomplete="off">
+          <label for="p-utr-${esc(l.userId)}">UPI reference (UTR), required</label>
+          <input id="p-utr-${esc(l.userId)}" name="utr" type="text" autocomplete="off" required>
           <p class="error" role="alert"></p>
           <button class="btn btn-primary" type="submit">Record repayment</button></form>` : ''}</li>`;
 
@@ -157,8 +158,8 @@
         <form id="fund-form" class="form" style="margin-top:16px" novalidate>
           <div class="field"><label for="c-amount">Amount you sent (₹, up to ${money(r.remainingCents)})</label>
             <input id="c-amount" type="text" inputmode="decimal" autocomplete="off" required>
-            <label for="c-utr">UTR (optional)</label>
-            <input id="c-utr" type="text" autocomplete="off">
+            <label for="c-utr">UPI reference (UTR), required</label>
+            <input id="c-utr" type="text" autocomplete="off" required>
             <p class="error" id="e-fund" role="alert"></p></div>
           <button class="btn btn-primary" type="submit">I've sent it</button>
         </form>` : ''}
@@ -199,9 +200,8 @@
         ev.preventDefault();
         const err = root.querySelector('#e-fund');
         const code = root.querySelector('#c-utr').value.trim();
-        if (code && !UTR_RE.test(code)) { err.textContent = UTR_MSG; root.querySelector('#c-utr').setAttribute('aria-invalid', 'true'); root.querySelector('#c-utr').focus(); return; }
-        const body = { amount: amountInput.value.trim() };
-        if (code) body.utr = code;
+        if (!code || !UTR_RE.test(code)) { err.textContent = UTR_REQUIRED_MSG; root.querySelector('#c-utr').setAttribute('aria-invalid', 'true'); root.querySelector('#c-utr').focus(); return; }
+        const body = { amount: amountInput.value.trim(), utr: code };
         const key = fundForm.dataset.idempotencyKey || (fundForm.dataset.idempotencyKey = newIdempotencyKey());
         try {
           await window.Api.post(`/requests/${id}/contributions`, body, { headers: { 'Idempotency-Key': key } });
@@ -231,7 +231,7 @@
       const input = form.elements.amount;
       const err = form.querySelector('.error');
       const code = form.elements.utr.value.trim();
-      if (code && !UTR_RE.test(code)) { err.textContent = UTR_MSG; form.elements.utr.setAttribute('aria-invalid', 'true'); form.elements.utr.focus(); return; }
+      if (!code || !UTR_RE.test(code)) { err.textContent = UTR_REQUIRED_MSG; form.elements.utr.setAttribute('aria-invalid', 'true'); form.elements.utr.focus(); return; }
       const key = form.dataset.idempotencyKey || (form.dataset.idempotencyKey = newIdempotencyKey());
       try {
         await window.Api.post(`/requests/${id}/repayments`, { lenderId: Number(form.dataset.lender), amount: input.value.trim(), utr: code }, { headers: { 'Idempotency-Key': key } });

@@ -735,12 +735,27 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     utr: c.utr ?? null, status: c.status, createdAt: c.createdAt, confirmedAt: c.confirmedAt ?? null,
   });
 
-  // Parses an optional UTR from a body. Returns { utr } (null when empty) or { error }.
-  function readUtr(body) {
+  const UTR_REQUIRED_MSG = 'Enter the UPI reference (UTR) from your payment: 6 to 35 letters or digits';
+  const UTR_TAKEN_MSG = 'This UPI reference is already recorded on this request';
+
+  // Parses a UTR from a body. Returns { utr } or { error }. Empty is { utr: null } unless `required`.
+  function readUtr(body, { required = false } = {}) {
     const raw = body?.utr;
-    if (raw === undefined || raw === null || raw === '') return { utr: null };
     const text = typeof raw === 'string' ? raw.trim() : raw;
+    if (raw === undefined || raw === null || text === '') {
+      return required ? { error: UTR_REQUIRED_MSG } : { utr: null };
+    }
     return rules.validateUtr(text) ? { utr: text } : { error: 'A UPI reference is 6 to 35 letters or digits' };
+  }
+
+  // A UTR identifies one bank transfer, so it is recorded at most once per request (case-insensitive).
+  // `except` names the entry being corrected, which may keep its own UTR.
+  async function utrTakenOnRequest(requestId, utr, except = null) {
+    const want = utr.toUpperCase();
+    const [contribs, repays] = await Promise.all([repo.listContributions(requestId), repo.listRepayments(requestId)]);
+    const same = (kind) => (x) => x.utr && x.utr.toUpperCase() === want
+      && !(except && except.kind === kind && except.id === x.id);
+    return contribs.some(same('contribution')) || repays.some(same('repayment'));
   }
 
   // Load an entry (contribution or repayment) on a request the caller can see (404 otherwise).
@@ -833,8 +848,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const mutual = rules.isMutual(await repo.connections(req.user.id), r.borrowerId);
     const parsed = parseRupees(req.body?.amount);
     if (parsed.error) return fail(res, 400, parsed.error, 'amount');
-    const u = readUtr(req.body);
+    const u = readUtr(req.body, { required: true });
     if (u.error) return fail(res, 400, u.error, 'utr');
+    if (await utrTakenOnRequest(r.id, u.utr)) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
     const totals = rules.fundingTotals(await repo.listContributions(r.id));
     const check = rules.checkContribution({
       amountCents: parsed.paise, principalCents: r.principalCents, totals,
@@ -849,6 +865,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
         requestId: r.id, contributorId: req.user.id, amountCents: parsed.paise, utr: u.utr, idempotencyKey,
       });
     } catch (err) {
+      if (err?.code === '23505') return fail(res, 409, UTR_TAKEN_MSG, 'utr');
       if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Contribution could not be recorded').replace(/^Supabase:\s*/, ''));
       throw err;
     }
@@ -911,10 +928,15 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       isMutual: rules.isMutual(await repo.connections(req.user.id), r.borrowerId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
+    // A corrected entry is "sent" again, so it must carry a UTR that no other entry on this request uses.
+    const utr = patch.utr ?? c.utr ?? null;
+    if (!utr) return fail(res, 400, UTR_REQUIRED_MSG, 'utr');
+    if (await utrTakenOnRequest(r.id, utr, { kind: 'contribution', id: c.id })) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
     let updated;
     try {
-      updated = await repo.reviseContribution({ entryId: c.id, actorId: req.user.id, amountCents, utr: patch.utr ?? c.utr ?? null });
+      updated = await repo.reviseContribution({ entryId: c.id, actorId: req.user.id, amountCents, utr });
     } catch (err) {
+      if (err?.code === '23505') return fail(res, 409, UTR_TAKEN_MSG, 'utr');
       if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Contribution could not be corrected').replace(/^Supabase:\s*/, ''));
       throw err;
     }
@@ -957,8 +979,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     }
     const parsed = parseRupees(req.body?.amount);
     if (parsed.error) return fail(res, 400, parsed.error, 'amount');
-    const u = readUtr(req.body);
+    const u = readUtr(req.body, { required: true });
     if (u.error) return fail(res, 400, u.error, 'utr');
+    if (await utrTakenOnRequest(r.id, u.utr)) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
     const check = rules.checkRepayment({
       amountCents: parsed.paise, payerId: req.user.id, borrowerId: r.borrowerId, trustedContactId: r.trustedContactId,
       lenderId, owed: (await owedFor(r.id)).get(lenderId), status: r.status,
@@ -972,6 +995,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
         requestId: r.id, payerId: req.user.id, lenderId, amountCents: parsed.paise, utr: u.utr, idempotencyKey,
       });
     } catch (err) {
+      if (err?.code === '23505') return fail(res, 409, UTR_TAKEN_MSG, 'utr');
       if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Repayment could not be recorded').replace(/^Supabase:\s*/, ''));
       throw err;
     }
@@ -1028,10 +1052,14 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       lenderId: p.lenderId, owed: (await owedFor(r.id)).get(p.lenderId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
+    const utr = patch.utr ?? p.utr ?? null;
+    if (!utr) return fail(res, 400, UTR_REQUIRED_MSG, 'utr');
+    if (await utrTakenOnRequest(r.id, utr, { kind: 'repayment', id: p.id })) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
     let updated;
     try {
-      updated = await repo.reviseRepayment({ entryId: p.id, actorId: req.user.id, amountCents, utr: patch.utr ?? p.utr ?? null });
+      updated = await repo.reviseRepayment({ entryId: p.id, actorId: req.user.id, amountCents, utr });
     } catch (err) {
+      if (err?.code === '23505') return fail(res, 409, UTR_TAKEN_MSG, 'utr');
       if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Repayment could not be corrected').replace(/^Supabase:\s*/, ''));
       throw err;
     }
