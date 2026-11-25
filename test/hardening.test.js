@@ -231,6 +231,7 @@ test('audit: contributions and account deletion are recorded with actor, subject
     const del = s.repo._state.auditEvents.find((e) => e.action === 'account.delete');
     assert.ok(del, 'deletion audited');
     assert.equal(del.actorId, lee.id);
+    assert.equal(del.ip, null, 'IP cleared on deletion');
   } finally { await s.close(); }
 });
 

@@ -177,6 +177,8 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
       }).eq('id', id));
       check(await db.from('follows').delete().or(`follower_id.eq.${id},followee_id.eq.${id}`));
       check(await db.from('invites').delete().eq('inviter_id', id));
+      // Audit rows keep the action and record id; the client IP is personal data, so it is cleared.
+      check(await db.from('audit_events').update({ ip: null }).eq('actor_id', id));
     },
     async listRepayments(requestId) {
       return many(check(await db.from('repayments').select().eq('request_id', requestId)));

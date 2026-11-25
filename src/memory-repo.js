@@ -100,6 +100,7 @@ function createMemoryRepo() {
         if (follows[i].followerId === id || follows[i].followeeId === id) follows.splice(i, 1);
       }
       for (let i = invites.length - 1; i >= 0; i--) if (invites[i].inviterId === id) invites.splice(i, 1);
+      for (const e of auditEvents) if (e.actorId === id) e.ip = null;
     },
     async listRepayments(requestId) { return repayments.filter((p) => p.requestId === requestId); },
     async addRepayment(row) { repayments.push(row); },

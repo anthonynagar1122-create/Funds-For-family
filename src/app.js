@@ -374,8 +374,9 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     }
     // Identity first: if this fails, nothing is changed and the member can retry.
     await deleteIdentity(req.user.clerkId);
-    await repo.anonymizeUser(me);
+    // Audit first, so the anonymise step also clears this row's IP.
     await audit(req, 'account.delete', { subjectType: 'user', subjectId: me });
+    await repo.anonymizeUser(me);
     res.json({ ok: true });
   });
 
