@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { requestCard } = require('../public/app/card-model.js');
 
 const BORROWER = 'u-borrower';
-const NOMINEE = 'u-nominee';
+const CONTACT = 'u-nominee';
 const VERIFIER = 'u-verifier';
 const MEMBER = 'u-member';
 
@@ -11,13 +11,13 @@ function request(overrides = {}) {
   return {
     id: 'r-1',
     borrowerId: BORROWER,
-    nomineeId: NOMINEE,
+    trustedContactId: CONTACT,
     purpose: 'Repair the family van',
     principalCents: 50000,
     repaymentDate: '2026-12-31',
     status: 'open',
     raisedCents: 10000,
-    amountDueCents: 0,
+    totals: { confirmedCents: 10000, pendingCents: 0 },
     daysOverdue: 0,
     ...overrides,
   };
@@ -38,9 +38,9 @@ test('a borrower sees no verify or contribute actions on their own request', () 
   assert.ok(!ids(open).includes('contribute'));
 });
 
-test('a nominee sees no verify action on the request they are named on', () => {
-  const card = requestCard(request({ status: 'pending_verification' }), { id: NOMINEE, isVerifier: true });
-  assert.equal(card.role, 'nominee');
+test('a trusted contact sees no verify action on the request they are named on', () => {
+  const card = requestCard(request({ status: 'pending_verification' }), { id: CONTACT, isVerifier: true });
+  assert.equal(card.role, 'trustedContact');
   assert.ok(!ids(card).includes('verify-approve'));
   assert.ok(!ids(card).includes('verify-reject'));
 });
@@ -75,7 +75,7 @@ test('a repaid request offers no write actions to anyone', () => {
   const writeIds = ['verify-approve', 'verify-reject', 'contribute', 'repay'];
   const viewers = [
     { id: BORROWER, isVerifier: false },
-    { id: NOMINEE, isVerifier: false },
+    { id: CONTACT, isVerifier: false },
     { id: VERIFIER, isVerifier: true },
     { id: MEMBER, isVerifier: false },
   ];
@@ -87,14 +87,14 @@ test('a repaid request offers no write actions to anyone', () => {
   }
 });
 
-test('the nominee sees repay only on a funded or overdue request', () => {
+test('the trusted contact sees repay only on a funded or overdue request', () => {
   for (const status of ['funded', 'overdue']) {
-    const card = requestCard(request({ status }), { id: NOMINEE, isVerifier: false });
-    assert.equal(card.role, 'nominee');
+    const card = requestCard(request({ status }), { id: CONTACT, isVerifier: false });
+    assert.equal(card.role, 'trustedContact');
     assert.ok(ids(card).includes('repay'), `repay on ${status}`);
   }
   for (const status of ['pending_verification', 'open', 'rejected', 'repaid']) {
-    const card = requestCard(request({ status }), { id: NOMINEE, isVerifier: false });
+    const card = requestCard(request({ status }), { id: CONTACT, isVerifier: false });
     assert.ok(!ids(card).includes('repay'), `repay on ${status}`);
   }
   const stranger = requestCard(request({ status: 'funded' }), { id: MEMBER, isVerifier: false });
@@ -102,15 +102,15 @@ test('the nominee sees repay only on a funded or overdue request', () => {
 });
 
 test('progress is capped at 100 and is 0 for a zero principal', () => {
-  const over = requestCard(request({ principalCents: 10000, raisedCents: 25000 }), { id: MEMBER });
+  const over = requestCard(request({ principalCents: 10000, totals: { confirmedCents: 25000, pendingCents: 0 } }), { id: MEMBER });
   assert.equal(over.progressPct, 100);
 
-  const half = requestCard(request({ principalCents: 10000, raisedCents: 5000 }), { id: MEMBER });
+  const half = requestCard(request({ principalCents: 10000, totals: { confirmedCents: 5000, pendingCents: 0 } }), { id: MEMBER });
   assert.equal(half.progressPct, 50);
 
-  const zero = requestCard(request({ principalCents: 0, raisedCents: 5000 }), { id: MEMBER });
+  const zero = requestCard(request({ principalCents: 0, totals: { confirmedCents: 5000, pendingCents: 0 } }), { id: MEMBER });
   assert.equal(zero.progressPct, 0);
-  assert.equal(zero.raisedLabel, '$50.00 of $0.00 raised');
+  assert.equal(zero.raisedLabel, '₹50.00 of ₹0.00 raised');
 });
 
 test('status labels and tones match the lifecycle', () => {
@@ -130,7 +130,7 @@ test('status labels and tones match the lifecycle', () => {
 });
 
 test('a verifier who already decided sees no verify actions on that request', () => {
-  const base = { id: 3, borrowerId: 1, nomineeId: 2, purpose: 'School fees for the second term', principalCents: 50000, repaymentDate: '2027-03-01', status: 'pending_verification', raisedCents: 0, amountDueCents: 50000, daysOverdue: 0 };
+  const base = { id: 3, borrowerId: 1, trustedContactId: 2, purpose: 'School fees for the second term', principalCents: 50000, repaymentDate: '2027-03-01', status: 'pending_verification', raisedCents: 0, daysOverdue: 0 };
   const decided = { ...base, verifications: [{ verifierId: 3, decision: 'approve', note: '' }] };
   const fresh = { ...base, verifications: [] };
   const viewer = { id: 3, isVerifier: true };
@@ -139,6 +139,42 @@ test('a verifier who already decided sees no verify actions on that request', ()
 });
 
 test('the borrower can record repayments on a funded request', () => {
-  const r = { id: 4, borrowerId: 1, nomineeId: 2, purpose: 'Medical bill for the surgery in March', principalCents: 20000, repaymentDate: '2027-03-01', status: 'funded', raisedCents: 20000, amountDueCents: 20000, daysOverdue: 0, verifications: [] };
+  const r = { id: 4, borrowerId: 1, trustedContactId: 2, purpose: 'Medical bill for the surgery in March', principalCents: 20000, repaymentDate: '2027-03-01', status: 'funded', raisedCents: 20000, daysOverdue: 0, verifications: [] };
   assert.ok(requestCard(r, { id: 1, isVerifier: false }).actions.some((a) => a.id === 'repay'), 'borrower can repay');
+});
+
+test('progress comes from confirmed money only, not pending', () => {
+  const card = requestCard(request({ principalCents: 10000, totals: { confirmedCents: 2500, pendingCents: 5000 } }), { id: MEMBER });
+  assert.equal(card.progressPct, 25);
+  assert.equal(card.raisedLabel, '₹25.00 of ₹100.00 raised');
+});
+
+test('amounts use rupees with Indian grouping', () => {
+  const card = requestCard(request({ principalCents: 5000000, totals: { confirmedCents: 1234500, pendingCents: 0 } }), { id: MEMBER });
+  assert.equal(card.raisedLabel, '₹12,345.00 of ₹50,000.00 raised');
+});
+
+test('the trusted contact may accept or decline only while awaiting_contact', () => {
+  const card = requestCard(request({ status: 'awaiting_contact' }), { id: CONTACT, isVerifier: false });
+  assert.equal(card.role, 'trustedContact');
+  assert.ok(ids(card).includes('contact-accept'));
+  assert.ok(ids(card).includes('contact-decline'));
+  for (const status of ['open', 'funded', 'contact_declined']) {
+    assert.ok(!ids(requestCard(request({ status }), { id: CONTACT })).includes('contact-accept'), status);
+  }
+  assert.ok(!ids(requestCard(request({ status: 'awaiting_contact' }), { id: MEMBER })).includes('contact-accept'));
+  assert.ok(!ids(requestCard(request({ status: 'awaiting_contact' }), { id: BORROWER })).includes('contact-accept'));
+});
+
+test('awaiting_contact and contact_declined have labels', () => {
+  assert.equal(requestCard(request({ status: 'awaiting_contact' }), { id: MEMBER }).statusLabel, 'Waiting for trusted contact');
+  assert.equal(requestCard(request({ status: 'contact_declined' }), { id: MEMBER }).statusLabel, 'Trusted contact declined');
+});
+
+test('no card text mentions nominee, interest or dollars', () => {
+  for (const status of ['awaiting_contact', 'open', 'funded', 'overdue']) {
+    const card = requestCard(request({ status, daysOverdue: 3 }), { id: CONTACT });
+    const text = JSON.stringify(card);
+    assert.doesNotMatch(text, /nominee|interest|\$/i);
+  }
 });

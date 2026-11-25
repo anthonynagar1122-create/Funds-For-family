@@ -1,18 +1,20 @@
 'use strict';
 // Pure business rules. No I/O: safe to unit-test and to reuse on server and client.
 
+const { parseRupees, formatInr } = require('../public/app/money');
+
 const PURPOSE_MIN_LENGTH = 20;
 const PURPOSE_MAX_LENGTH = 2000;
-const AMOUNT_MAX = 1000000;        // dollars; keeps cents well inside the 32-bit integer column
-const DEFAULT_ANNUAL_RATE = 0.12;   // ⚠ assumption, see docs/01-idea.md
+const AMOUNT_MIN_PAISE = 10000;     // Rs 100
+const AMOUNT_MAX_PAISE = 5000000;   // Rs 50,000
+const CATEGORIES = ['education', 'medical', 'home', 'family_event', 'work', 'emergency', 'other'];
+const ACTIVE_STATUSES = ['awaiting_contact', 'contact_declined', 'pending_verification', 'open', 'funded'];
+const MAX_ACTIVE_AS_CONTACT = 3;
+const REASON_MIN_LENGTH = 10;
+const REASON_MAX_LENGTH = 500;
 const DEFAULT_REQUIRED_APPROVALS = 2;
 const MS_PER_DAY = 86400000;
-
-// Circle rule (owner decision 2026-11-24): a borrower's circle is the people the BORROWER follows.
-// Following is one-way and needs no approval, so following someone must never grant access to their requests;
-// the borrower chooses who sees them (accepting an invite makes both people follow each other).
-// 'mutual' would require both directions.
-const FEED_MODE = 'chosen_by_borrower';
+const IST_OFFSET_MS = 330 * 60000;  // Asia/Kolkata, UTC+05:30, no daylight saving
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -26,24 +28,25 @@ function dayNumber(dateStr) {
   return Math.floor(Date.parse(`${dateStr}T00:00:00Z`) / MS_PER_DAY);
 }
 
-function todayUtc(now) {
-  return now.toISOString().slice(0, 10);
+/** Calendar date in India, 'YYYY-MM-DD'. */
+function todayIst(now) {
+  return new Date(now.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Add whole months to a 'YYYY-MM-DD' date, clamped to the month end (2026-01-31 + 1 = 2026-02-28). */
+function addMonths(date, n) {
+  const [y, m, d] = date.split('-').map(Number);
+  const total = y * 12 + (m - 1) + n;
+  const year = Math.floor(total / 12);
+  const month = total % 12;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const pad = (v, w) => String(v).padStart(w, '0');
+  return `${pad(year, 4)}-${pad(month + 1, 2)}-${pad(Math.min(d, lastDay), 2)}`;
 }
 
 /** Whole days the repayment is late. 0 on or before the due date. */
 function daysOverdue(dueDate, now) {
-  return Math.max(0, dayNumber(todayUtc(now)) - dayNumber(dueDate));
-}
-
-/** Simple interest, accrued daily after the due date. Integer cents. */
-function interestCents(principalCents, dueDate, now, annualRate = DEFAULT_ANNUAL_RATE) {
-  const days = daysOverdue(dueDate, now);
-  if (days === 0) return 0;
-  return Math.round((principalCents * annualRate * days) / 365);
-}
-
-function amountDueCents(principalCents, dueDate, now, annualRate = DEFAULT_ANNUAL_RATE) {
-  return principalCents + interestCents(principalCents, dueDate, now, annualRate);
+  return Math.max(0, dayNumber(todayIst(now)) - dayNumber(dueDate));
 }
 
 /**
@@ -54,15 +57,11 @@ function validateRequest(input, { borrowerId, now }) {
   const errors = {};
   const value = {};
 
-  const amount = Number(input?.amount);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    errors.amount = 'Amount must be a positive number';
-  } else if (amount > AMOUNT_MAX) {
-    errors.amount = `Amount cannot exceed ${AMOUNT_MAX}`;
-  } else if (Math.round(amount * 100) !== amount * 100) {
-    errors.amount = 'Amount can have at most 2 decimal places';
+  const parsed = parseRupees(input?.amount);
+  if (parsed.error || parsed.paise < AMOUNT_MIN_PAISE || parsed.paise > AMOUNT_MAX_PAISE) {
+    errors.amount = 'Enter an amount from ₹100 to ₹50,000';
   } else {
-    value.principalCents = Math.round(amount * 100);
+    value.principalCents = parsed.paise;
   }
 
   const purpose = typeof input?.purpose === 'string' ? input.purpose.trim() : '';
@@ -74,22 +73,71 @@ function validateRequest(input, { borrowerId, now }) {
     value.purpose = purpose;
   }
 
+  if (!CATEGORIES.includes(input?.category)) {
+    errors.category = 'Choose a category';
+  } else {
+    value.category = input.category;
+  }
+
+  const today = todayIst(now);
   if (!isIsoDate(input?.repaymentDate)) {
     errors.repaymentDate = 'Repayment date must be a valid YYYY-MM-DD date';
-  } else if (input.repaymentDate <= todayUtc(now)) {
+  } else if (input.repaymentDate <= today) {
     errors.repaymentDate = 'Repayment date must be after today';
+  } else if (input.repaymentDate > addMonths(today, 12)) {
+    errors.repaymentDate = 'Choose a date within 12 months';
   } else {
     value.repaymentDate = input.repaymentDate;
   }
 
-  if (!input?.nomineeId) {
-    errors.nomineeId = 'Choose a nominee who will repay if the borrower cannot';
-  } else if (input.nomineeId === borrowerId) {
-    errors.nomineeId = 'The nominee cannot be the borrower';
+  if (!input?.trustedContactId) {
+    errors.trustedContactId = 'Choose a trusted contact';
+  } else if (input.trustedContactId === borrowerId) {
+    errors.trustedContactId = 'Choose a trusted contact';
   } else {
-    value.nomineeId = input.nomineeId;
+    value.trustedContactId = input.trustedContactId;
   }
 
+  return { errors, value };
+}
+
+/** A borrower may have one active request at a time. */
+function checkCanCreateRequest({ borrowerActiveCount }) {
+  if (borrowerActiveCount >= 1) {
+    return { ok: false, reason: 'You already have an active request. Finish or withdraw it first.' };
+  }
+  return { ok: true };
+}
+
+/** A trusted contact must be a mutual connection and carry a limited load. */
+function checkTrustedContact({ borrowerId, contactId, isMutual, contactActiveCount }) {
+  if (!contactId || contactId === borrowerId) return { ok: false, reason: 'Choose a trusted contact' };
+  if (!isMutual) return { ok: false, reason: 'Your trusted contact must be someone you follow who follows you back' };
+  if (contactActiveCount >= MAX_ACTIVE_AS_CONTACT) {
+    return { ok: false, reason: `This person is already the trusted contact on ${MAX_ACTIVE_AS_CONTACT} requests` };
+  }
+  return { ok: true };
+}
+
+/** Validate a verifier's decision. A reason is required to reject. Returns { errors, value }. */
+function validateVerification({ decision, reason } = {}) {
+  const errors = {};
+  const value = {};
+  if (decision !== 'approve' && decision !== 'reject') {
+    errors.decision = 'Decision must be approve or reject';
+    return { errors, value };
+  }
+  value.decision = decision;
+  const text = typeof reason === 'string' ? reason.trim() : '';
+  if (decision === 'reject') {
+    if (text.length < REASON_MIN_LENGTH || text.length > REASON_MAX_LENGTH) {
+      errors.reason = `Give a reason of ${REASON_MIN_LENGTH} to ${REASON_MAX_LENGTH} characters`;
+    } else {
+      value.reason = text;
+    }
+  } else if (text) {
+    value.reason = text.slice(0, REASON_MAX_LENGTH);
+  }
   return { errors, value };
 }
 
@@ -104,116 +152,198 @@ function verificationOutcome(verifications, requiredApprovals = DEFAULT_REQUIRED
 }
 
 /** Whether a verifier may decide on a request. */
-function canVerify({ verifier, requestBorrowerId, requestNomineeId, requestStatus }) {
+function canVerify({ verifier, borrowerId, trustedContactId, status }) {
   if (!verifier?.isVerifier) return { ok: false, reason: 'Only verification team members can verify' };
-  if (verifier.id === requestBorrowerId || verifier.id === requestNomineeId) {
+  if (verifier.id === borrowerId || verifier.id === trustedContactId) {
     return { ok: false, reason: 'You cannot verify your own request' };
   }
-  if (requestStatus !== 'pending_verification') {
+  if (status !== 'pending_verification') {
     return { ok: false, reason: 'This request is no longer awaiting verification' };
   }
   return { ok: true };
 }
 
+const ENTRY_STATUSES = ['sent', 'confirmed', 'not_received'];
+const UTR_RE = /^[A-Za-z0-9]{6,35}$/;
+
+/** A UTR is optional; when present it must be 6-35 alphanumerics. */
+function validateUtr(s) {
+  if (s === undefined || s === null || s === '') return true;
+  return typeof s === 'string' && UTR_RE.test(s);
+}
+
+/** Money lent so far: confirmed counts as raised, sent as pending. not_received is ignored. */
+function fundingTotals(contributions) {
+  let confirmedCents = 0;
+  let pendingCents = 0;
+  for (const c of contributions) {
+    if (c.status === 'confirmed') confirmedCents += c.amountCents;
+    else if (c.status === 'sent') pendingCents += c.amountCents;
+  }
+  return { confirmedCents, pendingCents };
+}
+
 /** Contribution cap. Returns { ok, reason?, remainingCents }. */
-function checkContribution({ amountCents, principalCents, raisedCents, contributorId, borrowerId, status }) {
-  const remainingCents = Math.max(0, principalCents - raisedCents);
+function checkContribution({ amountCents, principalCents, totals, contributorId, borrowerId, isMutual: mutual, status }) {
+  const remainingCents = Math.max(0, principalCents - totals.confirmedCents - totals.pendingCents);
   if (contributorId === borrowerId) return { ok: false, reason: 'You cannot fund your own request', remainingCents };
+  if (!mutual) return { ok: false, reason: 'Only mutual connections can fund this request', remainingCents };
   if (status !== 'open') return { ok: false, reason: 'This request is not accepting contributions', remainingCents };
   if (!Number.isInteger(amountCents) || amountCents <= 0) {
     return { ok: false, reason: 'Contribution must be a positive amount', remainingCents };
   }
   if (amountCents > remainingCents) {
-    return { ok: false, reason: `Only ${remainingCents} cents remain to be funded`, remainingCents };
+    return { ok: false, reason: `Only ${formatInr(remainingCents)} is still needed`, remainingCents };
   }
   return { ok: true, remainingCents };
 }
 
-/** Stored status plus derived 'overdue'. */
-function effectiveStatus(request, now) {
-  if (request.status === 'funded' && daysOverdue(request.repaymentDate, now) > 0) return 'overdue';
-  return request.status;
+/**
+ * After a write, whether the row `rowId` pushes the running total over the cap. Entries are taken in id order
+ * (first come, first served); only sent and confirmed amounts count, not_received is ignored. False if rowId is absent.
+ */
+function exceedsCapAtRow(entries, rowId, capCents) {
+  let running = 0;
+  for (const e of [...entries].sort((a, b) => a.id - b.id)) {
+    if (e.status === 'sent' || e.status === 'confirmed') running += e.amountCents;
+    if (e.id === rowId) return e.status !== 'not_received' && running > capCents;
+  }
+  return false;
 }
 
-/**
- * Who may see a request (and so act on it). Anyone else gets "not found".
- * - the borrower and the nominee
- * - anyone already involved: lent, repaid, or decided on it
- * - the borrower's circle: people the borrower follows (the borrower chose them; see FEED_MODE)
- * - verifiers, while the request is awaiting verification
- * viewerFollowing / viewerFollowers: the viewer's connection ids.
- */
-function canSeeRequest({ viewer, request, viewerFollowers = [], involved = false }) {
-  if (!viewer || !request) return false;
-  if (viewer.id === request.borrowerId || viewer.id === request.nomineeId) return true;
-  if (involved) return true;
-  // In the borrower's circle only if the borrower follows the viewer (the borrower chose them).
-  if (viewerFollowers.includes(request.borrowerId)) return true;
-  if (viewer.isVerifier && request.status === 'pending_verification') return true;
+/** Per-lender position. Lent and repaid count confirmed rows only; pendingRepay counts sent repayments. */
+function owedByLender(contributions, repayments) {
+  const map = new Map();
+  const entry = (id) => {
+    if (!map.has(id)) map.set(id, { lentCents: 0, repaidCents: 0, pendingRepayCents: 0, owedCents: 0 });
+    return map.get(id);
+  };
+  const known = (id) => id !== null && id !== undefined;  // old repayments may have no lender_id: they belong to nobody
+  for (const c of contributions) {
+    if (known(c.lenderId) && c.status === 'confirmed') entry(c.lenderId).lentCents += c.amountCents;
+  }
+  for (const p of repayments) {
+    if (!known(p.lenderId)) continue;
+    if (p.status === 'confirmed') entry(p.lenderId).repaidCents += p.amountCents;
+    else if (p.status === 'sent') entry(p.lenderId).pendingRepayCents += p.amountCents;
+  }
+  for (const e of map.values()) e.owedCents = e.lentCents - e.repaidCents;
+  return map;
+}
+
+/** A repayment to one lender. Returns { ok, reason? }. */
+function checkRepayment({ amountCents, payerId, borrowerId, trustedContactId, lenderId, owed, status }) {
+  if (status !== 'funded') return { ok: false, reason: 'This request is not in repayment' };
+  if (payerId !== borrowerId && payerId !== trustedContactId) {
+    return { ok: false, reason: 'Only the borrower or trusted contact can record a repayment' };
+  }
+  if (lenderId === undefined || lenderId === null || !owed) return { ok: false, reason: 'Unknown lender' };
+  if (payerId === lenderId) return { ok: false, reason: 'You cannot repay yourself' };
+  if (!Number.isInteger(amountCents) || amountCents <= 0) {
+    return { ok: false, reason: 'Repayment must be a positive amount' };
+  }
+  const room = owed.owedCents - owed.pendingRepayCents;
+  if (amountCents > room) return { ok: false, reason: `Only ${formatInr(Math.max(0, room))} can still be repaid to this lender` };
+  return { ok: true };
+}
+
+/** Every lender fully repaid (nothing owed, or over-repaid), and there is at least one lender. */
+function isFullyRepaid(owedMap) {
+  if (!owedMap || owedMap.size === 0) return false;
+  for (const e of owedMap.values()) if (e.owedCents > 0) return false;
+  return true;
+}
+
+/** Mutual = each follows the other. Accepts arrays or Sets of ids. */
+function isMutual({ following, followers }, otherId) {
+  const has = (c) => (c instanceof Set ? c.has(otherId) : Array.isArray(c) && c.includes(otherId));
+  return has(following) && has(followers);
+}
+
+/** Who may read a request (callers return 404 when false). */
+function canSeeRequest({ viewerId, request, isMutualWithBorrower, isLender, viewerIsVerifier }) {
+  if (viewerId === request.borrowerId || viewerId === request.trustedContactId) return true;
+  if (isLender) return true;
+  if (viewerIsVerifier && request.status === 'pending_verification') return true;
+  if (isMutualWithBorrower && ['open', 'funded', 'repaid'].includes(request.status)) return true;
   return false;
 }
 
 /**
- * Connection suggestions: people who follow you (not followed back) first, then people that the people
- * YOU follow have chosen to follow, ranked by how many of them did. Never yourself or people you follow.
- * Only follows made BY your chosen connections count, so nobody can fake "mutual connections" by following many people.
- * edges: follows touching your connections, as { followerId, followeeId }.
+ * Spec 5.6: whether the viewer sees ownerId's UPI ID on this request.
+ * Owner always. Borrower's UPI: its lenders, and mutuals while open.
+ * A lender's UPI: the borrower and trusted contact.
  */
-function suggestConnections({ meId, following, followers, edges, limit = 10 }) {
-  const followingSet = new Set(following);
-  const circle = new Set([...following, ...followers]);
-  const mutuals = new Map(); // candidate id -> Set of my connections they are linked to
-  for (const { followerId: c, followeeId: other } of edges) {
-    if (!followingSet.has(c) || other === meId || other === c) continue;
-    if (!mutuals.has(other)) mutuals.set(other, new Set());
-    mutuals.get(other).add(c);
+function paymentTargetVisible({ viewerId, ownerId, request, lenderIds = [], isMutualWithOwner = false }) {
+  if (viewerId === ownerId) return true;
+  if (ownerId === request.borrowerId) {
+    if (lenderIds.includes(viewerId)) return true;
+    return Boolean(isMutualWithOwner) && request.status === 'open';
   }
-  const followsYou = followers.filter((id) => !followingSet.has(id) && id !== meId);
-  const fof = [...mutuals.keys()].filter((id) => !circle.has(id));
-  const candidates = [...new Set([...followsYou, ...fof])];
-  return candidates
-    .map((id) => ({ id, followsYou: followsYou.includes(id), mutualIds: [...(mutuals.get(id) ?? [])].filter((m) => m !== id) }))
-    .sort((a, b) => (b.followsYou - a.followsYou) || (b.mutualIds.length - a.mutualIds.length) || (a.id - b.id))
-    .slice(0, limit);
+  if (lenderIds.includes(ownerId)) {
+    return viewerId === request.borrowerId || viewerId === request.trustedContactId;
+  }
+  return false;
+}
+
+/** Stored status plus derived 'overdue'. */
+function effectiveStatus(request, now) {
+  if (request.status === 'funded' && todayIst(now) > request.repaymentDate) return 'overdue';
+  return request.status;
 }
 
 /**
- * Phone numbers, so lenders can call or WhatsApp a borrower before sending money.
- * Accepts digits with spaces, dashes, dots and brackets, and an optional leading +.
- * Stores international format: "+" and 8 to 15 digits (E.164).
+ * Why a member cannot delete their account yet, or null. Money is never forgotten: an active request, money owed to
+ * the member as a lender, or any entry on their side still waiting to be settled all block deletion.
  */
-function validatePhone(raw) {
-  const s = String(raw ?? '').trim();
-  if (s === '') return { ok: false, error: 'Add your phone number so lenders can reach you' };
-  if (!/^\+?[\d\s().-]+$/.test(s)) return { ok: false, error: 'Use digits only, with an optional + and country code' };
-  const digits = s.replace(/\D/g, '');
-  if (digits.length < 8 || digits.length > 15) return { ok: false, error: 'Enter a full phone number with country code' };
-  return { ok: true, value: `+${digits}` };
+function deletionBlock({ activeCount = 0, contactActiveCount = 0, owedToMeCents = 0, unsettledCount = 0 } = {}) {
+  if (contactActiveCount > 0) return 'You are the trusted contact on an active request. Ask the borrower to choose someone else first.';
+  if (activeCount > 0) return 'You have a request that is still active. Finish or withdraw it before deleting your account.';
+  if (owedToMeCents > 0) return 'You are still owed money from a loan. Wait until it is repaid before deleting your account.';
+  if (unsettledCount > 0) return 'Some payments are still waiting to be confirmed. Money is owed one way or the other until they are settled, so deleting your account has to wait.';
+  return null;
 }
 
-/** Which statuses appear in the public feed. */
-function isFeedStatus(status) {
-  return status === 'open' || status === 'funded' || status === 'repaid';
+/**
+ * Trust history: facts only, computed from the ledger and never stored. No overdue or unpaid counts exist here on purpose.
+ * repaidRequests are the member's own requests with status repaid; lentToCount is how many requests they lent to.
+ */
+function trustFacts({ createdAt, repaidRequests = [], lentToCount = 0 }) {
+  const onTime = repaidRequests.filter((r) => r.repaidAt && r.repaymentDate && todayIst(new Date(r.repaidAt)) <= r.repaymentDate).length;
+  return { memberSince: createdAt ? todayIst(new Date(createdAt)).slice(0, 7) : null, repaidCount: repaidRequests.length, repaidOnTimeCount: onTime, lentToCount };
 }
 
 module.exports = {
+  deletionBlock,
+  trustFacts,
   PURPOSE_MIN_LENGTH,
   PURPOSE_MAX_LENGTH,
-  AMOUNT_MAX,
-  DEFAULT_ANNUAL_RATE,
+  AMOUNT_MIN_PAISE,
+  AMOUNT_MAX_PAISE,
+  CATEGORIES,
+  ACTIVE_STATUSES,
+  MAX_ACTIVE_AS_CONTACT,
   DEFAULT_REQUIRED_APPROVALS,
-  FEED_MODE,
-  canSeeRequest,
-  validatePhone,
-  suggestConnections,
   isIsoDate,
+  todayIst,
+  addMonths,
   daysOverdue,
-  interestCents,
-  amountDueCents,
   validateRequest,
+  checkCanCreateRequest,
+  checkTrustedContact,
+  validateVerification,
   verificationOutcome,
   canVerify,
+  ENTRY_STATUSES,
+  validateUtr,
+  fundingTotals,
   checkContribution,
+  owedByLender,
+  checkRepayment,
+  exceedsCapAtRow,
+  isFullyRepaid,
+  isMutual,
+  canSeeRequest,
+  paymentTargetVisible,
   effectiveStatus,
-  isFeedStatus,
 };

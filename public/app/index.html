@@ -3,10 +3,95 @@
 <head>
   <meta charset="utf-8">
   <meta name="robots" content="noindex">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Funds For Family</title>
-  <!-- The app moved to the site root. Keep old links (/app/#new, /app/#request/12) working. -->
-  <script src="/app/redirect.js"></script>
-  <noscript><meta http-equiv="refresh" content="0; url=/"></noscript>
+  <meta name="description" content="Request and fund small loans within your trusted family and community circle.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#1f6f5c">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/styles.css">
+  <script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>
 </head>
-<body><p><a href="/">Open Funds For Family</a></p></body>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="/">Funds For Family</a>
+    <nav id="primary-nav" aria-label="Primary" hidden></nav>
+    <div id="auth-slot"></div>
+  </header>
+
+  <p class="offline-note" id="offline-note" role="status" hidden>You're offline, showing your last saved view.</p>
+
+  <main id="main" tabindex="-1">
+    <section id="signed-out" class="panel" hidden>
+      <h1>Help family and friends, with purpose and trust.</h1>
+      <p class="lede">Request a small amount, have its purpose verified by a team, and let people in your circle fund it. Repay on the due date.</p>
+      <button class="btn btn-primary" id="sign-in" type="button">Sign in to continue</button>
+    </section>
+
+    <section id="view-home" hidden aria-label="Home"><div id="home"></div></section>
+
+    <section id="view-feed" hidden aria-labelledby="feed-title">
+      <h1 id="feed-title">Feed</h1>
+      <p class="muted">Approved requests from people you follow and people who follow you.</p>
+      <ul class="cards" id="feed-list"></ul>
+      <p class="empty" id="feed-empty" hidden>No approved requests in your circle yet. Follow people to see their requests.</p>
+    </section>
+
+    <section id="view-new" hidden aria-label="New request"><div id="new-root"></div></section>
+
+    <section id="view-not-invited" hidden aria-labelledby="not-invited-title">
+      <h1 id="not-invited-title">Not invited</h1>
+      <p class="lede">Funds For Family is invite only. Ask a member to send you an invite link.</p>
+    </section>
+
+    <section id="view-activity" hidden aria-labelledby="activity-title">
+      <h1 id="activity-title">My activity</h1>
+      <h2>Borrowing</h2><div id="activity-borrowing"></div>
+      <h2>Lending</h2><div id="activity-lending"></div>
+      <h2>Repayments</h2><div id="activity-repayments"></div>
+      <h2>Roles</h2><div id="activity-roles"></div>
+    </section>
+
+    <section id="view-detail" hidden aria-labelledby="detail-title">
+      <div id="detail"></div>
+    </section>
+
+    <section id="view-circle" hidden aria-label="Circle">
+      <div id="circle"></div>
+    </section>
+
+    <section id="view-workspace" hidden aria-label="Admin and verifier workspace">
+      <div id="workspace"></div>
+    </section>
+
+    <section id="view-welcome" hidden aria-label="Welcome">
+      <div id="welcome"></div>
+    </section>
+
+    <section id="view-profile" hidden aria-label="Profile">
+      <div id="profile"></div>
+    </section>
+
+    <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
+  </main>
+  <script src="/app/money.js"></script>
+  <script src="/app/format.js"></script>
+  <script src="/app/api.js"></script>
+  <script src="/app/nav.js"></script>
+  <script src="/app/card-model.js"></script>
+  <script src="/app/pages/welcome.js"></script>
+  <script src="/app/pages/home.js"></script>
+  <script src="/app/pages/new-request.js"></script>
+  <script src="/vendor/qr.js"></script>
+  <script src="/app/pages/request.js"></script>
+  <script src="/app/pages/circle.js"></script>
+  <script src="/app/pages/profile.js"></script>
+  <script src="/app.js" defer></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js', { scope: '/app/' }).catch(() => {}));
+    }
+  </script>
+</body>
 </html>

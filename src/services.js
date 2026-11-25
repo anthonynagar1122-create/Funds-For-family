@@ -1,22 +1,38 @@
 'use strict';
 // Production wiring: Clerk (identity), Resend (email), Supabase (data). Used by server.js and api/index.js.
 const express = require('express');
-const { clerkMiddleware, getAuth, clerkClient } = require('@clerk/express');
+const { clerkMiddleware, getAuth, createClerkClient } = require('@clerk/express');
 const { Resend } = require('resend');
 const { createApp } = require('./app');
 const { createSupabaseRepo } = require('./supabase-repo');
+const config = require('./config');
+
+/**
+ * Clerk user -> app identity. The email is trusted (owner admission, email-matched invites) only when Clerk
+ * has verified it; otherwise it is null.
+ */
+function identityFromClerkUser(u) {
+  const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || 'Member';
+  const primary = u.primaryEmailAddress;
+  const verified = primary?.verification?.status === 'verified';
+  const email = verified && primary.emailAddress ? primary.emailAddress : null;
+  return { clerkId: u.id, name, email, avatarUrl: u.imageUrl || null };
+}
 
 function buildProductionApp(env = process.env) {
-  const repo = createSupabaseRepo({ url: env.SUPABASE_URL, serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY });
+  // Every entry point (server.js and api/index.js) passes through here, so the same checks always run.
+  const problems = [...config.validateServerConfig(env), ...config.isolationProblems(env)];
+  if (problems.length) throw new Error(`Configuration incomplete: ${problems.join('; ')}`);
+  const repo = createSupabaseRepo({ url: env.SUPABASE_URL, serviceRoleKey: config.resolveSupabaseKey(env).value });
+
+  // An explicit client built from this configuration, not from the process environment.
+  const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY, publishableKey: env.CLERK_PUBLISHABLE_KEY });
 
   const identify = async (req) => {
     const { userId } = getAuth(req);
     if (!userId) return null;
-    const u = await clerkClient.users.getUser(userId);
-    const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || 'Member';
-    const email = u.primaryEmailAddress?.emailAddress;
-    if (!email) return null;
-    return { clerkId: u.id, name, email };
+    const u = await clerk.users.getUser(userId);
+    return identityFromClerkUser(u);
   };
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -27,26 +43,33 @@ function buildProductionApp(env = process.env) {
     if (error) throw new Error(error.message);
   };
 
-  // Removes the sign-in identity, so a deleted member cannot sign back in to the old record.
-  const deleteIdentity = async (clerkId) => { await clerkClient.users.deleteUser(clerkId); };
-
   const api = createApp({
     repo,
     identify,
-    deleteIdentity,
     mailer,
+    deleteClerkUser: async (clerkId) => { await clerk.users.deleteUser(clerkId); },
+    ownerEmail: env.OWNER_EMAIL || '',
     appUrl: env.APP_URL || 'http://localhost:3000',
-    annualRate: env.INTEREST_RATE_ANNUAL ? Number(env.INTEREST_RATE_ANNUAL) : undefined,
     requiredApprovals: env.REQUIRED_APPROVALS ? Number(env.REQUIRED_APPROVALS) : undefined,
   });
 
   const root = express();
   root.disable('x-powered-by');
-  root.use(clerkMiddleware());
-  root.get('/api/config', (_req, res) => res.json({ clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null }));
+  // Clerk's built-in Frontend API proxy. Mounted before every route, so proxy requests never reach our JSON parser.
+  // Live keys are served through the proxy on this domain. Development keys talk to Clerk directly.
+  const isLive = /^pk_live_/.test(env.CLERK_PUBLISHABLE_KEY || '');
+  root.use(clerkMiddleware({
+    publishableKey: env.CLERK_PUBLISHABLE_KEY,
+    secretKey: env.CLERK_SECRET_KEY,
+    frontendApiProxy: { enabled: isLive },
+  }));
+  root.get('/api/config', (_req, res) => res.json({
+    clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null,
+    clerkProxyUrl: isLive ? '/__clerk' : null,
+  }));
   root.use(api);
   root.use(express.static(require('path').join(__dirname, '..', 'public')));
   return root;
 }
 
-module.exports = { buildProductionApp };
+module.exports = { buildProductionApp, identityFromClerkUser };

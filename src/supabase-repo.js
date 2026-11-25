@@ -3,52 +3,177 @@
 // Uses the SERVICE ROLE key, so it must only run on the server (Vercel functions / local node).
 const { createClient } = require('@supabase/supabase-js');
 
-const camel = (row) => {
-  if (!row) return row;
-  const out = {};
-  for (const [k, v] of Object.entries(row)) out[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
-  return out;
+const ACTIVE = ['awaiting_contact', 'contact_declined', 'pending_verification', 'open', 'funded'];
+
+// One mapper per entity: snake_case row <-> camelCase object. Columns are listed explicitly so a patch can never
+// write a column the contract does not allow.
+const mapper = (cols) => {
+  const toObj = (row) => {
+    if (!row) return null;
+    const out = {};
+    for (const [camelKey, snake] of Object.entries(cols)) out[camelKey] = row[snake] ?? null;
+    return out;
+  };
+  const toRow = (obj, allowed = Object.keys(cols)) => {
+    const row = {};
+    for (const k of allowed) if (obj && obj[k] !== undefined) row[cols[k]] = obj[k];
+    return row;
+  };
+  return { toObj, toRow };
 };
-const many = (rows) => (rows ?? []).map(camel);
 
-function createSupabaseRepo({ url, serviceRoleKey }) {
+const USER = mapper({
+  id: 'id', clerkId: 'clerk_id', name: 'name', email: 'email', avatarUrl: 'avatar_url', upiId: 'upi_id',
+  isAdmin: 'is_admin', isVerifier: 'is_verifier', inviteLimit: 'invite_limit', emailReminders: 'email_reminders',
+  emailThanks: 'email_thanks', welcomedAt: 'welcomed_at', termsAcceptedAt: 'terms_accepted_at', deletedAt: 'deleted_at', createdAt: 'created_at',
+});
+const INVITE = mapper({
+  id: 'id', inviterId: 'inviter_id', email: 'email', tokenHash: 'token_hash', expiresAt: 'expires_at', createdAt: 'created_at',
+  acceptedAt: 'accepted_at', acceptedUserId: 'accepted_user_id', revokedAt: 'revoked_at', supersededAt: 'superseded_at',
+});
+const HELP = mapper({ id: 'id', userId: 'user_id', body: 'body', createdAt: 'created_at', resolvedAt: 'resolved_at',
+  assignedToId: 'assigned_to', assignedById: 'assigned_by', assignedAt: 'assigned_at' });
+const REQUEST = mapper({
+  id: 'id', borrowerId: 'borrower_id', trustedContactId: 'nominee_id', purpose: 'purpose', category: 'category',
+  principalCents: 'principal_cents', repaymentDate: 'repayment_date', originalRepaymentDate: 'original_repayment_date',
+  status: 'status', fundedCents: 'funded_cents', rejectionReason: 'rejection_reason', createdAt: 'created_at',
+  decidedAt: 'decided_at', fundedAt: 'funded_at', repaidAt: 'repaid_at', withdrawnAt: 'withdrawn_at', contactDecidedAt: 'contact_decided_at',
+});
+const ENTRY_COMMON = {
+  id: 'id', requestId: 'request_id', amountCents: 'amount_cents', status: 'status', utr: 'utr', createdAt: 'created_at',
+  confirmedAt: 'confirmed_at', updatedAt: 'updated_at', settledBy: 'settled_by', settledNote: 'settled_note',
+  settledAt: 'settled_at', helpRequestedAt: 'help_requested_at',
+};
+const CONTRIBUTION = mapper({ ...ENTRY_COMMON, contributorId: 'contributor_id' });
+const REPAYMENT = mapper({ ...ENTRY_COMMON, payerId: 'payer_id', lenderId: 'lender_id' });
+const VERIFICATION = mapper({ requestId: 'request_id', verifierId: 'verifier_id', decision: 'decision', note: 'note', createdAt: 'created_at' });
+
+const USER_PATCH = ['name', 'upiId', 'avatarUrl', 'welcomedAt', 'termsAcceptedAt', 'isAdmin', 'isVerifier', 'emailReminders', 'emailThanks'];
+const INVITE_PATCH = ['acceptedAt', 'acceptedUserId', 'revokedAt', 'supersededAt'];
+const REQUEST_PATCH = ['status', 'decidedAt', 'fundedAt', 'repaidAt', 'fundedCents', 'rejectionReason', 'repaymentDate',
+  'originalRepaymentDate', 'withdrawnAt', 'contactDecidedAt', 'category', 'purpose', 'trustedContactId'];
+const ENTRY_PATCH = ['status', 'utr', 'amountCents', 'confirmedAt', 'updatedAt', 'settledBy', 'settledNote', 'settledAt', 'helpRequestedAt'];
+
+// Escape LIKE wildcards so user text is matched literally.
+const likeEscape = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
   if (!url || !serviceRoleKey) throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
-  const db = createClient(url, serviceRoleKey, { auth: { persistSession: false } });
+  const db = createClient(url, serviceRoleKey, {
+    auth: { persistSession: false },
+    ...(customFetch ? { global: { fetch: customFetch } } : {}),
+  });
 
+  // Keeps the PostgREST code (e.g. '23505' unique violation) and details so callers can tell failures apart.
+  const fail = (error) => Object.assign(new Error(`Supabase: ${error.message}`), { code: error.code, details: error.details });
   const check = (res) => {
-    if (res.error) throw new Error(`Supabase: ${res.error.message}`);
+    if (res.error) throw fail(res.error);
     return res.data;
+  };
+  const maybe = async (query, m) => m.toObj(check(await query.maybeSingle()));
+  const list = (rows, m) => (rows ?? []).map(m.toObj);
+
+  const entryApi = (table, m, create) => ({
+    async add(row) {
+      return m.toObj(check(await db.from(table).insert(create(row)).select().single()));
+    },
+    get: (id) => maybe(db.from(table).select().eq('id', id), m),
+    async update(id, patch) {
+      const row = m.toRow(patch, ENTRY_PATCH);
+      if (Object.keys(row).length === 0) return maybe(db.from(table).select().eq('id', id), m);
+      return maybe(db.from(table).update(row).eq('id', id).select(), m);
+    },
+    async del(id) { check(await db.from(table).delete().eq('id', id)); },
+    async list(requestId) {
+      return list(check(await db.from(table).select().eq('request_id', requestId).order('id', { ascending: true })), m);
+    },
+  });
+  const entryRow = (m, row) => {
+    const r = m.toRow({ ...row, status: row.status ?? 'sent' });
+    if (r.created_at === undefined) delete r.created_at;
+    delete r.id;
+    return r;
+  };
+  const contrib = entryApi('contributions', CONTRIBUTION, (row) => entryRow(CONTRIBUTION, row));
+  const repay = entryApi('repayments', REPAYMENT, (row) => entryRow(REPAYMENT, row));
+
+  const countRequests = async (column, id) => {
+    const res = await db.from('requests').select('id', { count: 'exact', head: true }).eq(column, id).in('status', ACTIVE);
+    if (res.error) throw fail(res.error);
+    return res.count ?? 0;
   };
 
   return {
-    async upsertUser({ clerkId, name, email }) {
-      const data = check(await db.from('users')
-        .upsert({ clerk_id: clerkId, name: name || 'Member', email }, { onConflict: 'clerk_id' })
-        .select().single());
-      return camel(data);
+    // ---- users ----
+    findUserByClerkId: (clerkId) => maybe(db.from('users').select().eq('clerk_id', clerkId), USER),
+    // Case-insensitive exact match: ilike with LIKE wildcards escaped.
+    findUserByEmail: (email) => maybe(db.from('users').select().ilike('email', likeEscape(String(email ?? ''))).limit(1), USER),
+    async createUser({ clerkId, name, email, avatarUrl, isAdmin, isVerifier }) {
+      const row = USER.toRow({ clerkId, name: name || 'Member', email, avatarUrl, isAdmin, isVerifier });
+      return USER.toObj(check(await db.from('users').insert(row).select().single()));
     },
-    async getUser(id) {
-      const { data, error } = await db.from('users').select().eq('id', id).maybeSingle();
-      if (error) throw new Error(`Supabase: ${error.message}`);
-      return camel(data);
+    async updateUser(id, patch) {
+      const row = USER.toRow(patch, USER_PATCH);
+      if (Object.keys(row).length === 0) return maybe(db.from('users').select().eq('id', id), USER);
+      return maybe(db.from('users').update(row).eq('id', id).select(), USER);
     },
-    async findUserByEmail(email) {
-      const { data, error } = await db.from('users').select().ilike('email', email).maybeSingle();
-      if (error) throw new Error(`Supabase: ${error.message}`);
-      return camel(data);
+    getUser: (id) => maybe(db.from('users').select().eq('id', id), USER),
+    async getUsers(ids) {
+      if (ids.length === 0) return [];
+      return list(check(await db.from('users').select().in('id', ids)), USER);
     },
-    async setPhone(id, phone) {
-      return camel(check(await db.from('users').update({ phone }).eq('id', id).select().single()));
+    async listUsers({ query = '', limit = 100 } = {}) {
+      const cap = Math.min(Math.max(limit, 1), 200);
+      const base = () => db.from('users').select().is('deleted_at', null).order('id', { ascending: false }).limit(cap);
+      if (!query) return list(check(await base()), USER);
+      const [byName, byEmail] = await Promise.all([
+        base().ilike('name', '%' + likeEscape(query) + '%'),
+        base().ilike('email', '%' + likeEscape(query) + '%'),
+      ]);
+      const combined = new Map([...check(byName), ...check(byEmail)].map((row) => [row.id, row]));
+      return list([...combined.values()].sort((a,b)=>b.id-a.id).slice(0, cap), USER);
     },
-    async setVerifier(id, isVerifier) {
-      check(await db.from('users').update({ is_verifier: isVerifier }).eq('id', id));
+    async setMemberRoles({ actorId, targetUserId, isAdmin, isVerifier }) {
+      const row = check(await db.rpc('admin_set_member_roles', {
+        p_actor_id: actorId, p_target_user_id: targetUserId, p_is_admin: isAdmin, p_is_verifier: isVerifier,
+      }));
+      return { id: row.id, name: row.name, email: row.email, isAdmin: row.is_admin, isVerifier: row.is_verifier };
     },
+    async listAdminAuditEvents({ limit = 100 } = {}) {
+      return check(await db.from('admin_audit_events').select().order('id', { ascending: false }).limit(Math.min(Math.max(limit, 1), 200)))
+        .map((r) => ({ id:r.id, actorId:r.actor_id, targetUserId:r.target_user_id, eventType:r.event_type,
+          beforeState:r.before_state, afterState:r.after_state, createdAt:r.created_at }));
+    },
+    async listSupportAuditEvents({ limit = 100 } = {}) {
+      return check(await db.from('support_audit_events').select().order('id',{ascending:false}).limit(Math.min(Math.max(limit,1),200)))
+        .map((r)=>({id:r.id,actorId:r.actor_id,helpMessageId:r.help_message_id,eventType:r.event_type,
+          beforeState:r.before_state,afterState:r.after_state,createdAt:r.created_at}));
+    },
+    async setVerifier(id, isVerifier) { check(await db.from('users').update({ is_verifier: !!isVerifier }).eq('id', id)); },
+    // Name only (email is private). Parameterised: user text never goes into a filter string.
     async searchUsers(q, excludeId) {
-      const term = q.replace(/[%_,()]/g, '');
-      return many(check(await db.from('users').select()
-        .ilike('name', `%${term}%`)
-        .neq('id', excludeId).limit(20)));
+      const pattern = `%${likeEscape(q)}%`;
+      const byName = await db.from('users').select().ilike('name', pattern).is('deleted_at', null).neq('id', excludeId).limit(20);
+      return list(check(byName), USER).slice(0, 20);
     },
+
+    // Anonymise in place; the row stays so ledger rows keep a valid member. The email column is NOT NULL and unique,
+    // so it gets a unique placeholder. Follows and open invites go. Never touches ledger rows.
+    async deleteAccount(id) {
+      const row = USER.toRow({ name: 'Former member', email: `deleted-${id}@deleted.invalid`, upiId: null, avatarUrl: null,
+        clerkId: `deleted:${id}`, deletedAt: new Date().toISOString() });
+      const user = await maybe(db.from('users').update(row).eq('id', id).select(), USER);
+      if (!user) return null;
+      check(await db.from('follows').delete().eq('follower_id', id));
+      check(await db.from('follows').delete().eq('followee_id', id));
+      check(await db.from('invites').update({ email: `deleted-${id}@deleted.invalid` }).eq('accepted_user_id', id));
+      for (const column of ['inviter_id', 'accepted_user_id']) {
+        check(await db.from('invites').delete().eq(column, id).is('accepted_at', null).is('revoked_at', null).is('superseded_at', null));
+      }
+      return user;
+    },
+
+    // ---- follows ----
     async addFollow(followerId, followeeId) {
       check(await db.from('follows').upsert({ follower_id: followerId, followee_id: followeeId }, { onConflict: 'follower_id,followee_id', ignoreDuplicates: true }));
     },
@@ -60,138 +185,164 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
         db.from('follows').select('followee_id').eq('follower_id', userId),
         db.from('follows').select('follower_id').eq('followee_id', userId),
       ]);
-      return {
-        following: check(a).map((r) => r.followee_id),
-        followers: check(b).map((r) => r.follower_id),
-      };
+      return { following: check(a).map((r) => r.followee_id), followers: check(b).map((r) => r.follower_id) };
     },
-    async addInvite({ inviterId, email = null, token }) {
-      check(await db.from('invites').insert({ inviter_id: inviterId, email, token }));
+
+    // ---- invites ----
+    async createInvite({ inviterId, email, tokenHash, expiresAt, createdAt }) {
+      const row = INVITE.toRow({ inviterId, email, tokenHash, expiresAt, createdAt });
+      return INVITE.toObj(check(await db.from('invites').insert(row).select().single()));
     },
-    async getInviteByToken(token) {
-      const { data, error } = await db.from('invites').select().eq('token', token).maybeSingle();
-      if (error) throw new Error(`Supabase: ${error.message}`);
-      return camel(data);
+    getInvite: (id) => maybe(db.from('invites').select().eq('id', id), INVITE),
+    findInviteByHash: (hash) => maybe(db.from('invites').select().eq('token_hash', hash), INVITE),
+    async findInviteByAcceptedUser(userId) {
+      const rows = check(await db.from('invites').select().eq('accepted_user_id', userId).order('id', { ascending: true }).limit(1));
+      return rows && rows.length ? INVITE.toObj(rows[0]) : null;
     },
-    async markInviteAccepted(token, at) {
-      check(await db.from('invites').update({ accepted_at: at }).eq('token', token).is('accepted_at', null));
+    async findOpenInvitesByEmail(email) {
+      // Email comparison is case-insensitive: ilike with wildcards escaped matches the whole address.
+      return list(check(await db.from('invites').select().ilike('email', likeEscape(email))
+        .is('accepted_at', null).is('revoked_at', null).is('superseded_at', null)), INVITE);
     },
-    // Every follow where either side is one of the given members.
-    async followsTouching(userIds) {
-      if (userIds.length === 0) return [];
-      const [a, b] = await Promise.all([
-        // Only follows made BY these members are used (see rules.suggestConnections). Capped for large circles.
-        db.from('follows').select('follower_id, followee_id').in('follower_id', userIds).limit(5000),
-        Promise.resolve({ data: [], error: null }),
-      ]);
-      const seen = new Set();
-      return [...check(a), ...check(b)].filter((r) => {
-        const k = `${r.follower_id}>${r.followee_id}`;
-        if (seen.has(k)) return false;
-        seen.add(k); return true;
-      }).map((r) => ({ followerId: r.follower_id, followeeId: r.followee_id }));
+    async listInvitesByInviter(id) {
+      return list(check(await db.from('invites').select().eq('inviter_id', id).order('id', { ascending: false })), INVITE);
     },
+    async updateInvite(id, patch) {
+      const row = INVITE.toRow(patch, INVITE_PATCH);
+      if (Object.keys(row).length === 0) return maybe(db.from('invites').select().eq('id', id), INVITE);
+      return maybe(db.from('invites').update(row).eq('id', id).select(), INVITE);
+    },
+    // Single conditional UPDATE: only one caller can flip an open invite. Returns the invite, or null if it was not open.
+    async claimInvite(id, { acceptedAt, acceptedUserId } = {}) {
+      const patch = INVITE.toRow({ acceptedAt, acceptedUserId });
+      return maybe(db.from('invites').update(patch).eq('id', id)
+        .is('accepted_at', null).is('revoked_at', null).is('superseded_at', null)
+        .gt('expires_at', acceptedAt).select(), INVITE);
+    },
+    async countInvitesSince(inviterId, isoDate) {
+      const res = await db.from('invites').select('id', { count: 'exact', head: true })
+        .eq('inviter_id', inviterId).gte('created_at', isoDate).is('revoked_at', null).is('superseded_at', null);
+      if (res.error) throw fail(res.error);
+      return res.count ?? 0;
+    },
+
+    // ---- help messages ----
+    async addHelpMessage({ userId, body }) {
+      return HELP.toObj(check(await db.from('help_messages').insert({ user_id: userId, body }).select().single()));
+    },
+    async listHelpMessagesByUser(userId) {
+      return list(check(await db.from('help_messages').select().eq('user_id', userId).order('id', { ascending: false })), HELP);
+    },
+    // Unresolved first (resolved_at null sorts last by default on ascending, so order explicitly), oldest first within each group.
+    async listHelpMessages() {
+      const rows = list(check(await db.from('help_messages').select().order('id', { ascending: true })), HELP);
+      return [...rows.filter((m) => !m.resolvedAt), ...rows.filter((m) => m.resolvedAt)];
+    },
+    // Only an unresolved row is updated, so a second call keeps the first timestamp. Null if the id does not exist.
+    async assignHelpMessage({ id, actorId, assigneeId }) {
+      const row=check(await db.rpc('admin_assign_help_message', {
+        p_actor_id:actorId, p_message_id:id, p_assignee_id:assigneeId,
+      }));
+      return {id:row.id,userId:row.userId,body:row.body,createdAt:row.createdAt,resolvedAt:row.resolvedAt,
+        assignedToId:row.assignedTo,assignedById:row.assignedBy,assignedAt:row.assignedAt};
+    },
+    async resolveHelpMessage(id, at, actorId) {
+      const row=check(await db.rpc('admin_resolve_help_message', {
+        p_actor_id:actorId, p_message_id:id,
+      }));
+      return {id:row.id,userId:row.userId,body:row.body,createdAt:row.createdAt,resolvedAt:row.resolvedAt,
+        assignedToId:row.assignedTo,assignedById:row.assignedBy,assignedAt:row.assignedAt};
+    },
+    async listSupportAuditEvents({ limit = 100 } = {}) {
+      return check(await db.from('support_audit_events').select().order('id',{ascending:false}).limit(Math.min(Math.max(limit,1),200)))
+        .map((r)=>({ id:r.id, actorId:r.actor_id, helpMessageId:r.help_message_id, eventType:r.event_type,
+          beforeState:r.before_state, afterState:r.after_state, createdAt:r.created_at }));
+    },
+
+    // ---- requests ----
     async createRequest(row) {
-      const data = check(await db.from('requests').insert({
-        borrower_id: row.borrowerId, nominee_id: row.nomineeId, purpose: row.purpose,
-        principal_cents: row.principalCents, repayment_date: row.repaymentDate,
-      }).select().single());
-      return camel(data);
+      const insert = REQUEST.toRow(row, ['borrowerId', 'trustedContactId', 'purpose', 'category', 'principalCents', 'repaymentDate',
+        'originalRepaymentDate', 'status', 'createdAt']);
+      return REQUEST.toObj(check(await db.from('requests').insert(insert).select().single()));
     },
-    async getRequest(id) {
-      const { data, error } = await db.from('requests').select().eq('id', id).maybeSingle();
-      if (error) throw new Error(`Supabase: ${error.message}`);
-      return camel(data);
+    getRequest: (id) => maybe(db.from('requests').select().eq('id', id), REQUEST),
+    async updateRequest(id, patch) {
+      const row = REQUEST.toRow(patch, REQUEST_PATCH);
+      if (Object.keys(row).length === 0) return maybe(db.from('requests').select().eq('id', id), REQUEST);
+      return maybe(db.from('requests').update(row).eq('id', id).select(), REQUEST);
     },
-    async setRequestStatus(id, patch) {
-      const map = { status: 'status', decidedAt: 'decided_at', fundedAt: 'funded_at', repaidAt: 'repaid_at' };
-      const row = {};
-      for (const [k, v] of Object.entries(patch)) row[map[k]] = v;
-      return camel(check(await db.from('requests').update(row).eq('id', id).select().single()));
+    async listRequestsByBorrowers(ids, { statuses } = {}) {
+      if (ids.length === 0 || (statuses && statuses.length === 0)) return [];
+      let q = db.from('requests').select().in('borrower_id', ids);
+      if (statuses) q = q.in('status', statuses);
+      return list(check(await q.order('id', { ascending: false }).limit(100)), REQUEST);
     },
-    async listFeed(borrowerIds) {
-      if (borrowerIds.length === 0) return [];
-      return many(check(await db.from('requests').select().in('borrower_id', borrowerIds).order('id', { ascending: false }).limit(100)));
-    },
-    // Requests still awaiting a verification decision, oldest first.
-    // excludeDecidedBy: skip requests this verifier already decided on (done in the query, so the limit never hides newer ones).
-    async listPendingRequests({ excludeDecidedBy } = {}) {
-      let q = db.from('requests').select().eq('status', 'pending_verification');
-      if (excludeDecidedBy != null) {
-        const decided = check(await db.from('verifications').select('request_id').eq('verifier_id', excludeDecidedBy)).map((v) => v.request_id);
-        if (decided.length > 0) q = q.not('id', 'in', `(${decided.map(Number).join(',')})`);
-      }
-      return many(check(await q.order('id', { ascending: true }).limit(200)));
+    async listRequestsByStatus(status) {
+      return list(check(await db.from('requests').select().eq('status', status).order('id', { ascending: false })), REQUEST);
     },
     async listRequestsForMember(userId) {
-      const [asParty, asLender, asPayer, asVerifier] = await Promise.all([
-        db.from('requests').select('id').or(`borrower_id.eq.${userId},nominee_id.eq.${userId}`),
+      const [asBorrower, asContact, asContributor, asPayer, asLender, asVerifier] = await Promise.all([
+        db.from('requests').select('id').eq('borrower_id', userId),
+        db.from('requests').select('id').eq('nominee_id', userId),
         db.from('contributions').select('request_id').eq('contributor_id', userId),
         db.from('repayments').select('request_id').eq('payer_id', userId),
+        db.from('repayments').select('request_id').eq('lender_id', userId),
         db.from('verifications').select('request_id').eq('verifier_id', userId),
       ]);
       const ids = new Set([
-        ...check(asParty).map((r) => r.id),
-        ...check(asLender).map((r) => r.request_id),
+        ...check(asBorrower).map((r) => r.id),
+        ...check(asContact).map((r) => r.id),
+        ...check(asContributor).map((r) => r.request_id),
         ...check(asPayer).map((r) => r.request_id),
+        ...check(asLender).map((r) => r.request_id),
         ...check(asVerifier).map((r) => r.request_id),
       ]);
       if (ids.size === 0) return [];
-      return many(check(await db.from('requests').select().in('id', [...ids]).order('id', { ascending: false })));
+      return list(check(await db.from('requests').select().in('id', [...ids]).order('id', { ascending: false })), REQUEST);
     },
+    countActiveByBorrower: (id) => countRequests('borrower_id', id),
+    countActiveAsContact: (id) => countRequests('nominee_id', id),
+
+    // ---- verifications ----
     async listVerifications(requestId) {
-      return many(check(await db.from('verifications').select().eq('request_id', requestId)))
-        .map((v) => ({ ...v }));
+      return list(check(await db.from('verifications').select().eq('request_id', requestId)), VERIFICATION);
     },
-    async addVerification({ requestId, verifierId, decision, note }) {
-      check(await db.from('verifications').upsert({ request_id: requestId, verifier_id: verifierId, decision, note },
-        { onConflict: 'request_id,verifier_id' }));
+    async addVerification({ requestId, verifierId, decision, note, createdAt }) {
+      const row = VERIFICATION.toRow({ requestId, verifierId, decision, note: note ?? '', createdAt });
+      check(await db.from('verifications').upsert(row, { onConflict: 'request_id,verifier_id' }));
     },
-    async listContributions(requestId) {
-      return many(check(await db.from('contributions').select().eq('request_id', requestId)));
-    },
-    async addContribution({ requestId, contributorId, amountCents }) {
-      check(await db.from('contributions').insert({ request_id: requestId, contributor_id: contributorId, amount_cents: amountCents }));
-    },
-    // Locked, idempotent write (see supabase/migrations/0004_atomic_contributions.sql).
-    // Resolves to { ok, reason?, remainingCents?, duplicate?, contributionId?, funded? }.
-    async addContributionAtomic({ requestId, contributorId, amountCents, idempotencyKey = null }) {
-      const { data, error } = await db.rpc('add_contribution', {
-        p_request_id: requestId, p_contributor_id: contributorId, p_amount_cents: amountCents, p_idempotency_key: idempotencyKey,
-      });
-      if (error) throw new Error(`Supabase: ${error.message}`);
-      return {
-        ok: data.ok,
-        reason: data.reason,
-        remainingCents: data.remaining_cents,
-        duplicate: data.duplicate,
-        contributionId: data.contribution_id,
-        funded: data.funded,
-      };
-    },
-    // Remove personal data but keep the rows that the money trail depends on (requests, contributions, repayments).
-    async anonymizeUser(id) {
-      const tomb = `deleted-${id}`;
-      check(await db.from('users').update({
-        clerk_id: tomb, name: 'Deleted member', email: `${tomb}@deleted.invalid`, phone: null, is_verifier: false,
-      }).eq('id', id));
-      check(await db.from('follows').delete().or(`follower_id.eq.${id},followee_id.eq.${id}`));
-      check(await db.from('invites').delete().eq('inviter_id', id));
-      // Audit rows keep the action and record id; the client IP is personal data, so it is cleared.
-      check(await db.from('audit_events').update({ ip: null }).eq('actor_id', id));
-    },
-    async listRepayments(requestId) {
-      return many(check(await db.from('repayments').select().eq('request_id', requestId)));
-    },
-    async recordEvent({ actorId, action, subjectType = null, subjectId = null, detail = null, ip = null }) {
-      check(await db.from('audit_events').insert({
-        actor_id: actorId, action, subject_type: subjectType,
-        subject_id: subjectId == null ? null : String(subjectId), detail, ip,
+
+    // ---- contributions and repayments ----
+    // Creation uses Postgres RPCs: request-row locks, cap checks, idempotency and audit triggers
+    // execute in one database transaction. Never replace these with read/check/insert calls.
+    async recordContribution({ requestId, contributorId, amountCents, utr = null, idempotencyKey }) {
+      const row = check(await db.rpc('record_contribution', {
+        p_request_id: requestId, p_contributor_id: contributorId, p_amount_cents: amountCents,
+        p_utr: utr, p_idempotency_key: idempotencyKey,
       }));
+      return CONTRIBUTION.toObj(row);
     },
-    async addRepayment({ requestId, payerId, amountCents }) {
-      check(await db.from('repayments').insert({ request_id: requestId, payer_id: payerId, amount_cents: amountCents }));
+    async recordRepayment({ requestId, payerId, lenderId, amountCents, utr = null, idempotencyKey }) {
+      const row = check(await db.rpc('record_repayment', {
+        p_request_id: requestId, p_payer_id: payerId, p_lender_id: lenderId,
+        p_amount_cents: amountCents, p_utr: utr, p_idempotency_key: idempotencyKey,
+      }));
+      return REPAYMENT.toObj(row);
     },
+    async reviseContribution({ entryId, actorId, amountCents, utr = null }) {
+      return CONTRIBUTION.toObj(check(await db.rpc('revise_contribution', {
+        p_entry_id: entryId, p_actor_id: actorId, p_amount_cents: amountCents, p_utr: utr,
+      })));
+    },
+    async reviseRepayment({ entryId, actorId, amountCents, utr = null }) {
+      return REPAYMENT.toObj(check(await db.rpc('revise_repayment', {
+        p_entry_id: entryId, p_actor_id: actorId, p_amount_cents: amountCents, p_utr: utr,
+      })));
+    },
+    addContribution: contrib.add, getContribution: contrib.get, updateContribution: contrib.update,
+    deleteContribution: contrib.del, listContributions: contrib.list,
+    addRepayment: repay.add, getRepayment: repay.get, updateRepayment: repay.update,
+    deleteRepayment: repay.del, listRepayments: repay.list,
   };
 }
 

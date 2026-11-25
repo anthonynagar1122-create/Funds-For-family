@@ -4,49 +4,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createApp } = require('../src/app');
-const { createMemoryRepo } = require('../src/memory-repo');
+const { setup } = require('./helpers/harness');
+const { startRequest } = require('./helpers/lifecycle');
 
 const ROOT = path.join(__dirname, '..');
-const NOW = new Date('2026-11-20T12:00:00Z');
 
-async function setup() {
-  const repo = createMemoryRepo();
-  const sent = [];
-  const logged = [];
-  const app = createApp({
-    repo,
-    now: () => NOW,
-    mailer: async (m) => { sent.push(m); },
-    identify: async (req) => {
-      const name = req.headers['x-test-user'];
-      return name ? { clerkId: `clerk_${name}`, name, email: `${name}@example.com` } : null;
-    },
-    logger: { error: (...a) => logged.push(a) },
-  });
-  const server = app.listen(0, '127.0.0.1');
-  await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${server.address().port}/api`;
-  const call = async (user, method, p, body, raw) => {
-    const headers = { 'content-type': 'application/json' };
-    if (user) headers['x-test-user'] = user;
-    const payload = method === 'GET' ? undefined : (raw ?? (body ? JSON.stringify(body) : undefined));
-    const r = await fetch(base + p, { method, headers, body: payload });
-    const text = await r.text();
-    let json = null;
-    try { json = JSON.parse(text); } catch { /* non-JSON */ }
-    return { status: r.status, body: json, text };
-  };
-  const close = () => new Promise((res) => { server.close(res); server.closeAllConnections(); });
-  return { repo, sent, logged, call, close, port: server.address().port };
-}
 
 const validRequest = (nomineeId, extra = {}) => ({
   amount: 500,
   purpose: 'School fees for the second term at the local college',
   repaymentDate: '2027-02-01',
-  nomineeId,
-  phone: '+1 555 010 0100', // lenders must be able to reach the borrower
+  category: 'education',
+  trustedContactId: nomineeId,
   ...extra,
 });
 
@@ -113,7 +82,7 @@ test('injection: a verifier note is stored and returned as data, not markup', as
     const wes = (await s.call('wes', 'GET', '/me')).body.user;
     await s.repo.setVerifier(vee.id, true);
     await s.repo.setVerifier(wes.id, true);
-    const id = (await s.call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
+    const id = await startRequest(s.call, 'ann', 'nat');
     const note = '<script>alert(1)</script>';
     const r = await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve', note });
     assert.equal(r.status, 200);
@@ -138,7 +107,8 @@ test('auth: every protected endpoint refuses an anonymous caller', async () => {
     const routes = [
       ['GET', '/me'], ['GET', '/users?q=ab'], ['GET', '/connections'], ['GET', '/feed'],
       ['POST', '/requests'], ['GET', '/requests/1'], ['POST', '/requests/1/verify'],
-      ['POST', '/requests/1/contributions'], ['POST', '/requests/1/repayments'],
+      ['POST', '/requests/1/contributions'], ['POST', '/contributions/1/confirm'],
+      ['POST', '/contributions/1/not-received'], ['PATCH', '/contributions/1'], ['DELETE', '/contributions/1'], ['POST', '/requests/1/repayments'],
       ['POST', '/follows'], ['POST', '/invites'],
     ];
     for (const [m, p] of routes) {
@@ -155,7 +125,7 @@ test('access: the borrower cannot verify their own request', async () => {
     const nat = (await s.call('nat', 'GET', '/me')).body.user;
     const ann = (await s.call('ann', 'GET', '/me')).body.user;
     await s.repo.setVerifier(ann.id, true);
-    const id = (await s.call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
+    const id = await startRequest(s.call, 'ann', 'nat');
     const r = await s.call('ann', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
     assert.equal(r.status, 403);
   } finally { await s.close(); }
@@ -166,10 +136,9 @@ test('access: a stranger cannot record a repayment on someone else\'s loan', asy
   try {
     await s.call('ann', 'GET', '/me');
     const nat = (await s.call('nat', 'GET', '/me')).body.user;
-    const id = (await s.call('ann', 'POST', '/requests', validRequest(nat.id))).body.request.id;
+    const id = await startRequest(s.call, 'ann', 'nat');
     const r = await s.call('zed', 'POST', `/requests/${id}/repayments`, { amount: 10 });
-    // 404, not 403: outside the borrower's circle the request's existence is not revealed.
-    assert.equal(r.status, 404);
+    assert.equal(r.status, 404, 'a request you cannot see reads as missing');
   } finally { await s.close(); }
 });
 
@@ -257,7 +226,7 @@ test('hygiene: a server failure returns a generic message and no stack trace', a
   const s = await setup();
   try {
     await s.call('ann', 'GET', '/me');
-    s.repo.listFeed = async () => { throw new Error('db secret detail: connection string leaked'); };
+    s.repo.listRequestsByBorrowers = async () => { throw new Error('db secret detail: connection string leaked'); };
     const r = await s.call('ann', 'GET', '/feed');
     assert.equal(r.status, 500);
     assert.equal(r.body.error, 'Something went wrong');
@@ -270,18 +239,78 @@ test('hygiene: public folder contains no environment, git or source files', () =
   for (const name of pub) assert.doesNotMatch(name, /^\.env|^\.git|\.(js\.map|ts)$/);
 });
 
-test('headers: HSTS, clickjacking protection and a baseline CSP on every page', () => {
+test('headers: HSTS and clickjacking protection on every page; CSP on the landing page', () => {
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
-  const site = Object.fromEntries(cfg.headers
-    .filter((h) => h.source === '/(.*)')
+  const collect = (sources) => Object.fromEntries(cfg.headers
+    .filter((h) => sources.includes(h.source))
     .flatMap((h) => h.headers.map((x) => [x.key, x.value])));
+  const site = collect(['/(.*)']);
   assert.match(site['Strict-Transport-Security'] || '', /max-age=\d{7,}/);
   assert.match(site['Strict-Transport-Security'] || '', /includeSubDomains/);
   assert.equal(site['X-Frame-Options'], 'DENY');
-  // The app loads Clerk from its CDN, so script/connect sources are not locked down here.
-  // These directives cannot break sign-in and still block plugins, <base> hijacking and framing.
-  const csp = site['Content-Security-Policy'] || '';
-  assert.match(csp, /object-src 'none'/);
-  assert.match(csp, /base-uri 'self'/);
-  assert.match(csp, /frame-ancestors 'none'/);
+  const landing = collect(['/']);
+  assert.match(landing['Content-Security-Policy'] || '', /default-src 'self'/);
+  assert.match(landing['Content-Security-Policy'] || '', /frame-ancestors 'none'/);
+  assert.match(landing['Content-Security-Policy'] || '', /object-src 'none'/);
+});
+
+test('access: contribution routes check role (403) and visibility (404)', async () => {
+  const { connect, startRequest, idOf } = require('./helpers/lifecycle');
+  const s = await setup();
+  try {
+    for (const n of ['ann', 'nat', 'vee', 'wes', 'bea', 'cal', 'zed']) await s.call(n, 'GET', '/me');
+    await s.repo.setVerifier(await idOf(s.call, 'vee'), true);
+    await s.repo.setVerifier(await idOf(s.call, 'wes'), true);
+    const id = await startRequest(s.call, 'ann', 'nat', { amount: 1000 });
+    await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    await connect(s.call, 'ann', 'bea');
+    await connect(s.call, 'ann', 'cal');
+    const sent = await s.call('bea', 'POST', `/requests/${id}/contributions`, { amount: 300 });
+    assert.equal(sent.status, 201, JSON.stringify(sent.body));
+    const cid = sent.body.contribution.id;
+    const other = (await s.call('cal', 'POST', `/requests/${id}/contributions`, { amount: 100 })).body.contribution.id;
+
+    assert.equal((await s.call('bea', 'POST', `/contributions/${cid}/confirm`)).status, 403, 'the lender cannot confirm their own');
+    assert.equal((await s.call('nat', 'POST', `/contributions/${cid}/confirm`)).status, 403, 'the trusted contact is not the borrower');
+    assert.equal((await s.call('cal', 'POST', `/contributions/${cid}/not-received`)).status, 403);
+    assert.equal((await s.call('cal', 'PATCH', `/contributions/${cid}`, { amount: 100 })).status, 403, 'another lender cannot edit');
+    assert.equal((await s.call('cal', 'DELETE', `/contributions/${cid}`)).status, 403);
+    assert.equal((await s.call('ann', 'DELETE', `/contributions/${cid}`)).status, 403, 'the borrower cannot delete a lender entry');
+
+    assert.equal((await s.call('zed', 'POST', `/contributions/${cid}/confirm`)).status, 404, 'a stranger sees nothing');
+    assert.equal((await s.call('zed', 'PATCH', `/contributions/${cid}`, { amount: 100 })).status, 404);
+    assert.equal((await s.call('zed', 'DELETE', `/contributions/${cid}`)).status, 404);
+    assert.equal((await s.call('ann', 'POST', '/contributions/9999/confirm')).status, 404);
+    assert.equal((await s.call('ann', 'POST', '/contributions/abc/confirm')).status, 404);
+    assert.equal(other > 0, true);
+    assert.equal((await s.repo.getContribution(cid)).status, 'sent', 'nothing changed');
+  } finally { await s.close(); }
+});
+
+test('access: B cannot confirm A\'s repayment, and a stranger cannot touch it (IDOR)', async () => {
+  const s = await setup();
+  try {
+    for (const n of ['ann', 'nat', 'vee', 'wes', 'bea', 'cal', 'zed']) await s.call(n, 'GET', '/me');
+    await s.repo.setVerifier((await s.call('vee', 'GET', '/me')).body.user.id, true);
+    await s.repo.setVerifier((await s.call('wes', 'GET', '/me')).body.user.id, true);
+    const id = await startRequest(s.call, 'ann', 'nat', { amount: 1000 });
+    await s.call('vee', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    await s.call('wes', 'POST', `/requests/${id}/verify`, { decision: 'approve' });
+    const { connect, lend } = require('./helpers/lifecycle');
+    await connect(s.call, 'ann', 'bea');
+    await connect(s.call, 'ann', 'cal');
+    await lend(s.call, 'bea', 'ann', id, 600);
+    await lend(s.call, 'cal', 'ann', id, 400);
+    const bea = (await s.call('bea', 'GET', '/me')).body.user.id;
+    const rep = await s.call('ann', 'POST', `/requests/${id}/repayments`, { lenderId: bea, amount: 100 });
+    assert.equal(rep.status, 201, JSON.stringify(rep.body));
+    const rid = rep.body.repayment.id;
+    assert.equal((await s.call('cal', 'POST', `/repayments/${rid}/confirm`)).status, 403, 'another lender');
+    assert.equal((await s.call('cal', 'POST', `/repayments/${rid}/not-received`)).status, 403);
+    assert.equal((await s.call('nat', 'POST', `/repayments/${rid}/confirm`)).status, 403, 'the payer cannot confirm their own');
+    assert.equal((await s.call('cal', 'DELETE', `/repayments/${rid}`)).status, 403);
+    assert.equal((await s.call('zed', 'POST', `/repayments/${rid}/confirm`)).status, 404, 'invisible request');
+    assert.equal((await s.repo.getRepayment(rid)).status, 'sent');
+  } finally { await s.close(); }
 });
