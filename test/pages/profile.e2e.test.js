@@ -1,5 +1,6 @@
 'use strict';
 // Browser test of the profile and statement pages with a MOCKED Clerk and MOCKED API.
+const { routeClerk } = require('../helpers/clerk-stub');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -49,7 +50,7 @@ async function open(opts = {}, hash = '#/profile') {
   const user = { id: 9, name: 'Asha Rao', email: 'asha@example.com', upiId: 'asha@okbank', avatarUrl: null, isAdmin: false, emailReminders: true, emailThanks: false,
     welcomedAt: '2026-11-20T12:00:00.000Z', termsAcceptedAt: '2026-11-20T12:00:00.000Z', ...(opts.user || {}) };
   state.me = user;
-  await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
   await page.route('**/api/me', (route) => {
     if (route.request().method() === 'PATCH') {

@@ -1,6 +1,7 @@
 'use strict';
 // Installable app + offline shell. Real HTTP server with canned API responses (page.route cannot see
 // requests that a service worker handles), mocked Clerk script.
+const { routeClerk } = require('../helpers/clerk-stub');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -72,7 +73,9 @@ test('manifest has the install fields and both icons exist', { skip }, async () 
 test('/app/ links the manifest; the landing page does not', { skip }, async () => {
   const app = fs.readFileSync(path.join(PUBLIC, 'app', 'index.html'), 'utf8');
   assert.match(app, /<link rel="manifest" href="\/manifest\.webmanifest"/);
-  assert.match(app, /serviceWorker/);
+  // The service-worker registration lives in its own file, so the page needs no inline script under the CSP.
+  assert.match(app, /<script src="\/app\/sw-register\.js"/);
+  assert.match(fs.readFileSync(path.join(PUBLIC, 'app', 'sw-register.js'), 'utf8'), /serviceWorker/);
   const landing = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
   assert.doesNotMatch(landing, /manifest|serviceWorker/);
 });
@@ -81,7 +84,7 @@ test('offline: /app/ still renders from the shell cache and shows the offline no
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
   const page = await ctx.newPage();
   page.setDefaultTimeout(5000);
-  await ctx.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(ctx, CLERK_STUB);
   try {
     await page.goto(`${base}/app/#/home`, { waitUntil: 'load' });
     await page.evaluate(() => navigator.serviceWorker.ready);
@@ -102,7 +105,7 @@ test('offline: /app/ still renders from the shell cache and shows the offline no
 test('service worker saved nothing for mutations or admin paths', { skip }, async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await ctx.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(ctx, CLERK_STUB);
   try {
     await page.goto(`${base}/app/#/home`, { waitUntil: 'load' });
     await page.evaluate(() => navigator.serviceWorker.ready);

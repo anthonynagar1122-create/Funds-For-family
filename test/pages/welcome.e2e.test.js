@@ -1,5 +1,6 @@
 'use strict';
 // Browser test of the welcome flow with a MOCKED Clerk and MOCKED API.
+const { routeClerk } = require('../helpers/clerk-stub');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -40,7 +41,7 @@ async function open({ inviterName = null, welcomedAt = null, termsAcceptedAt = n
   page.setDefaultTimeout(8000);
   const calls = [];
   const user = { id: 9, name, email: 'a@example.com', isAdmin: false, upiId: null, welcomedAt, termsAcceptedAt, inviterName };
-  await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
   await page.route('**/api/me', (route) => {
     const req = route.request();

@@ -1,5 +1,6 @@
 'use strict';
 // Browser test of the app shell (router + responsive navigation) with a MOCKED Clerk and MOCKED API.
+const { routeClerk } = require('../helpers/clerk-stub');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -38,7 +39,7 @@ async function open(hash, { width = 1280, isAdmin = false } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height: 800 }, reducedMotion: 'reduce' });
   const page = await ctx.newPage();
   page.setDefaultTimeout(3000);
-  await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
   await page.route('**/api/me', (route) => json(route, 200, { user: { id: 9, name: 'Asha Rao', email: 'a@example.com', isAdmin } }));
   await page.route('**/api/feed', (route) => json(route, 200, { requests: [] }));
@@ -130,7 +131,7 @@ test('the restricted workspace is absent for members and role-labelled for admin
   const verifierCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
   try {
     const page = await verifierCtx.newPage();
-    await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+    await routeClerk(page, CLERK_STUB);
     await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
     await page.route('**/api/me', (route) => json(route, 200, { user: { id: 11, name: 'Verifier', email: 'v@example.com', isAdmin: false, isVerifier: true } }));
     await page.route('**/api/home', (route) => json(route, 200, { needsYou: [], myRequests: [], myLending: [] }));

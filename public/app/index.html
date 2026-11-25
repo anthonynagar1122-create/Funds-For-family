@@ -10,7 +10,7 @@
   <meta name="theme-color" content="#1f6f5c">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/styles.css">
-  <script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>
+  <script async crossorigin="anonymous" integrity="sha384-IIRGG9p4at4nJ414rGwHhn3XcwfhYzv07lMjw+vAMQxcr1jaIhH2FCpAyo8J5OAT" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.128.3/dist/clerk.browser.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -88,10 +88,6 @@
   <script src="/app/pages/circle.js"></script>
   <script src="/app/pages/profile.js"></script>
   <script src="/app.js" defer></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js', { scope: '/app/' }).catch(() => {}));
-    }
-  </script>
+  <script src="/app/sw-register.js" defer></script>
 </body>
 </html>

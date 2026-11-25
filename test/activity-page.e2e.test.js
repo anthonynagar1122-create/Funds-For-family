@@ -1,6 +1,7 @@
 'use strict';
 // Loop A browser test: "My activity" page, with MOCKED Clerk and MOCKED /api/activity.
 // Proves the rendering against exit criteria 1–3 of .loop/activity-ledger/spec.md.
+const { routeClerk } = require('./helpers/clerk-stub');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -40,7 +41,7 @@ async function openActivity(activity) {
   try {
     const page = await ctx.newPage();
     page.setDefaultTimeout(3000);
-    await page.route('https://cdn.jsdelivr.net/**', (r) => r.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+    await routeClerk(page, CLERK_STUB);
     await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
     await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
     await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify(activity) }));
@@ -54,7 +55,7 @@ test('the activity page has four groups: borrowing, lending, repayments, roles',
   const ctx = await browser.newContext({ reducedMotion: 'reduce' });
   const page = await ctx.newPage();
   page.setDefaultTimeout(3000);
-  await page.route('https://cdn.jsdelivr.net/**', (r) => r.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
   await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify(EMPTY) }));
@@ -70,7 +71,7 @@ test('an empty ledger shows an empty state in every group, not an error', { skip
   const ctx = await browser.newContext({ reducedMotion: 'reduce' });
   const page = await ctx.newPage();
   page.setDefaultTimeout(3000);
-  await page.route('https://cdn.jsdelivr.net/**', (r) => r.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
   await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify(EMPTY) }));
@@ -86,7 +87,7 @@ test('each activity row links to its request detail page', { skip }, async () =>
   const ctx = await browser.newContext({ reducedMotion: 'reduce' });
   const page = await ctx.newPage();
   page.setDefaultTimeout(3000);
-  await page.route('https://cdn.jsdelivr.net/**', (r) => r.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
   await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...EMPTY, lending: [ROW] }) }));
@@ -101,7 +102,7 @@ test('the activity page never shows an email address', { skip }, async () => {
   const ctx = await browser.newContext({ reducedMotion: 'reduce' });
   const page = await ctx.newPage();
   page.setDefaultTimeout(3000);
-  await page.route('https://cdn.jsdelivr.net/**', (r) => r.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 9, name: 'Member', email: 'm@example.com', isVerifier: false } }) }));
   await page.route('**/api/activity', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...EMPTY, lending: [ROW] }) }));

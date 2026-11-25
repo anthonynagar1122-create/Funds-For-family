@@ -1,5 +1,6 @@
 'use strict';
 // Browser test of invite handling and the request form, with a MOCKED Clerk and MOCKED API.
+const { routeClerk } = require('./helpers/clerk-stub');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -38,7 +39,7 @@ async function open(hash, { me = (route) => json(route, 200, { user: { id: 9, na
   const page = await ctx.newPage();
   page.setDefaultTimeout(3000);
   const meHeaders = [];
-  await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
   await page.route('**/api/me', (route) => { meHeaders.push(route.request().headers()['x-invite-token']); return me(route); });
   await page.route('**/api/feed', (route) => json(route, 200, { requests: [] }));

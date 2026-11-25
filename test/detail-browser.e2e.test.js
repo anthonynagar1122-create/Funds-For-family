@@ -2,6 +2,7 @@
 // Browser test of the request detail page with a MOCKED Clerk and MOCKED API.
 // This proves the page renders the right forms for each role in a real browser.
 // It does NOT prove real sign-in or the real backend: those are verified separately (see the pilot ledger).
+const { routeClerk } = require('./helpers/clerk-stub');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -40,7 +41,7 @@ async function openDetail(viewer, request) {
   try {
     const page = await ctx.newPage();
     page.setDefaultTimeout(3000);
-    await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+    await routeClerk(page, CLERK_STUB);
     await page.route('**/api/config', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
     await page.route('**/api/me', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: viewer.id, name: 'Viewer', email: 'v@example.com', isVerifier: viewer.isVerifier } }) }));
     await page.route('**/api/users/**', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 1, name: 'Ann', isVerifier: false } }) }));
@@ -101,7 +102,7 @@ async function openPage(viewer, request, { posts = [] } = {}) {
   const page = await ctx.newPage();
   page.setDefaultTimeout(3000);
   const calls = [];
-  await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ clerkPublishableKey: 'pk_test_mock' }) }));
   await page.route('**/api/me', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: viewer.id, name: 'Viewer', email: 'v@example.com', isVerifier: !!viewer.isVerifier } }) }));
   await page.route('**/api/users/**', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: { id: 1, name: 'Ann', isVerifier: false } }) }));

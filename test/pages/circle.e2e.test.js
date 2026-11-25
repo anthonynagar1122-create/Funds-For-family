@@ -1,5 +1,6 @@
 'use strict';
 // Browser test of the circle page with a MOCKED Clerk and MOCKED API.
+const { routeClerk } = require('../helpers/clerk-stub');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -44,7 +45,7 @@ async function open(opts = {}) {
   const page = await ctx.newPage();
   page.setDefaultTimeout(8000);
   const user = { id: 9, name: 'Asha Rao', email: 'asha-secret@example.com', upiId: 'asha-secret@okbank', isAdmin: false, welcomedAt: '2026-11-20T12:00:00.000Z', termsAcceptedAt: '2026-11-20T12:00:00.000Z' };
-  await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+  await routeClerk(page, CLERK_STUB);
   await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
   await page.route('**/api/me', (route) => json(route, 200, { user }));
   await page.route('**/api/feed', (route) => json(route, 200, { requests: [] }));
