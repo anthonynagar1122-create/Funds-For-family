@@ -46,7 +46,7 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
     async searchUsers(q, excludeId) {
       const term = q.replace(/[%_,()]/g, '');
       return many(check(await db.from('users').select()
-        .or(`name.ilike.%${term}%,email.ilike.%${term}%`)
+        .ilike('name', `%${term}%`)
         .neq('id', excludeId).limit(20)));
     },
     async addFollow(followerId, followeeId) {
@@ -180,6 +180,12 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
     },
     async listRepayments(requestId) {
       return many(check(await db.from('repayments').select().eq('request_id', requestId)));
+    },
+    async recordEvent({ actorId, action, subjectType = null, subjectId = null, detail = null, ip = null }) {
+      check(await db.from('audit_events').insert({
+        actor_id: actorId, action, subject_type: subjectType,
+        subject_id: subjectId == null ? null : String(subjectId), detail, ip,
+      }));
     },
     async addRepayment({ requestId, payerId, amountCents }) {
       check(await db.from('repayments').insert({ request_id: requestId, payer_id: payerId, amount_cents: amountCents }));

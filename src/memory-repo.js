@@ -12,6 +12,7 @@ function createMemoryRepo() {
   const verifications = [];         // {requestId, verifierId, decision, note}
   const contributions = [];         // {requestId, contributorId, amountCents}
   const repayments = [];            // {requestId, payerId, amountCents}
+  const auditEvents = [];           // {actorId, action, subjectType, subjectId, detail, ip, createdAt}
 
   return {
     async upsertUser({ clerkId, name, email }) {
@@ -28,7 +29,7 @@ function createMemoryRepo() {
     async setPhone(id, phone) { users.get(id).phone = phone; return users.get(id); },
     async searchUsers(q, excludeId) {
       const s = q.toLowerCase();
-      return [...users.values()].filter((u) => u.id !== excludeId && (u.name.toLowerCase().includes(s) || u.email.toLowerCase().includes(s)));
+      return [...users.values()].filter((u) => u.id !== excludeId && u.name.toLowerCase().includes(s));
     },
     async addFollow(followerId, followeeId) {
       if (!follows.some((f) => f.followerId === followerId && f.followeeId === followeeId)) follows.push({ followerId, followeeId });
@@ -102,6 +103,7 @@ function createMemoryRepo() {
     },
     async listRepayments(requestId) { return repayments.filter((p) => p.requestId === requestId); },
     async addRepayment(row) { repayments.push(row); },
+    async recordEvent(row) { auditEvents.push({ createdAt: new Date().toISOString(), ...row }); },
     async addInvite(row) { invites.push({ email: null, acceptedAt: null, ...row }); },
     async getInviteByToken(token) { return invites.find((i) => i.token === token) ?? null; },
     async markInviteAccepted(token, at) { const i = invites.find((x) => x.token === token); if (i && !i.acceptedAt) i.acceptedAt = at; },
@@ -110,7 +112,7 @@ function createMemoryRepo() {
       const ids = new Set(userIds);
       return follows.filter((f) => ids.has(f.followerId) || ids.has(f.followeeId)).map((f) => ({ ...f }));
     },
-    _state: { users, follows, invites, requests, verifications, contributions, repayments },
+    _state: { users, follows, invites, requests, verifications, contributions, repayments, auditEvents },
   };
 }
 
