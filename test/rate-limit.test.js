@@ -1,50 +1,53 @@
 'use strict';
-// Per-member rate limits on the two abuse-prone routes: creating invites (email) and member search.
-// The limiter is in memory per serverless instance, so these tests cover one instance's behaviour.
+// Sign-in rate limit: failed attempts (no sign-in, or an invite-only refusal) are limited per address.
+// Invites and member search are not limited. The limiter is in memory per serverless instance.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { setup } = require('./helpers/harness');
-const { createRateLimiter } = require('../src/rate-limit');
+const { createFailureLimiter } = require('../src/rate-limit');
 
-test('invites are rate limited per member', async () => {
-  const s = await setup({ rateLimits: { invites: { max: 2, windowMs: 60000 } } });
+test('repeated failed sign-ins are blocked with 429 and Retry-After', async () => {
+  const s = await setup({ rateLimits: { auth: { max: 3, windowMs: 60000 } } });
   try {
-    await s.call('ann', 'GET', '/me');
-    await s.call('bo', 'GET', '/me');
-    const invite = (who, n) => s.call(who, 'POST', '/invites', { email: `guest${n}@example.com` });
-    assert.equal((await invite('ann', 1)).status, 201);
-    assert.equal((await invite('ann', 2)).status, 201);
-    const blocked = await invite('ann', 3);
+    for (let i = 0; i < 3; i += 1) assert.equal((await s.call(null, 'GET', '/me')).status, 401);
+    const blocked = await s.call(null, 'GET', '/me');
     assert.equal(blocked.status, 429);
     assert.ok(Number(blocked.headers.get('retry-after')) >= 1);
-    // A different member has their own allowance.
-    assert.equal((await invite('bo', 4)).status, 201);
   } finally { await s.close(); }
 });
 
-test('member search is rate limited per member', async () => {
-  const s = await setup({ rateLimits: { search: { max: 2, windowMs: 60000 } } });
+test('successful sign-ins never count toward the limit', async () => {
+  const s = await setup({ rateLimits: { auth: { max: 2, windowMs: 60000 } } });
   try {
-    await s.call('ann', 'GET', '/me');
-    assert.equal((await s.call('ann', 'GET', '/users?q=an')).status, 200);
-    assert.equal((await s.call('ann', 'GET', '/users?q=an')).status, 200);
-    const blocked = await s.call('ann', 'GET', '/users?q=an');
-    assert.equal(blocked.status, 429);
-    assert.equal((await s.call('bo', 'GET', '/users?q=an')).status, 200, 'another member is not affected');
+    for (let i = 0; i < 5; i += 1) assert.equal((await s.call('ann', 'GET', '/me')).status, 200);
   } finally { await s.close(); }
 });
 
-test('the limit resets when the window ends', () => {
+test('invites and member search are not rate limited', async () => {
+  const s = await setup({ rateLimits: { auth: { max: 1000, windowMs: 60000 } } });
+  try {
+    // Ten invites from five members, two each: stays under the monthly invite allowance (a separate product rule),
+    // so the only thing this checks is that the sign-in limit does not apply to invites.
+    let n = 0;
+    for (const who of ['ann', 'bo', 'cy', 'di', 'ed']) {
+      await s.call(who, 'GET', '/me');
+      for (let i = 0; i < 2; i += 1) {
+        n += 1;
+        assert.equal((await s.call(who, 'POST', '/invites', { email: `guest${n}@example.com` })).status, 201, `invite ${n}`);
+      }
+    }
+    await s.call('ann', 'GET', '/me');
+    for (let i = 0; i < 70; i += 1) assert.equal((await s.call('ann', 'GET', '/users?q=an')).status, 200, `search ${i}`);
+  } finally { await s.close(); }
+});
+
+test('the failure limiter starts a new window when the old one ends', () => {
   let t = 0;
-  const limit = createRateLimiter({ windowMs: 1000, max: 1, key: () => 'k', now: () => t });
-  const run = () => {
-    let status = 200;
-    const res = { set() {}, status(c) { status = c; return this; }, json() { return this; } };
-    limit({}, res, () => {});
-    return status;
-  };
-  assert.equal(run(), 200);
-  assert.equal(run(), 429);
+  const limiter = createFailureLimiter({ windowMs: 1000, max: 1, key: () => 'k', now: () => t });
+  const req = {};
+  assert.equal(limiter.retryAfterSeconds(req), 0);
+  limiter.failed(req);
+  assert.ok(limiter.retryAfterSeconds(req) >= 1, 'blocked after one failure at the limit');
   t = 1000;
-  assert.equal(run(), 200, 'a new window starts after the reset time');
+  assert.equal(limiter.retryAfterSeconds(req), 0, 'a new window starts after the reset time');
 });

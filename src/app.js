@@ -3,7 +3,7 @@ const express = require('express');
 const { randomUUID } = require('node:crypto');
 const rules = require('./rules');
 const invites = require('./invites');
-const { createRateLimiter } = require('./rate-limit');
+const { createFailureLimiter } = require('./rate-limit');
 const { formatInr, parseRupees } = require('../public/app/money');
 
 const UPI_PATTERN = /^[A-Za-z0-9._-]{2,256}@[A-Za-z]{2,64}$/;
@@ -87,8 +87,13 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   // Resolve the signed-in user. Joining is invite only: a new person is created only when admissionFor allows it.
   async function requireUser(req, res, next) {
     try {
+      const wait = authLimit.retryAfterSeconds(req);
+      if (wait) {
+        res.set('Retry-After', String(wait));
+        return res.status(429).json({ error: 'Too many sign-in attempts. Try again later.' });
+      }
       const identity = await identify(req);
-      if (!identity?.clerkId) return fail(res, 401, 'Sign in required');
+      if (!identity?.clerkId) { authLimit.failed(req); return fail(res, 401, 'Sign in required'); }
       const verifiedEmail = String(identity.email ?? '').trim().toLowerCase();
       const isOwnerEmail = Boolean(ownerEmail && verifiedEmail && verifiedEmail === ownerEmail.trim().toLowerCase());
       let user = await repo.findUserByClerkId(identity.clerkId);
@@ -97,7 +102,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       }
       if (!user) {
         const admission = await admissionFor(req, identity);
-        if (!admission) return res.status(403).json(INVITE_ONLY);
+        if (!admission) { authLimit.failed(req); return res.status(403).json(INVITE_ONLY); }
         // The users table needs an email, and only a verified one is trusted.
         if (!verifiedEmail) {
           return res.status(403).json({ error: 'Verify your email address, then try again.', code: 'email_unverified' });
@@ -140,13 +145,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
 
   const api = express.Router();
 
-  // Per-member limits, applied after sign-in so each limit counts one member's requests. Invites send email, so
-  // they get the tightest bound. In-memory per serverless instance: a burst brake, not a global quota.
-  const limitInvites = createRateLimiter({
-    windowMs: 60 * 60 * 1000, max: 20, key: (req) => `invite:${req.user.id}`, ...rateLimits.invites,
-  });
-  const limitSearch = createRateLimiter({
-    windowMs: 60 * 1000, max: 60, key: (req) => `search:${req.user.id}`, ...rateLimits.search,
+  // Sign-in abuse. Each failed attempt (no sign-in, or an invite-only refusal) counts against the caller's address;
+  // after 30 failures in 15 minutes that address gets 429 until the window ends. Successful sign-ins never count.
+  // The address is the one the platform sets (x-real-ip), not anything the caller sends in the body.
+  const clientIp = (req) => String(req.get('x-real-ip') || req.socket?.remoteAddress || 'unknown').trim();
+  const authLimit = createFailureLimiter({
+    windowMs: 15 * 60 * 1000, max: 30, key: (req) => `auth:${clientIp(req)}`, ...rateLimits.auth,
   });
 
   // Express 4 does not catch promise rejections from async handlers. Route them to the error handler,
@@ -372,7 +376,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   // Empty query returns your mutual connections (used for the trusted-contact picker). Two or more characters searches all members.
-  api.get('/users', limitSearch, async (req, res) => {
+  api.get('/users', async (req, res) => {
     const q = String(req.query.q ?? '').trim();
     if (q.length === 0) {
       const conn = await repo.connections(req.user.id);
@@ -421,7 +425,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ following: await load(following), followers: await load(followers), mutual: await load(mutualIds) });
   });
 
-  api.post('/invites', limitInvites, async (req, res) => {
+  api.post('/invites', async (req, res) => {
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email', 'email');
     if (email === String(req.user.email ?? '').toLowerCase() || (await repo.findUserByEmail(email))) {
