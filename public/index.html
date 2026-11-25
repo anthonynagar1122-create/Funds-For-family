@@ -190,7 +190,13 @@
         <a class="kpi" href="#people"><p class="kpi-label">You follow</p><p class="kpi-value is-brand" id="profile-following">–</p><p class="kpi-sub">They can see and fund your requests</p></a>
         <a class="kpi" href="#people"><p class="kpi-label">Follow you</p><p class="kpi-value" id="profile-followers">–</p><p class="kpi-sub">You can see their requests</p></a>
       </div>
-      <p class="muted">Your name and email come from your sign-in account.</p>
+      <p class="muted">Your name and email come from your sign-in account. <a href="/privacy.html">Privacy policy</a></p>
+      <section class="profile-danger" aria-labelledby="delete-title">
+        <h2 id="delete-title">Delete your account</h2>
+        <p class="muted">Removes your name, email, phone and connections, and signs you out. Requests and contributions you made stay on record as "Deleted member", so other members' money records stay accurate. You cannot delete while you have an open or funded request.</p>
+        <button class="btn btn-ghost" id="delete-account" type="button">Delete my account</button>
+        <p class="error" id="e-delete" role="alert"></p>
+      </section>
     </section>
 
     <!-- Another member: how you are connected, how to reach them, their open requests. -->

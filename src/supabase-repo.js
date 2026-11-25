@@ -153,6 +153,31 @@ function createSupabaseRepo({ url, serviceRoleKey }) {
     async addContribution({ requestId, contributorId, amountCents }) {
       check(await db.from('contributions').insert({ request_id: requestId, contributor_id: contributorId, amount_cents: amountCents }));
     },
+    // Locked, idempotent write (see supabase/migrations/0004_atomic_contributions.sql).
+    // Resolves to { ok, reason?, remainingCents?, duplicate?, contributionId?, funded? }.
+    async addContributionAtomic({ requestId, contributorId, amountCents, idempotencyKey = null }) {
+      const { data, error } = await db.rpc('add_contribution', {
+        p_request_id: requestId, p_contributor_id: contributorId, p_amount_cents: amountCents, p_idempotency_key: idempotencyKey,
+      });
+      if (error) throw new Error(`Supabase: ${error.message}`);
+      return {
+        ok: data.ok,
+        reason: data.reason,
+        remainingCents: data.remaining_cents,
+        duplicate: data.duplicate,
+        contributionId: data.contribution_id,
+        funded: data.funded,
+      };
+    },
+    // Remove personal data but keep the rows that the money trail depends on (requests, contributions, repayments).
+    async anonymizeUser(id) {
+      const tomb = `deleted-${id}`;
+      check(await db.from('users').update({
+        clerk_id: tomb, name: 'Deleted member', email: `${tomb}@deleted.invalid`, phone: null, is_verifier: false,
+      }).eq('id', id));
+      check(await db.from('follows').delete().or(`follower_id.eq.${id},followee_id.eq.${id}`));
+      check(await db.from('invites').delete().eq('inviter_id', id));
+    },
     async listRepayments(requestId) {
       return many(check(await db.from('repayments').select().eq('request_id', requestId)));
     },

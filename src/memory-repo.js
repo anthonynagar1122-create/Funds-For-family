@@ -70,6 +70,36 @@ function createMemoryRepo() {
     },
     async listContributions(requestId) { return contributions.filter((c) => c.requestId === requestId); },
     async addContribution(row) { contributions.push(row); },
+    // Same contract as the Postgres function: single-threaded here, so the check and insert cannot interleave.
+    async addContributionAtomic({ requestId, contributorId, amountCents, idempotencyKey = null, createdAt }) {
+      const r = requests.get(requestId);
+      if (!r) return { ok: false, reason: 'not_found' };
+      if (idempotencyKey) {
+        const prior = contributions.find((c) => c.contributorId === contributorId && c.idempotencyKey === idempotencyKey);
+        if (prior) return { ok: true, duplicate: true, contributionId: prior.id };
+      }
+      if (r.borrowerId === contributorId) return { ok: false, reason: 'own_request' };
+      if (r.status !== 'open') return { ok: false, reason: 'not_open' };
+      const raised = contributions.filter((c) => c.requestId === requestId).reduce((s, c) => s + c.amountCents, 0);
+      if (amountCents > r.principalCents - raised) {
+        return { ok: false, reason: 'over_cap', remainingCents: Math.max(0, r.principalCents - raised) };
+      }
+      const id = nextId();
+      contributions.push({ id, requestId, contributorId, amountCents, idempotencyKey, createdAt });
+      const funded = raised + amountCents >= r.principalCents;
+      if (funded) Object.assign(r, { status: 'funded', fundedAt: createdAt });
+      return { ok: true, duplicate: false, contributionId: id, funded };
+    },
+    async anonymizeUser(id) {
+      const u = users.get(id);
+      if (!u) return;
+      usersByClerk.delete(u.clerkId);
+      Object.assign(u, { clerkId: `deleted-${id}`, name: 'Deleted member', email: `deleted-${id}@deleted.invalid`, phone: null, isVerifier: false });
+      for (let i = follows.length - 1; i >= 0; i--) {
+        if (follows[i].followerId === id || follows[i].followeeId === id) follows.splice(i, 1);
+      }
+      for (let i = invites.length - 1; i >= 0; i--) if (invites[i].inviterId === id) invites.splice(i, 1);
+    },
     async listRepayments(requestId) { return repayments.filter((p) => p.requestId === requestId); },
     async addRepayment(row) { repayments.push(row); },
     async addInvite(row) { invites.push({ email: null, acceptedAt: null, ...row }); },

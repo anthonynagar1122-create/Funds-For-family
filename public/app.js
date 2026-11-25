@@ -6,6 +6,7 @@
   const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-detail', 'view-invite', 'view-people', 'view-activity', 'view-profile', 'view-member'];
   let me = null;
   let usersById = new Map();
+  let clerkInstance = null; // set once Clerk loads; used for sign-out after deleting an account
 
   // Updates is the dashboard; Request, Contribute, Invite and Follow are the four actions.
   const navFor = { 'view-home': 'nav-home', 'view-activity': 'nav-home', 'view-detail': 'nav-home', 'view-new': 'nav-new', 'view-feed': 'nav-feed', 'view-invite': 'nav-invite', 'view-people': 'nav-people', 'view-member': 'nav-people' };
@@ -31,8 +32,8 @@
   async function api(path, opts = {}) {
     const res = await fetch(`/api${path}`, {
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
       ...opts,
+      headers: { 'content-type': 'application/json', ...opts.headers },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
@@ -230,12 +231,34 @@
     if (!(amount > 0)) { err.textContent = 'Enter an amount.'; input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
+    // One key per amount, kept across retries, so a repeated submit cannot record the contribution twice.
+    if (form.dataset.idemAmount !== String(amount) || !form.dataset.idem) {
+      form.dataset.idem = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+      form.dataset.idemAmount = String(amount);
+    }
     try {
-      await api(`/requests/${form.dataset.contribute}/contributions`, { method: 'POST', body: { amount, confirmedContact: true } });
+      await api(`/requests/${form.dataset.contribute}/contributions`, {
+        method: 'POST', headers: { 'Idempotency-Key': form.dataset.idem }, body: { amount, confirmedContact: true },
+      });
       toast(`Contributed $${amount.toFixed(2)}. Thank you.`);
       renderFeed();
     } catch (e) {
       err.textContent = e.message; input.setAttribute('aria-invalid', 'true'); button.disabled = false; input.focus();
+    }
+  });
+
+  // ---- Delete account ----
+  $('#delete-account').addEventListener('click', async () => {
+    const err = $('#e-delete');
+    err.textContent = '';
+    if (!confirm('Delete your account? Your name, email and phone are removed and you are signed out. This cannot be undone.')) return;
+    try {
+      await api('/me', { method: 'DELETE' });
+      me = null;
+      if (clerkInstance) await clerkInstance.signOut();
+      location.assign('/');
+    } catch (e) {
+      err.textContent = e.message;
     }
   });
 
@@ -591,6 +614,7 @@
     const cfg = await fetch('/api/config').then((r) => r.json());
     if (!cfg.clerkPublishableKey) { $('#auth-slot').textContent = 'Sign-in is not configured.'; show('signed-out'); return; }
     const clerk = new window.Clerk(cfg.clerkPublishableKey);
+    clerkInstance = clerk;
     await clerk.load();
     const mountAuth = () => {
       if (clerk.user) {
