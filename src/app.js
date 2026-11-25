@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const rules = require('./rules');
+const { createRateLimiter } = require('./rate-limit');
 
 /**
  * Build the Express API.
@@ -14,10 +15,19 @@ const rules = require('./rules');
  *   requiredApprovals number, default rules.DEFAULT_REQUIRED_APPROVALS
  */
 function createApp({ repo, identify, mailer = async () => {}, now = () => new Date(), appUrl = 'http://localhost:3000',
-  annualRate = rules.DEFAULT_ANNUAL_RATE, requiredApprovals = rules.DEFAULT_REQUIRED_APPROVALS, logger = console }) {
+  annualRate = rules.DEFAULT_ANNUAL_RATE, requiredApprovals = rules.DEFAULT_REQUIRED_APPROVALS, logger = console,
+  deleteIdentity = async () => {}, rateLimits = {} }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '32kb' }));
+
+  // Per-member limits. Invites send email, so they get the tightest bound.
+  const limitInvites = createRateLimiter({
+    windowMs: 60 * 60 * 1000, max: 20, key: (req) => `invite:${req.user.id}`, ...rateLimits.invites,
+  });
+  const limitSearch = createRateLimiter({
+    windowMs: 60 * 1000, max: 60, key: (req) => `search:${req.user.id}`, ...rateLimits.search,
+  });
 
   const fail = (res, status, error, field) => res.status(status).json(field ? { error, field } : { error });
 
@@ -62,7 +72,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   // Empty query returns your connections (used for the nominee picker). Two or more characters searches all members.
-  api.get('/users', async (req, res) => {
+  api.get('/users', limitSearch, async (req, res) => {
     const q = String(req.query.q ?? '').trim();
     if (q.length === 0) {
       const { following, followers } = await repo.connections(req.user.id);
@@ -111,7 +121,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   // Create an invite. With an email it is also sent by email; without one it is a link to share (WhatsApp, SMS…).
-  api.post('/invites', async (req, res) => {
+  api.post('/invites', limitInvites, async (req, res) => {
     const raw = req.body?.email;
     const email = raw === undefined || raw === null || raw === '' ? null : String(raw).trim().toLowerCase();
     if (email !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email', 'email');
@@ -305,6 +315,8 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ request: await detail(await repo.getRequest(r.id)) });
   });
 
+  // Records the contribution in one locked step (repo.addContributionAtomic), so the cap holds under concurrency.
+  // An optional Idempotency-Key header makes a retry return the original contribution instead of a second one.
   api.post('/requests/:id/contributions', async (req, res) => {
     const r = await loadVisibleRequest(req, res);
     if (!r) return;
@@ -314,19 +326,42 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (req.body?.confirmedContact !== true && r.borrowerId !== req.user.id) {
       return fail(res, 400, 'Call or message the borrower first, then confirm you have spoken', 'confirmedContact');
     }
-    const raisedCents = (await repo.listContributions(r.id)).reduce((s, c) => s + c.amountCents, 0);
-    const check = rules.checkContribution({ amountCents, principalCents: r.principalCents, raisedCents, contributorId: req.user.id, borrowerId: r.borrowerId, status: r.status });
-    if (!check.ok) return fail(res, 409, check.reason);
-    await repo.addContribution({ requestId: r.id, contributorId: req.user.id, amountCents, createdAt: now().toISOString() });
-    if (raisedCents + amountCents >= r.principalCents) {
-      await repo.setRequestStatus(r.id, { status: 'funded', fundedAt: now().toISOString() });
+    const idempotencyKey = parseIdempotencyKey(req.get('Idempotency-Key'));
+    if (idempotencyKey === false) return fail(res, 400, 'Idempotency-Key must be 8 to 100 letters, digits, - or _');
+
+    const result = await repo.addContributionAtomic({
+      requestId: r.id, contributorId: req.user.id, amountCents, idempotencyKey, createdAt: now().toISOString(),
+    });
+    if (!result.ok) {
+      if (result.reason === 'not_found') return fail(res, 404, 'Request not found');
+      if (result.reason === 'own_request') return fail(res, 409, 'You cannot fund your own request');
+      if (result.reason === 'not_open') return fail(res, 409, 'This request is not accepting contributions');
+      return fail(res, 409, `Only ${result.remainingCents} cents remain to be funded`);
     }
+    if (result.duplicate) return res.json({ request: await detail(await repo.getRequest(r.id)) });
+
     await safeMail({
       to: req.user.email,
       subject: 'Thank you for your contribution',
       html: `<p>You contributed ${formatCents(amountCents)} to request #${r.id}. Thank you.</p>`,
     });
     res.status(201).json({ request: await detail(await repo.getRequest(r.id)) });
+  });
+
+  // Delete my account. Personal data is removed and the sign-in identity is deleted. Requests, contributions and
+  // repayments stay, with the member anonymised, so the money trail for other members remains correct.
+  // Blocked while the member is borrower or nominee on an open or funded request, because those still have obligations.
+  api.delete('/me', async (req, res) => {
+    const me = req.user.id;
+    const requests = await repo.listRequestsForMember(me);
+    const active = requests.some((r) => (r.borrowerId === me || r.nomineeId === me) && (r.status === 'open' || r.status === 'funded'));
+    if (active) {
+      return fail(res, 409, 'You still have an open or funded request. It must be repaid before you can delete your account.');
+    }
+    // Identity first: if this fails, nothing is changed and the member can retry.
+    await deleteIdentity(req.user.clerkId);
+    await repo.anonymizeUser(me);
+    res.json({ ok: true });
   });
 
   api.post('/requests/:id/repayments', async (req, res) => {
@@ -407,6 +442,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   }
 
   return app;
+}
+
+// undefined -> null (no key sent); a valid key -> the key; anything malformed -> false.
+function parseIdempotencyKey(raw) {
+  if (raw === undefined || raw === '') return null;
+  return /^[A-Za-z0-9_-]{8,100}$/.test(raw) ? raw : false;
 }
 
 function toCents(raw) {

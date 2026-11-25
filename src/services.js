@@ -27,9 +27,13 @@ function buildProductionApp(env = process.env) {
     if (error) throw new Error(error.message);
   };
 
+  // Removes the sign-in identity, so a deleted member cannot sign back in to the old record.
+  const deleteIdentity = async (clerkId) => { await clerkClient.users.deleteUser(clerkId); };
+
   const api = createApp({
     repo,
     identify,
+    deleteIdentity,
     mailer,
     appUrl: env.APP_URL || 'http://localhost:3000',
     annualRate: env.INTEREST_RATE_ANNUAL ? Number(env.INTEREST_RATE_ANNUAL) : undefined,
