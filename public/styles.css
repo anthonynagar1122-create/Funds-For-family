@@ -98,6 +98,10 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
 .tab-new { color: #fff; background: var(--color-brand-600); }
 .tab-new:hover { background: var(--color-brand-700); }
 .tab-new[aria-current="page"] { color: #fff; background: var(--color-brand-700); }
+/* Role workspace entry (Admin / Verify): in the header, never in the five-tab bottom bar. */
+#workspace-slot[hidden] { display: none; }
+#workspace-slot { display: inline-flex; margin-left: auto; }
+.tab-workspace { border: 1px solid var(--color-border); }
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; font-weight: 700; font-size: .9rem; color: #fff; vertical-align: middle; background: var(--color-brand-600); }
 .avatar-1 { background: #8a4f00; } .avatar-2 { background: #5b3f9e; } .avatar-3 { background: #a4262c; } .avatar-4 { background: #1f5f8b; }
 

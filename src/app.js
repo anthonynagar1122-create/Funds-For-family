@@ -1,5 +1,6 @@
 'use strict';
 const express = require('express');
+const { randomUUID } = require('node:crypto');
 const rules = require('./rules');
 const invites = require('./invites');
 const { formatInr, parseRupees } = require('../public/app/money');
@@ -263,26 +264,96 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   });
 
   // The owner's own view, so it is the one place a sender's email is shown.
-  const helpView = (m, sender) => ({ id: m.id, body: m.body, createdAt: m.createdAt, resolvedAt: m.resolvedAt ?? null,
+  const helpView = (m, sender, assignee) => ({ id: m.id, body: m.body, createdAt: m.createdAt, resolvedAt: m.resolvedAt ?? null,
+    assignedToId:m.assignedToId ?? null, assignedAt:m.assignedAt ?? null, assignedToName:assignee?.name ?? null,
     userId: m.userId, name: sender?.name ?? 'Former member', email: sender?.email ?? null });
 
   api.get('/admin/help-messages', requireAdmin, async (_req, res) => {
     const rows = await repo.listHelpMessages();
-    const senders = new Map((await repo.getUsers([...new Set(rows.map((m) => m.userId))])).map((u) => [u.id, u]));
-    res.json({ messages: rows.map((m) => helpView(m, senders.get(m.userId))) });
+    const ids = [...new Set(rows.flatMap((m) => [m.userId,m.assignedToId]).filter(Boolean))];
+    const people = new Map((await repo.getUsers(ids)).map((u) => [u.id, u]));
+    res.json({ messages: rows.map((m) => helpView(m, people.get(m.userId), people.get(m.assignedToId))) });
   });
 
   api.post('/admin/help-messages/:id/resolve', requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id < 1) return fail(res, 404, 'Message not found');
-    const m = await repo.resolveHelpMessage(id, now().toISOString());
-    if (!m) return fail(res, 404, 'Message not found');
-    res.json({ message: helpView(m, await repo.getUser(m.userId)) });
+    try {
+      const m = await repo.resolveHelpMessage(id, now().toISOString(), req.user.id);
+      if (!m) return fail(res, 404, 'Message not found');
+      res.json({ message: helpView(m, await repo.getUser(m.userId), m.assignedToId ? await repo.getUser(m.assignedToId) : null) });
+    } catch (err) {
+      if (['42501','P0002'].includes(err?.code)) return fail(res, err.code === '42501' ? 403 : 404, String(err.message || 'Message not found'));
+      throw err;
+    }
+  });
+
+  api.post('/admin/help-messages/:id/assign', requireAdmin, async (req,res) => {
+    const id=parseId(req.params.id);
+    if (id===null) return fail(res,404,'Message not found');
+    const assigneeId=req.body?.assigneeId===null ? null : parseId(req.body?.assigneeId);
+    if (req.body?.assigneeId!==null && assigneeId===null) return fail(res,400,'Choose an active administrator or verifier','assigneeId');
+    try {
+      const m=await repo.assignHelpMessage({id,actorId:req.user.id,assigneeId});
+      res.json({message:helpView(m,await repo.getUser(m.userId),m.assignedToId?await repo.getUser(m.assignedToId):null)});
+    } catch(err) {
+      if (['42501','P0002','23514'].includes(err?.code)) return fail(res,err.code==='42501'?403:err.code==='P0002'?404:400,String(err.message||'Assignment rejected'));
+      throw err;
+    }
+  });
+
+  // Restricted administration: member roles are changed through one audited database transaction.
+  api.patch('/admin/members/:id/roles', requireAdmin, async (req, res) => {
+    const targetUserId = parseId(req.params.id);
+    if (targetUserId === null) return fail(res, 404, 'Member not found');
+    if (typeof req.body?.isAdmin !== 'boolean' || typeof req.body?.isVerifier !== 'boolean') {
+      return fail(res, 400, 'Choose both administrator and verifier roles', 'roles');
+    }
+    try {
+      const member = await repo.setMemberRoles({ actorId:req.user.id, targetUserId,
+        isAdmin:req.body.isAdmin, isVerifier:req.body.isVerifier });
+      if (!member) return fail(res, 404, 'Member not found');
+      res.json({ member });
+    } catch (err) {
+      if (['42501','P0002','23514'].includes(err?.code)) return fail(res, err.code === '42501' ? 403 : err.code === 'P0002' ? 404 : 409,
+        String(err.message || 'Role update rejected').replace(/^Supabase:\s*/, ''));
+      throw err;
+    }
+  });
+
+  api.get('/admin/audit-events', requireAdmin, async (_req, res) => {
+    const [roles,support] = await Promise.all([
+      repo.listAdminAuditEvents({limit:100}), repo.listSupportAuditEvents({limit:100}),
+    ]);
+    const events=[...roles,...support].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,100);
+    const ids=[...new Set(events.flatMap((e)=>[e.actorId,e.targetUserId]).filter(Boolean))];
+    const names=new Map((await repo.getUsers(ids)).map((u)=>[u.id,u.name]));
+    res.json({events:events.map((e)=>({...e,actorName:names.get(e.actorId)??'Former member',
+      targetName:e.targetUserId?names.get(e.targetUserId)??'Former member':(e.helpMessageId?'Support message #'+e.helpMessageId:'—')}))});
+  });
+
+  api.get('/admin/operations', requireAdmin, async (_req, res) => {
+    const statuses = ['awaiting_contact','contact_declined','pending_verification','rejected','open','funded','repaid','withdrawn'];
+    const [users, requests, messages, events] = await Promise.all([
+      repo.listUsers({ limit:200 }),
+      Promise.all(statuses.map((status) => repo.listRequestsByStatus(status))),
+      repo.listHelpMessages(),
+      repo.listAdminAuditEvents({ limit:10 }),
+    ]);
+    const rows = requests.flat();
+    res.json({ metrics:{ members:users.length, admins:users.filter((u)=>u.isAdmin).length,
+      verifiers:users.filter((u)=>u.isVerifier).length, requests:rows.length,
+      awaitingContact:rows.filter((r)=>r.status==='awaiting_contact').length,
+      pendingVerification:rows.filter((r)=>r.status==='pending_verification').length,
+      openFunding:rows.filter((r)=>r.status==='open').length, funded:rows.filter((r)=>r.status==='funded').length,
+      supportOpen:messages.filter((m)=>!m.resolvedAt).length }, recentAuditEvents:events.length });
   });
 
   // ---- Owner admin. Every route sits behind requireAdmin. Nothing here sends email (that is Phase C). ----
-  const memberView = (u, invitesThisMonth = 0) => ({ id: u.id, name: u.name, email: u.email, isVerifier: !!u.isVerifier,
-    inviteLimit: u.inviteLimit ?? null, invitesThisMonth });
+  // One member view for the merged admin workspace: role fields (security branch) and invite controls (owner admin).
+  const memberView = (u, invitesThisMonth = 0) => ({ id: u.id, name: u.name, email: u.email, isAdmin: !!u.isAdmin,
+    isVerifier: !!u.isVerifier, inviteLimit: u.inviteLimit ?? null, invitesThisMonth, createdAt: u.createdAt ?? null,
+    deletedAt: u.deletedAt ?? null });
 
   async function invitesThisMonthByInviter() {
     const from = new Date(invites.monthStartIst(now())).getTime();
@@ -294,11 +365,16 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return counts;
   }
 
-  api.get('/admin/members', requireAdmin, async (_req, res) => {
-    const [users, counts] = await Promise.all([repo.listUsers(), invitesThisMonthByInviter()]);
+  // The single GET /admin/members (merge of both branches): optional ?q= search (name or email), newest first,
+  // at most 200 rows, carrying both the role flags and the invite-limit fields.
+  api.get('/admin/members', requireAdmin, async (req, res) => {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+    const [users, counts] = await Promise.all([repo.listUsers({ query, limit: 200 }), invitesThisMonthByInviter()]);
     res.json({ members: users.map((u) => memberView(u, counts.get(u.id) ?? 0)) });
   });
 
+  // Verifier toggle kept for the owner admin page; it writes through the audited role RPC (setMemberRoles), so
+  // there is one role writer and every change lands in admin_audit_events.
   api.post('/admin/members/:id/verifier', requireAdmin, async (req, res) => {
     const id = parseId(req.params.id);
     const member = id === null ? null : await repo.getUser(id);
@@ -306,7 +382,13 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     const on = req.body?.on;
     if (typeof on !== 'boolean') return fail(res, 400, 'Send on as true or false', 'on');
     if (!on && id === req.user.id) return fail(res, 409, 'You cannot remove your own verifier status');
-    await repo.setVerifier(id, on);
+    try {
+      await repo.setMemberRoles({ actorId: req.user.id, targetUserId: id, isAdmin: !!member.isAdmin, isVerifier: on });
+    } catch (err) {
+      if (['42501','P0002','23514'].includes(err?.code)) return fail(res, err.code === '42501' ? 403 : err.code === 'P0002' ? 404 : 409,
+        String(err.message || 'Role update rejected').replace(/^Supabase:\s*/, ''));
+      throw err;
+    }
     res.json({ member: memberView(await repo.getUser(id)) });
   });
 
@@ -833,12 +915,26 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     utr: c.utr ?? null, status: c.status, createdAt: c.createdAt, confirmedAt: c.confirmedAt ?? null,
   });
 
-  // Parses an optional UTR from a body. Returns { utr } (null when empty) or { error }.
+  // P-46 (owner, 2026-11-27): a UTR is optional when marking money sent (P-22 stands), but a UTR that is given is
+  // recorded at most once per request. Empty or null means "no UTR".
+  const UTR_TAKEN_MSG = 'This UPI reference is already recorded on this request';
+
+  // Parses an optional UTR from a body. Returns { utr } (null when absent or empty) or { error }.
   function readUtr(body) {
     const raw = body?.utr;
-    if (raw === undefined || raw === null || raw === '') return { utr: null };
     const text = typeof raw === 'string' ? raw.trim() : raw;
+    if (raw === undefined || raw === null || text === '') return { utr: null };
     return rules.validateUtr(text) ? { utr: text } : { error: 'A UPI reference is 6 to 35 letters or digits' };
+  }
+
+  // A UTR identifies one bank transfer, so it is recorded at most once per request (case-insensitive).
+  // `except` names the entry being corrected, which may keep its own UTR.
+  async function utrTakenOnRequest(requestId, utr, except = null) {
+    const want = utr.toUpperCase();
+    const [contribs, repays] = await Promise.all([repo.listContributions(requestId), repo.listRepayments(requestId)]);
+    const same = (kind) => (x) => x.utr && x.utr.toUpperCase() === want
+      && !(except && except.kind === kind && except.id === x.id);
+    return contribs.some(same('contribution')) || repays.some(same('repayment'));
   }
 
   // Load an entry (contribution or repayment) on a request the caller can see (404 otherwise).
@@ -933,20 +1029,24 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (parsed.error) return fail(res, 400, parsed.error, 'amount');
     const u = readUtr(req.body);
     if (u.error) return fail(res, 400, u.error, 'utr');
+    if (u.utr && await utrTakenOnRequest(r.id, u.utr)) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
     const totals = rules.fundingTotals(await repo.listContributions(r.id));
     const check = rules.checkContribution({
       amountCents: parsed.paise, principalCents: r.principalCents, totals,
       contributorId: req.user.id, borrowerId: r.borrowerId, isMutual: mutual, status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const created = await repo.addContribution({
-      requestId: r.id, contributorId: req.user.id, amountCents: parsed.paise, utr: u.utr,
-      status: 'sent', createdAt: now().toISOString(),
-    });
-    const overCap = await contributionOverCap(r, created.id);
-    if (overCap) {
-      await repo.deleteContribution(created.id);
-      return fail(res, 409, overCap);
+    const idempotencyKey = req.get('idempotency-key') || randomUUID();
+    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return fail(res, 400, 'Invalid idempotency key');
+    let created;
+    try {
+      created = await repo.recordContribution({
+        requestId: r.id, contributorId: req.user.id, amountCents: parsed.paise, utr: u.utr, idempotencyKey, at: now().toISOString(),
+      });
+    } catch (err) {
+      if (err?.code === '23505') return fail(res, 409, UTR_TAKEN_MSG, 'utr');
+      if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Contribution could not be recorded').replace(/^Supabase:\s*/, ''));
+      throw err;
     }
     const borrower = await repo.getUser(r.borrowerId).catch(() => null);
     if (borrower?.email) {
@@ -1007,11 +1107,17 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       isMutual: rules.isMutual(await repo.connections(req.user.id), r.borrowerId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const updated = await repo.updateContribution(c.id, patch);
-    const overCap = await contributionOverCap(r, c.id);
-    if (overCap) {
-      await repo.updateContribution(c.id, { status: 'not_received', amountCents: c.amountCents, utr: c.utr ?? null, updatedAt: now().toISOString() });
-      return fail(res, 409, overCap);
+    // A corrected entry is "sent" again. Its UTR stays optional (P-46): a body utr of null/"" clears it, an omitted utr
+    // keeps the old one, and a UTR that is present must not be used by another entry on this request.
+    const utr = 'utr' in patch ? patch.utr : (c.utr ?? null);
+    if (utr && await utrTakenOnRequest(r.id, utr, { kind: 'contribution', id: c.id })) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
+    let updated;
+    try {
+      updated = await repo.reviseContribution({ entryId: c.id, actorId: req.user.id, amountCents, utr, at: now().toISOString() });
+    } catch (err) {
+      if (err?.code === '23505') return fail(res, 409, UTR_TAKEN_MSG, 'utr');
+      if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Contribution could not be corrected').replace(/^Supabase:\s*/, ''));
+      throw err;
     }
     res.json({ contribution: contributionJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });
@@ -1054,19 +1160,23 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (parsed.error) return fail(res, 400, parsed.error, 'amount');
     const u = readUtr(req.body);
     if (u.error) return fail(res, 400, u.error, 'utr');
+    if (u.utr && await utrTakenOnRequest(r.id, u.utr)) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
     const check = rules.checkRepayment({
       amountCents: parsed.paise, payerId: req.user.id, borrowerId: r.borrowerId, trustedContactId: r.trustedContactId,
       lenderId, owed: (await owedFor(r.id)).get(lenderId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const created = await repo.addRepayment({
-      requestId: r.id, payerId: req.user.id, lenderId, amountCents: parsed.paise, utr: u.utr,
-      status: 'sent', createdAt: now().toISOString(),
-    });
-    const overCap = await repaymentOverCap(r, lenderId, created.id);
-    if (overCap) {
-      await repo.deleteRepayment(created.id);
-      return fail(res, 409, overCap);
+    const idempotencyKey = req.get('idempotency-key') || randomUUID();
+    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return fail(res, 400, 'Invalid idempotency key');
+    let created;
+    try {
+      created = await repo.recordRepayment({
+        requestId: r.id, payerId: req.user.id, lenderId, amountCents: parsed.paise, utr: u.utr, idempotencyKey, at: now().toISOString(),
+      });
+    } catch (err) {
+      if (err?.code === '23505') return fail(res, 409, UTR_TAKEN_MSG, 'utr');
+      if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Repayment could not be recorded').replace(/^Supabase:\s*/, ''));
+      throw err;
     }
     await mailLender(lenderId, `${req.user.name} says they repaid you ${formatInr(parsed.paise)}. Please confirm.`,
       `<p>${escapeHtml(req.user.name)} says they repaid you ${formatInr(parsed.paise)}.</p>`
@@ -1121,11 +1231,15 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       lenderId: p.lenderId, owed: (await owedFor(r.id)).get(p.lenderId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const updated = await repo.updateRepayment(p.id, patch);
-    const overCap = await repaymentOverCap(r, p.lenderId, p.id);
-    if (overCap) {
-      await repo.updateRepayment(p.id, { status: 'not_received', amountCents: p.amountCents, utr: p.utr ?? null, updatedAt: now().toISOString() });
-      return fail(res, 409, overCap);
+    const utr = 'utr' in patch ? patch.utr : (p.utr ?? null);
+    if (utr && await utrTakenOnRequest(r.id, utr, { kind: 'repayment', id: p.id })) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
+    let updated;
+    try {
+      updated = await repo.reviseRepayment({ entryId: p.id, actorId: req.user.id, amountCents, utr, at: now().toISOString() });
+    } catch (err) {
+      if (err?.code === '23505') return fail(res, 409, UTR_TAKEN_MSG, 'utr');
+      if (['P0001', '22023'].includes(err?.code)) return fail(res, 409, String(err.message || 'Repayment could not be corrected').replace(/^Supabase:\s*/, ''));
+      throw err;
     }
     res.json({ repayment: repaymentJson(updated), request: await detail(await repo.getRequest(r.id), req.user.id) });
   });

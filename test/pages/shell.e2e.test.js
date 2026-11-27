@@ -52,7 +52,7 @@ async function open(hash, { width = 1280, isAdmin = false } = {}) {
 
 const labels = (page) => page.locator('nav[aria-label="Primary"] a:visible').allInnerTexts().then((t) => t.map((s) => s.trim()));
 
-test('desktop 1280px shows a top nav with Home, Requests, New, Circle, Profile', { skip }, async () => {
+test('desktop 1280px shows the recommended member nav at the top', { skip }, async () => {
   const { page, ctx } = await open('#/home');
   try {
     assert.deepEqual(await labels(page), ['Home', 'Requests', '+ New', 'Circle', 'Profile']);
@@ -61,7 +61,7 @@ test('desktop 1280px shows a top nav with Home, Requests, New, Circle, Profile',
   } finally { await ctx.close(); }
 });
 
-test('phone 375px shows a bottom tab bar with targets of at least 44px', { skip }, async () => {
+test('phone 375px shows the recommended bottom tabs with targets of at least 44px', { skip }, async () => {
   const { page, ctx } = await open('#/home', { width: 375 });
   try {
     assert.deepEqual(await labels(page), ['Home', 'Requests', '+ New', 'Circle', 'Profile']);
@@ -113,13 +113,36 @@ test('the old hashes still open their views', { skip }, async () => {
   } finally { await ctx.close(); }
 });
 
-test('the Admin item is absent for a non-admin and present for an admin', { skip }, async () => {
-  const a = await open('#/home', { isAdmin: false });
-  try { assert.equal(await a.page.locator('nav[aria-label="Primary"] a', { hasText: 'Admin' }).count(), 0); } finally { await a.ctx.close(); }
-  const b = await open('#/home', { isAdmin: true });
+test('the restricted workspace is absent for members and role-labelled for admins and verifiers', { skip }, async () => {
+  const member = await open('#/home', { isAdmin: false });
   try {
-    assert.deepEqual(await labels(b.page), ['Home', 'Requests', '+ New', 'Circle', 'Profile', 'Admin']);
-  } finally { await b.ctx.close(); }
+    assert.deepEqual(await labels(member.page), ['Home', 'Requests', '+ New', 'Circle', 'Profile']);
+    assert.equal(await member.page.locator('#nav-workspace').count(), 0, 'no workspace entry for members');
+    await member.page.goto(`http://127.0.0.1:${server.address().port}/app/#/workspace`, { waitUntil: 'load' });
+    await member.page.waitForSelector('#view-workspace:not([hidden])');
+    assert.match(await member.page.locator('#workspace').innerText(), /do not have access/i);
+  } finally { await member.ctx.close(); }
+
+  // P-45 merge: the role entry is not a sixth tab; it sits in the header so the tab bar keeps five targets.
+  const admin = await open('#/home', { isAdmin: true });
+  try {
+    assert.deepEqual(await labels(admin.page), ['Home', 'Requests', '+ New', 'Circle', 'Profile']);
+    assert.equal((await admin.page.locator('header #nav-workspace').innerText()).trim(), 'Admin');
+    assert.equal(await admin.page.locator('header #nav-workspace').getAttribute('href'), '#/workspace');
+  } finally { await admin.ctx.close(); }
+
+  const verifierCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+  try {
+    const page = await verifierCtx.newPage();
+    await page.route('https://cdn.jsdelivr.net/**', (route) => route.fulfill({ contentType: 'text/javascript', body: CLERK_STUB }));
+    await page.route('**/api/config', (route) => json(route, 200, { clerkPublishableKey: 'pk_test_mock' }));
+    await page.route('**/api/me', (route) => json(route, 200, { user: { id: 11, name: 'Verifier', email: 'v@example.com', isAdmin: false, isVerifier: true } }));
+    await page.route('**/api/home', (route) => json(route, 200, { needsYou: [], myRequests: [], myLending: [] }));
+    await page.goto(`http://127.0.0.1:${server.address().port}/app/#/home`, { waitUntil: 'load' });
+    await page.waitForSelector('nav[aria-label="Primary"] a:visible');
+    assert.deepEqual(await labels(page), ['Home', 'Requests', '+ New', 'Circle', 'Profile']);
+    assert.equal((await page.locator('header #nav-workspace').innerText()).trim(), 'Verify');
+  } finally { await verifierCtx.close(); }
 });
 
 test('window.Router, Api and Format are plain objects with the agreed functions', { skip }, async () => {
@@ -149,5 +172,37 @@ test('Api throws ApiError with status, code, field and message', { skip }, async
       catch (err) { return { name: err.name, isApiError: err instanceof window.ApiError, status: err.status, code: err.code, field: err.field, message: err.message }; }
     });
     assert.deepEqual(e, { name: 'ApiError', isApiError: true, status: 422, code: 'too_small', field: 'amount', message: 'Too small' });
+  } finally { await ctx.close(); }
+});
+
+// P-45 merge nav rule: at most five member tabs at 320 px, each at least 44 px, and the admin/verifier entry in the
+// header also at least 44 px, with no sideways scroll.
+test('phone 320px: five tabs and the Admin entry are all at least 44px, no horizontal scroll', { skip }, async () => {
+  const { page, ctx } = await open('#/home', { width: 320, isAdmin: true });
+  try {
+    assert.deepEqual(await labels(page), ['Home', 'Requests', '+ New', 'Circle', 'Profile']);
+    const targets = [...await page.locator('nav[aria-label="Primary"] a:visible').all(), page.locator('#nav-workspace')];
+    for (const a of targets) {
+      const b = await a.boundingBox();
+      assert.ok(b && b.height >= 44 && b.width >= 44, `target ${await a.innerText()} is ${b?.width}x${b?.height}`);
+    }
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  } finally { await ctx.close(); }
+});
+
+test('the Requests tab lists open requests from the circle and links to the full feed (G-06)', { skip }, async () => {
+  const { page, ctx } = await open('#/home');
+  try {
+    await page.route('**/api/feed', (route) => json(route, 200, { requests: [
+      { id: 7, borrowerId: 3, purpose: 'Train fare <b>home</b>', principalCents: 200000, status: 'open', repaymentDate: '2027-01-10', totals: { confirmedCents: 50000, pendingCents: 0 } },
+    ] }));
+    await page.getByRole('link', { name: 'Requests' }).click();
+    await page.waitForSelector('#activity-circle a');
+    assert.equal(await page.locator('#activity-circle a').getAttribute('href'), '#request/7');
+    assert.equal(await page.locator('#activity-circle b').count(), 0, 'purpose is escaped');
+    assert.equal((await page.locator('[aria-current="page"]').innerText()).trim(), 'Requests');
+    await page.locator('#activity-feed-link').click();
+    await page.waitForSelector('#view-feed:not([hidden])');
+    assert.equal((await page.locator('[aria-current="page"]').innerText()).trim(), 'Requests', 'the feed lights the Requests tab');
   } finally { await ctx.close(); }
 });

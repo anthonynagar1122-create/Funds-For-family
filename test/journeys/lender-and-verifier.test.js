@@ -299,7 +299,8 @@ test('verifier: the owner sees requests that cannot reach two approvals (fewer t
 // GAPS (todo): each carries the assertions the fixed behaviour must meet
 // ---------------------------------------------------------------------------------------------------------------
 
-test('lender can reach the circle feed from the app (Requests tab or Home lists open requests of mutual connections)', { todo: 'gap: #/feed has no entry point; Requests tab is the activity ledger' }, () => {
+// Closed by the P-45 merge (G-06): the Requests tab lists open requests from the circle and links to #/feed.
+test('lender can reach the circle feed from the app (Requests tab or Home lists open requests of mutual connections)', () => {
   const app = src('public/app.js');
   const wired = /Router\.register\('requests',\s*guarded\(renderFeed\)\)/.test(app)
     || /href="#\/feed"/.test(src('public/app/nav.js') + src('public/app/pages/home.js') + src('public/app/index.html'))

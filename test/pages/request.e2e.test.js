@@ -65,7 +65,7 @@ async function open(viewerId, request, { status = 200, width = 375 } = {}) {
   await page.route(/\/api\/(requests\/1\/(contributions|repayments|contact-decision)|contributions\/\d+\/[a-z-]+|repayments\/\d+\/[a-z-]+)$/, (route) => {
     const r = route.request();
     if (r.method() !== 'POST') return route.fallback();
-    calls.push({ url: new URL(r.url()).pathname, body: r.postDataJSON() });
+    calls.push({ url: new URL(r.url()).pathname, body: r.postDataJSON(), ...(r.headers()['idempotency-key'] ? { idempotencyKey: r.headers()['idempotency-key'] } : {}) });
     return json(route, 200, { ok: true });
   });
   await page.goto(`http://127.0.0.1:${server.address().port}/app/#/request/1`, { waitUntil: 'load' });
@@ -153,7 +153,10 @@ test('a lender posts the amount and an optional UTR; a malformed UTR is stopped 
     await page.fill('#c-utr', 'UTR123456');
     await page.getByRole('button', { name: /I.ve sent it/ }).click();
     await page.waitForTimeout(150);
-    assert.deepEqual(calls, [{ url: '/api/requests/1/contributions', body: { amount: '1,500', utr: 'UTR123456' } }]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, '/api/requests/1/contributions');
+    assert.deepEqual(calls[0].body, { amount: '1,500', utr: 'UTR123456' });
+    assert.match(calls[0].idempotencyKey, /^[A-Za-z0-9._:-]{8,128}$/);
   } finally { await ctx.close(); }
 });
 
@@ -185,9 +188,13 @@ test('the borrower repays each lender by lenderId, with a UPI link per lender', 
     assert.match(await page.locator('.repay-form[data-lender="5"] a.upi-pay').innerText(), /^Pay ₹100\.25 with UPI$/);
     assert.equal(new URL(await page.locator('.repay-form[data-lender="5"] a.upi-pay').getAttribute('href')).searchParams.get('am'), '100.25');
     await page.locator('.repay-form[data-lender="6"] input[name="amount"]').fill('250');
+    await page.locator('.repay-form[data-lender="6"] input[name="utr"]').fill('UTRREPAY6');
     await page.locator('.repay-form[data-lender="6"]').getByRole('button', { name: 'Record repayment' }).click();
     await page.waitForTimeout(150);
-    assert.deepEqual(calls, [{ url: '/api/requests/1/repayments', body: { lenderId: 6, amount: '250', utr: '' } }]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, '/api/requests/1/repayments');
+    assert.deepEqual(calls[0].body, { lenderId: 6, amount: '250', utr: 'UTRREPAY6' });
+    assert.match(calls[0].idempotencyKey, /^[A-Za-z0-9._:-]{8,128}$/);
   } finally { await ctx.close(); }
 });
 

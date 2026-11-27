@@ -201,7 +201,7 @@ function runContract(makeRepo, { prefix = '' } = {}) {
   test('contract: deleteAccount anonymises the member, removes follows and open invites, keeps ledger rows and other people\'s invites', async () => {
     const repo = await makeRepo();
     const [b, c, l, other] = [await mk(repo, 'b'), await mk(repo, 'c'), await mk(repo, 'l'), await mk(repo, 'o')];
-    await repo.updateUser(l.id, { upiId: 'l@okbank', avatarUrl: 'https://img.test/l.png' });
+    await repo.updateUser(l.id, { upiId: 'lee@okbank', avatarUrl: 'https://img.test/l.png' });
     await repo.addFollow(l.id, other.id); await repo.addFollow(other.id, l.id); await repo.addFollow(b.id, other.id);
     const expiresAt = new Date(Date.now() + 14 * 864e5).toISOString();
     const open = await repo.createInvite({ inviterId: l.id, email: `${uniq()}@x.test`, tokenHash: `${prefix}${uniq()}x`, expiresAt });
@@ -241,17 +241,22 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     const m1 = await repo.addHelpMessage({ userId: a.id, body: 'First help message' });
     const m2 = await repo.addHelpMessage({ userId: b.id, body: 'Second help message' });
     const m3 = await repo.addHelpMessage({ userId: a.id, body: 'Third help message' });
+    await repo.updateUser(a.id,{isAdmin:true});
     assert.ok(m1.id && m1.createdAt);
     assert.equal(m1.resolvedAt, null);
     assert.equal(m1.userId, a.id);
     const mine = await repo.listHelpMessagesByUser(a.id);
     assert.deepEqual(mine.map((m) => m.id).sort(), [m1.id, m3.id].sort());
-    const at = '2026-11-21T10:00:00.000Z';
-    const r = await repo.resolveHelpMessage(m1.id, at);
-    assert.equal(new Date(r.resolvedAt).toISOString(), at);
-    const again = await repo.resolveHelpMessage(m1.id, '2026-12-01T10:00:00.000Z');
-    assert.equal(new Date(again.resolvedAt).toISOString(), at, 'already resolved: kept');
-    assert.equal(await repo.resolveHelpMessage(999999999, at), null);
+    // The time of resolution is recorded by the repository (the database clock in production), so the test checks
+    // that it is set and that a second resolve keeps the first time, not that it equals a supplied value.
+    const r = await repo.resolveHelpMessage(m1.id, '2026-11-21T10:00:00.000Z', a.id);
+    assert.ok(r.resolvedAt, 'resolved time is recorded');
+    const again = await repo.resolveHelpMessage(m1.id, '2026-12-01T10:00:00.000Z', a.id);
+    assert.equal(new Date(again.resolvedAt).getTime(), new Date(r.resolvedAt).getTime(), 'already resolved: kept');
+    const at = r.resolvedAt;
+    // An unknown message is null in memory and a P0002 error in Supabase; the route answers 404 for both.
+    const missing = await repo.resolveHelpMessage(999999999, at, a.id).catch((e) => e);
+    assert.ok(missing === null || missing.code === 'P0002', 'an unknown message is null or P0002');
     const all = (await repo.listHelpMessages()).filter((m) => [m1.id, m2.id, m3.id].includes(m.id));
     assert.deepEqual(all.map((m) => m.id), [m2.id, m3.id, m1.id], 'unresolved first (oldest first), then resolved');
   });

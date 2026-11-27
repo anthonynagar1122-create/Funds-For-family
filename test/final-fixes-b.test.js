@@ -12,10 +12,13 @@ const { idOf } = require('./helpers/lifecycle');
 const root = path.join(__dirname, '..');
 
 // ---- 1. checklist ----
-test('the production checklist applies migration 0004 and checks the removed status', () => {
+// Our two migrations were renumbered 0004->0009 and 0005->0010 in the P-45 merge (the security branch's 0004-0008
+// were already on staging under those numbers).
+test('the production checklist applies migration 0009 and checks the removed status', () => {
   const text = fs.readFileSync(path.join(root, 'docs/release/phase-a-production-checklist.md'), 'utf8');
-  assert.match(text, /0004_removed_entry_status\.sql/);
-  assert.match(text, /0005_delete_account_fn\.sql/);
+  assert.match(text, /0009_removed_entry_status\.sql/);
+  assert.match(text, /0010_delete_account_fn\.sql/);
+  assert.doesNotMatch(text, /0004_removed_entry_status|0005_delete_account_fn/, 'old numbers are gone');
   assert.ok(text.includes("select conname, pg_get_constraintdef(oid) from pg_constraint where conname in ('contributions_status_check','repayments_status_check')"));
   assert.match(text, /staging/i);
   assert.match(text, /contract suite/i);
@@ -85,8 +88,8 @@ test('Supabase deleteAccount surfaces an rpc error and returns null for an unkno
   assert.equal(await createSupabaseRepo({ url: 'http://127.0.0.1:1', serviceRoleKey: 'k', fetch: none }).deleteAccount(7), null);
 });
 
-test('migration 0005 defines delete_member_account, locked to the service role', () => {
-  const sql = fs.readFileSync(path.join(root, 'supabase/migrations/0005_delete_account_fn.sql'), 'utf8');
+test('migration 0010 defines delete_member_account, locked to the service role', () => {
+  const sql = fs.readFileSync(path.join(root, 'supabase/migrations/0010_delete_account_fn.sql'), 'utf8');
   assert.match(sql, /create or replace function public\.delete_member_account\(p_user_id bigint, p_placeholder_email text, p_clerk_placeholder text\)/i);
   assert.match(sql, /revoke execute on function public\.delete_member_account\(bigint, text, text\) from public, anon, authenticated/i);
   assert.match(sql, /is_admin = false/i);
@@ -94,10 +97,15 @@ test('migration 0005 defines delete_member_account, locked to the service role',
 });
 
 // ---- 4. resolveHelpMessage error ----
-test('Supabase resolveHelpMessage throws when the update fails', async () => {
-  const f = recordingFetch(({ method }) => (method === 'PATCH' ? json({ code: '500', message: 'boom', details: null }, 500) : json(null)));
+// After the P-45 merge resolution goes through the audited admin_resolve_help_message RPC (security branch); a failing
+// RPC must still throw, with the database error code kept so the route can map 42501/P0002 to 403/404.
+test('Supabase resolveHelpMessage throws when the resolve RPC fails', async () => {
+  const f = recordingFetch(({ method, path: p }) => (method === 'POST' && /admin_resolve_help_message/.test(p)
+    ? json({ code: 'P0002', message: 'boom', details: null }, 400) : json(null)));
   const repo = createSupabaseRepo({ url: 'http://127.0.0.1:1', serviceRoleKey: 'k', fetch: f });
-  await assert.rejects(() => repo.resolveHelpMessage(3, '2026-11-24T00:00:00.000Z'), /Supabase: boom/);
+  const err = await repo.resolveHelpMessage(3, '2026-11-24T00:00:00.000Z', 1).catch((e) => e);
+  assert.match(String(err?.message), /Supabase: boom/);
+  assert.equal(err.code, 'P0002');
 });
 
 // ---- 5. deleted members lose admin and verifier ----
@@ -110,4 +118,29 @@ test('memory deleteAccount clears is_admin and is_verifier', async () => {
   const again = await repo.getUser(u.id);
   assert.equal(again.isAdmin, false);
   assert.equal(again.isVerifier, false);
+});
+
+// ---- P-45 merge: one ordered migration history ----
+test('migration numbers are unique and in order 0001-0011 after the merge', () => {
+  const files = fs.readdirSync(path.join(root, 'supabase/migrations')).filter((f) => f.endsWith('.sql')).sort();
+  const nums = files.map((f) => f.slice(0, 4));
+  assert.equal(new Set(nums).size, nums.length, `duplicate migration number in ${files.join(', ')}`);
+  assert.deepEqual(nums, ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011']);
+  assert.ok(files.includes('0004_atomic_financial_ledger.sql') && files.includes('0005_financial_audit_actor_attribution.sql'),
+    'the security branch migrations keep their numbers (already on staging)');
+  assert.ok(files.includes('0009_removed_entry_status.sql') && files.includes('0010_delete_account_fn.sql'));
+});
+
+test('migration 0008 keeps UTR optional: uniqueness only where a UTR is given, no NOT NULL (P-46)', () => {
+  const sql = fs.readFileSync(path.join(root, 'supabase/migrations/0008_utr_unique_per_request.sql'), 'utf8').toLowerCase();
+  assert.equal((sql.match(/where utr is not null/g) || []).length, 2);
+  assert.doesNotMatch(sql, /set not null|utr text not null/);
+});
+
+test('migration 0011 credits an owner settlement to settled_by in the financial audit trigger', () => {
+  const sql = fs.readFileSync(path.join(root, 'supabase/migrations/0011_audit_owner_settle_attribution.sql'), 'utf8').toLowerCase();
+  assert.match(sql, /create or replace function public\.capture_financial_ledger_event\(\)/);
+  assert.match(sql, /security invoker/);
+  assert.match(sql, /v_actor_id := \(v_row->>'settled_by'\)::bigint/);
+  assert.match(sql, /revoke all on function public\.capture_financial_ledger_event\(\) from public, anon, authenticated/);
 });

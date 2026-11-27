@@ -3,7 +3,7 @@
   const $ = (sel) => document.querySelector(sel);
   const money = (cents) => Money.formatInr(cents);
   const esc = Format.esc;
-  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome', 'view-legal', 'view-admin'];
+  const views = ['signed-out', 'view-home', 'view-feed', 'view-new', 'view-not-invited', 'view-detail', 'view-circle', 'view-activity', 'view-profile', 'view-welcome', 'view-legal', 'view-admin', 'view-workspace'];
   // An invite link looks like /app/#join=<token>. Keep the token for the first /api/me, then tidy the address bar.
   const joinMatch = /^#join=([^&]+)/.exec(location.hash);
   if (joinMatch) {
@@ -93,9 +93,28 @@
     $('#detail-title')?.focus();
   }
 
+  // ---- Requests tab: open requests in my circle (mutual connections, the /feed list; G-06) plus my activity ----
+  async function renderCircleOpen() {
+    const box = $('#activity-circle');
+    if (!box) return;
+    try {
+      const { requests } = await api('/feed');
+      const open = (requests || []).filter((r) => r.status === 'open').slice(0, 5);
+      box.innerHTML = open.length
+        ? `<ul class="list">${open.map((r) => {
+          const card = CardModel.requestCard(r, me);
+          return `<li><a href="#request/${esc(r.id)}">${esc(card.title)}</a> <span class="muted">${esc(card.raisedLabel)} · ${esc(card.dueLabel)}</span></li>`;
+        }).join('')}</ul>`
+        : '<p class="muted">No open requests from your circle right now.</p>';
+    } catch {
+      box.innerHTML = '<p class="muted" role="status">Could not load open requests. Try again later.</p>';
+    }
+  }
+
   // ---- My activity (loop A) ----
   async function renderActivity() {
     show('view-activity');
+    renderCircleOpen();
     let data;
     try {
       data = await api('/activity');
@@ -155,6 +174,142 @@
     $('#admin-heading')?.focus();
   }
 
+  // ---- Admin / verifier workspace (security branch). The owner admin page above (#/admin) keeps invites, invite
+  // limits, stuck payments, verification gaps and stats; the workspace links to it for admins. ----
+  async function renderWorkspace() {
+    show('view-workspace');
+    const root = $('#workspace');
+    if (!me || (!me.isAdmin && !me.isVerifier)) {
+      root.innerHTML = '<h1 id="workspace-title" tabindex="-1">Workspace</h1><p class="empty">You do not have access to this workspace.</p>';
+      return;
+    }
+    root.innerHTML = '<p class="muted" role="status">Loading workspace…</p>';
+    let queue = [];
+    let messages = [];
+    let members = [];
+    let metrics = null;
+    let auditEvents = [];
+    if (me.isVerifier) {
+      try {
+        const data = await api('/home');
+        queue = (data.needsYou || []).filter((item) => item.kind === 'verify');
+      } catch (err) {
+        root.innerHTML = `<h1 id="workspace-title" tabindex="-1">Verification workspace</h1><p class="error" role="alert">${esc(err.message)}</p>`;
+        return;
+      }
+    }
+    if (me.isAdmin) {
+      try {
+        const results = await Promise.all([
+          api('/admin/help-messages'), api('/admin/members'), api('/admin/operations'), api('/admin/audit-events'),
+        ]);
+        messages = results[0].messages || [];
+        members = results[1].members || [];
+        metrics = results[2].metrics || null;
+        auditEvents = results[3].events || [];
+        messages.sort((a, b) => Number(Boolean(a.resolvedAt)) - Number(Boolean(b.resolvedAt)) || new Date(b.createdAt) - new Date(a.createdAt));
+      } catch (err) {
+        root.innerHTML = `<h1 id="workspace-title" tabindex="-1">Admin workspace</h1><p class="error" role="alert">${esc(err.message)}</p>`;
+        return;
+      }
+    }
+    const queueHtml = me.isVerifier
+      ? `<section aria-labelledby="verification-queue-title"><h2 id="verification-queue-title">Verification queue (${queue.length})</h2>${queue.length
+        ? `<ul class="cards">${queue.map((item) => `<li class="card"><p class="card-title">Request awaiting your review</p><p class="muted">Review the purpose and available context before deciding.</p><a class="btn btn-primary btn-sm" href="#/request/${encodeURIComponent(item.requestId)}">Open request</a></li>`).join('')}</ul>`
+        : '<p class="empty">No requests are waiting for your verification.</p>'}</section>`
+      : '';
+    const helpHtml = me.isAdmin
+      ? '<section aria-labelledby="support-inbox-title"><h2 id="support-inbox-title">Support inbox (' + messages.filter((m)=>!m.resolvedAt).length + ' open)</h2>' +
+        (messages.length ? '<ul class="cards">' + messages.map((m) => {
+          const options=members.filter((u)=>u.isAdmin||u.isVerifier).map((u)=>
+            '<option value="' + esc(u.id) + '" ' + (m.assignedToId===u.id?'selected':'') + '>' +
+            esc(u.name) + (u.isAdmin?' · Admin':' · Verifier') + '</option>').join('');
+          return '<li class="card"><div class="meta"><strong>' + esc(m.name) + '</strong><span>' +
+            esc(m.email || 'Email unavailable') + '</span><span>' + esc(new Date(m.createdAt).toLocaleString()) +
+            '</span><span class="badge">' + (m.resolvedAt?'Resolved':'Open') + '</span></div><p class="help-body">' +
+            esc(m.body) + '</p><p class="muted">' + (m.assignedToName?'Assigned to '+esc(m.assignedToName):'Unassigned') +
+            '</p><div class="row-actions"><label>Assignee <select data-assignee-for="' + esc(m.id) +
+            '"><option value="">Unassigned</option>' + options + '</select></label><button class="btn btn-secondary btn-sm" type="button" data-assign-help="' +
+            esc(m.id) + '">Save assignment</button>' + (m.resolvedAt?'':'<button class="btn btn-secondary btn-sm" type="button" data-resolve-help="' +
+            esc(m.id) + '">Mark resolved</button>') + '</div></li>';
+        }).join('') + '</ul>' : '<p class="empty">There are no support messages yet.</p>') + '</section>'
+      : '';
+    root.innerHTML = `<h1 id="workspace-title" tabindex="-1">${me.isAdmin ? 'Admin workspace' : 'Verifier workspace'}</h1>
+      <p class="muted">Restricted operational tools. Access is determined by your account role.</p>
+      ${me.isAdmin ? '<p><a class="btn btn-secondary btn-sm" id="workspace-owner-tools" href="#/admin">Owner tools: invites, limits, stuck payments, gaps and stats</a></p>' : ''}
+      ${queueHtml}${helpHtml}`;
+    if (me.isAdmin) {
+      const metricItems = metrics ? [
+        ['Members', metrics.members], ['Admins', metrics.admins], ['Verifiers', metrics.verifiers],
+        ['Requests', metrics.requests], ['Awaiting contact', metrics.awaitingContact],
+        ['Awaiting verification', metrics.pendingVerification], ['Open funding', metrics.openFunding],
+        ['Funded', metrics.funded], ['Open support', metrics.supportOpen],
+      ] : [];
+      const metricSection = document.createElement('section');
+      metricSection.setAttribute('aria-labelledby', 'operations-title');
+      metricSection.innerHTML = '<h2 id="operations-title">Operations overview</h2><ul class="cards">' +
+        metricItems.map(([label, value]) => '<li class="card"><p class="muted">' + esc(label) + '</p><strong>' + esc(value) + '</strong></li>').join('') +
+        '</ul>';
+      root.appendChild(metricSection);
+      const memberSection = document.createElement('section');
+      memberSection.setAttribute('aria-labelledby', 'member-management-title');
+      memberSection.innerHTML = '<h2 id="member-management-title">Members &amp; access (' + members.length + ')</h2>' +
+        '<p class="muted">Role changes are recorded in the append-only admin audit log. Deleted accounts are not shown.</p>' +
+        '<ul class="cards">' + members.map((m) =>
+          '<li class="card" data-member-card="' + esc(m.id) + '"><div class="meta"><strong>' + esc(m.name) +
+          '</strong><span>' + esc(m.email || 'Email unavailable') + '</span><span>Member #' + esc(m.id) + '</span></div>' +
+          '<div class="row-actions"><label><input type="checkbox" data-role-admin ' + (m.isAdmin ? 'checked' : '') +
+          '> Administrator</label><label><input type="checkbox" data-role-verifier ' + (m.isVerifier ? 'checked' : '') +
+          '> Verifier</label><button class="btn btn-secondary btn-sm" type="button" data-save-roles="' + esc(m.id) +
+          '">Save access</button></div></li>').join('') + '</ul>';
+      root.appendChild(memberSection);
+      const auditSection = document.createElement('section');
+      auditSection.setAttribute('aria-labelledby', 'audit-events-title');
+      auditSection.innerHTML = '<h2 id="audit-events-title">Recent admin audit events</h2>' +
+        (auditEvents.length ? '<ul class="list">' + auditEvents.map((e) =>
+          '<li><strong>' + esc(e.eventType) + '</strong> · ' + esc(e.actorName) + ' → ' + esc(e.targetName) +
+          '<span class="muted">' + esc(new Date(e.createdAt).toLocaleString()) + '</span><span class="muted">' +
+          esc(JSON.stringify(e.beforeState)) + ' → ' + esc(JSON.stringify(e.afterState)) + '</span></li>').join('') + '</ul>'
+          : '<p class="empty">No administrative changes have been recorded.</p>');
+      root.appendChild(auditSection);
+    }
+    if (!root.dataset.resolveBound) {
+      root.dataset.resolveBound = '1';
+      root.addEventListener('click', async (event) => {
+        const resolveButton = event.target.closest?.('[data-resolve-help]');
+        const roleButton = event.target.closest?.('[data-save-roles]');
+        const assignButton = event.target.closest?.('[data-assign-help]');
+        if (!me?.isAdmin || (!resolveButton && !roleButton && !assignButton)) return;
+        const button = resolveButton || roleButton || assignButton;
+        button.disabled = true;
+        try {
+          if (resolveButton) {
+            const id = resolveButton.getAttribute('data-resolve-help');
+            await api('/admin/help-messages/' + encodeURIComponent(id) + '/resolve', { method: 'POST', body: {} });
+            toast('Support message marked resolved.');
+          } else if (assignButton) {
+            const id=assignButton.getAttribute('data-assign-help');
+            const select=root.querySelector('[data-assignee-for="' + CSS.escape(id) + '"]');
+            await api('/admin/help-messages/' + encodeURIComponent(id) + '/assign', {method:'POST',body:{assigneeId:select?.value ? Number(select.value) : null}});
+            toast('Support assignment updated and audited.');
+          } else {
+            const card = roleButton.closest('[data-member-card]');
+            const id = roleButton.getAttribute('data-save-roles');
+            const isAdmin = !!card?.querySelector('[data-role-admin]')?.checked;
+            const isVerifier = !!card?.querySelector('[data-role-verifier]')?.checked;
+            await api('/admin/members/' + encodeURIComponent(id) + '/roles', { method: 'PATCH', body: { isAdmin, isVerifier } });
+            toast('Member access updated and audited.');
+          }
+          await renderWorkspace();
+        } catch (err) {
+          button.disabled = false;
+          toast(err.message || 'Could not update this workspace record.');
+        }
+      });
+    }
+    $('#workspace-title')?.focus();
+  }
+
   // ---- Welcome ----
   // The API sends null until each step is done (an absent field is treated as done).
   const needsWelcome = (u) => u.welcomedAt === null || u.termsAcceptedAt === null;
@@ -201,6 +356,7 @@
   Router.register('request', guarded((id) => (id ? renderDetail(id) : renderActivity())));
   Router.register('circle', guarded(renderPeople));
   Router.register('profile', guarded((sub) => renderProfile(sub)));
+  Router.register('workspace', guarded(renderWorkspace));
   Router.register('welcome', guarded(renderWelcome));
   Router.register('admin', guarded(renderAdmin));
   Router.register('terms', () => renderLegal('terms'));

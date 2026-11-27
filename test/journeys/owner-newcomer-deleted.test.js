@@ -528,6 +528,7 @@ gap('visitor: the landing page has a favicon', 'no <link rel="icon"> on landing 
   assert.match(landing, /<link rel="icon"/);
 });
 
-gap('visitor: the README no longer describes interest and nominees', 'README says "interest starts after the due date" and "a nominee stands behind the repayment", the opposite of P-3 and P-6', async () => {
+// Closed by the P-45 merge: the security branch rewrote the README (interest disabled, no nominee wording).
+test('visitor: the README no longer describes interest and nominees', async () => {
   assert.doesNotMatch(read('README.md'), /interest starts|nominee/i);
 });

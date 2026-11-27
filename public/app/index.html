@@ -17,6 +17,7 @@
   <header class="topbar">
     <a class="brand" href="/">Funds For Family</a>
     <nav id="primary-nav" aria-label="Primary" hidden></nav>
+    <span id="workspace-slot" hidden></span>
     <div id="auth-slot"></div>
   </header>
 
@@ -46,7 +47,10 @@
     </section>
 
     <section id="view-activity" hidden aria-labelledby="activity-title">
-      <h1 id="activity-title">My activity</h1>
+      <h1 id="activity-title">Requests</h1>
+      <h2 id="activity-circle-title">Open in your circle</h2>
+      <div id="activity-circle" aria-labelledby="activity-circle-title"></div>
+      <p><a class="btn btn-secondary btn-sm" id="activity-feed-link" href="#/feed">See all open requests in your circle</a></p>
       <h2>Borrowing</h2><div id="activity-borrowing"></div>
       <h2>Lending</h2><div id="activity-lending"></div>
       <h2>Repayments</h2><div id="activity-repayments"></div>
@@ -59,6 +63,10 @@
 
     <section id="view-circle" hidden aria-label="Circle">
       <div id="circle"></div>
+    </section>
+
+    <section id="view-workspace" hidden aria-label="Admin and verifier workspace">
+      <div id="workspace"></div>
     </section>
 
     <section id="view-welcome" hidden aria-label="Welcome">

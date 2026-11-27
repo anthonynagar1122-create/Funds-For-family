@@ -32,10 +32,20 @@ async function setup({ admitAll = true, ownerEmail = '', now = DEFAULT_NOW, repo
   const port = server.address().port;
   const base = `http://127.0.0.1:${port}/api`;
   // call(user, method, path, body, raw, extraHeaders): raw replaces the JSON body (for malformed-body tests).
+  // A payment sent without a `utr` key gets a unique fixture UTR, so fixtures exercise the per-request uniqueness
+  // rule (P-46: optional, but unique when given). Tests that need a specific UTR, or none, pass `utr` themselves.
+  let fixtureUtr = 0;
+  const withUtr = (method, p, body) => {
+    if (method !== 'POST' || !/\/(contributions|repayments)$/.test(p) || !body || typeof body !== 'object') return body;
+    if (Object.prototype.hasOwnProperty.call(body, 'utr')) return body;
+    fixtureUtr += 1;
+    return { ...body, utr: `FIXTURE${String(fixtureUtr).padStart(8, '0')}` };
+  };
   const call = async (user, method, p, body, raw, extraHeaders = {}) => {
     const headers = { 'content-type': 'application/json', ...extraHeaders };
     if (user) headers['x-test-user'] = user;
-    const payload = method === 'GET' ? undefined : (raw ?? (body ? JSON.stringify(body) : undefined));
+    const sentBody = raw === undefined ? withUtr(method, p, body) : body;
+    const payload = method === 'GET' ? undefined : (raw ?? (sentBody ? JSON.stringify(sentBody) : undefined));
     const r = await fetch(base + p, { method, headers, body: payload });
     const text = await r.text();
     let json = null;

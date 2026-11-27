@@ -31,7 +31,8 @@ const INVITE = mapper({
   id: 'id', inviterId: 'inviter_id', email: 'email', tokenHash: 'token_hash', expiresAt: 'expires_at', createdAt: 'created_at',
   acceptedAt: 'accepted_at', acceptedUserId: 'accepted_user_id', revokedAt: 'revoked_at', supersededAt: 'superseded_at',
 });
-const HELP = mapper({ id: 'id', userId: 'user_id', body: 'body', createdAt: 'created_at', resolvedAt: 'resolved_at' });
+const HELP = mapper({ id: 'id', userId: 'user_id', body: 'body', createdAt: 'created_at', resolvedAt: 'resolved_at',
+  assignedToId: 'assigned_to', assignedById: 'assigned_by', assignedAt: 'assigned_at' });
 const REQUEST = mapper({
   id: 'id', borrowerId: 'borrower_id', trustedContactId: 'nominee_id', purpose: 'purpose', category: 'category',
   principalCents: 'principal_cents', repaymentDate: 'repayment_date', originalRepaymentDate: 'original_repayment_date',
@@ -122,9 +123,40 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       if (ids.length === 0) return [];
       return list(check(await db.from('users').select().in('id', ids)), USER);
     },
+    // Unified admin listing (both branches): active members, newest first; `query` matches name or email;
+    // `limit` caps at 1..200, or null (the default) returns every active member (admin stats, verifier counts).
+    async listUsers({ query = '', limit = null } = {}) {
+      const cap = limit === null ? null : Math.min(Math.max(limit, 1), 200);
+      const base = () => {
+        const q = db.from('users').select().is('deleted_at', null).order('id', { ascending: false });
+        return cap === null ? q : q.limit(cap);
+      };
+      if (!query) return list(check(await base()), USER);
+      const [byName, byEmail] = await Promise.all([
+        base().ilike('name', '%' + likeEscape(query) + '%'),
+        base().ilike('email', '%' + likeEscape(query) + '%'),
+      ]);
+      const combined = new Map([...check(byName), ...check(byEmail)].map((row) => [row.id, row]));
+      const merged = [...combined.values()].sort((a,b)=>b.id-a.id);
+      return list(cap === null ? merged : merged.slice(0, cap), USER);
+    },
+    async setMemberRoles({ actorId, targetUserId, isAdmin, isVerifier }) {
+      const row = check(await db.rpc('admin_set_member_roles', {
+        p_actor_id: actorId, p_target_user_id: targetUserId, p_is_admin: isAdmin, p_is_verifier: isVerifier,
+      }));
+      return { id: row.id, name: row.name, email: row.email, isAdmin: row.is_admin, isVerifier: row.is_verifier };
+    },
+    async listAdminAuditEvents({ limit = 100 } = {}) {
+      return check(await db.from('admin_audit_events').select().order('id', { ascending: false }).limit(Math.min(Math.max(limit, 1), 200)))
+        .map((r) => ({ id:r.id, actorId:r.actor_id, targetUserId:r.target_user_id, eventType:r.event_type,
+          beforeState:r.before_state, afterState:r.after_state, createdAt:r.created_at }));
+    },
+    async listSupportAuditEvents({ limit = 100 } = {}) {
+      return check(await db.from('support_audit_events').select().order('id',{ascending:false}).limit(Math.min(Math.max(limit,1),200)))
+        .map((r)=>({id:r.id,actorId:r.actor_id,helpMessageId:r.help_message_id,eventType:r.event_type,
+          beforeState:r.before_state,afterState:r.after_state,createdAt:r.created_at}));
+    },
     async setVerifier(id, isVerifier) { check(await db.from('users').update({ is_verifier: !!isVerifier }).eq('id', id)); },
-    // Admin views. Deleted (anonymised) members are not listed.
-    async listUsers() { return list(check(await db.from('users').select().is('deleted_at', null).order('id', { ascending: true })), USER); },
     // limit is an integer, or null for the default. Returns the member, or null if the id is unknown.
     setInviteLimit: (id, limit) => maybe(db.from('users').update({ invite_limit: limit }).eq('id', id).select(), USER),
     // entries: [{ id, since }]. Made a request, or has a confirmed contribution, created at or after `since`.
@@ -224,10 +256,21 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       const rows = list(check(await db.from('help_messages').select().order('id', { ascending: true })), HELP);
       return [...rows.filter((m) => !m.resolvedAt), ...rows.filter((m) => m.resolvedAt)];
     },
-    // Only an unresolved row is updated, so a second call keeps the first timestamp. Null if the id does not exist.
-    async resolveHelpMessage(id, at) {
-      check(await db.from('help_messages').update({ resolved_at: at }).eq('id', id).is('resolved_at', null));
-      return maybe(db.from('help_messages').select().eq('id', id), HELP);
+    // Assignment and resolution go through audited RPCs (0006): admin-only (42501), unknown id P0002, and a second
+    // resolve keeps the first timestamp.
+    async assignHelpMessage({ id, actorId, assigneeId }) {
+      const row=check(await db.rpc('admin_assign_help_message', {
+        p_actor_id:actorId, p_message_id:id, p_assignee_id:assigneeId,
+      }));
+      return {id:row.id,userId:row.userId,body:row.body,createdAt:row.createdAt,resolvedAt:row.resolvedAt,
+        assignedToId:row.assignedTo,assignedById:row.assignedBy,assignedAt:row.assignedAt};
+    },
+    async resolveHelpMessage(id, at, actorId) {
+      const row=check(await db.rpc('admin_resolve_help_message', {
+        p_actor_id:actorId, p_message_id:id,
+      }));
+      return {id:row.id,userId:row.userId,body:row.body,createdAt:row.createdAt,resolvedAt:row.resolvedAt,
+        assignedToId:row.assignedTo,assignedById:row.assignedBy,assignedAt:row.assignedAt};
     },
 
     // ---- requests ----
@@ -291,6 +334,32 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     async listRepaymentsByStatus(statuses) {
       if (statuses.length === 0) return [];
       return list(check(await db.from('repayments').select().in('status', statuses).order('id', { ascending: true })), REPAYMENT);
+    },
+    // Creation uses Postgres RPCs: request-row locks, cap checks, idempotency and audit triggers
+    // execute in one database transaction. Never replace these with read/check/insert calls.
+    async recordContribution({ requestId, contributorId, amountCents, utr = null, idempotencyKey }) {
+      const row = check(await db.rpc('record_contribution', {
+        p_request_id: requestId, p_contributor_id: contributorId, p_amount_cents: amountCents,
+        p_utr: utr, p_idempotency_key: idempotencyKey,
+      }));
+      return CONTRIBUTION.toObj(row);
+    },
+    async recordRepayment({ requestId, payerId, lenderId, amountCents, utr = null, idempotencyKey }) {
+      const row = check(await db.rpc('record_repayment', {
+        p_request_id: requestId, p_payer_id: payerId, p_lender_id: lenderId,
+        p_amount_cents: amountCents, p_utr: utr, p_idempotency_key: idempotencyKey,
+      }));
+      return REPAYMENT.toObj(row);
+    },
+    async reviseContribution({ entryId, actorId, amountCents, utr = null }) {
+      return CONTRIBUTION.toObj(check(await db.rpc('revise_contribution', {
+        p_entry_id: entryId, p_actor_id: actorId, p_amount_cents: amountCents, p_utr: utr,
+      })));
+    },
+    async reviseRepayment({ entryId, actorId, amountCents, utr = null }) {
+      return REPAYMENT.toObj(check(await db.rpc('revise_repayment', {
+        p_entry_id: entryId, p_actor_id: actorId, p_amount_cents: amountCents, p_utr: utr,
+      })));
     },
     addContribution: contrib.add, getContribution: contrib.get, updateContribution: contrib.update,
     deleteContribution: contrib.del, listContributions: contrib.list,

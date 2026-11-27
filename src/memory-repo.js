@@ -27,6 +27,9 @@ function createMemoryRepo() {
   const contributions = new Map();
   const repayments = new Map();
   const helpMessages = new Map();
+  const financialIdempotency = new Map();
+  const adminAuditEvents = [];
+  const supportAuditEvents = [];
 
   const entryApi = (store, add, get, update, del, list) => ({
     async [add](row) {
@@ -68,9 +71,28 @@ function createMemoryRepo() {
     },
     async getUser(id) { return copy(users.get(id)); },
     async getUsers(ids) { return ids.map((id) => users.get(id)).filter(Boolean).map(copy); },
+    // Unified admin listing (both branches): active (not deleted) members, newest first. `query` matches name or
+    // email; `limit` caps the result at 1..200, or null (the default) returns every active member (admin stats).
+    async listUsers({ query = '', limit = null } = {}) {
+      const q = String(query).trim().toLowerCase();
+      const rows = [...users.values()].filter((u) => !u.deletedAt && (!q || `${u.name} ${u.email}`.toLowerCase().includes(q)))
+        .sort((a,b)=>b.id-a.id);
+      return (limit === null ? rows : rows.slice(0, Math.min(Math.max(limit,1),200))).map(copy);
+    },
+    async setMemberRoles({ actorId, targetUserId, isAdmin, isVerifier }) {
+      const actor = users.get(actorId), target = users.get(targetUserId);
+      if (!actor?.isAdmin || actor.deletedAt) throw Object.assign(new Error('Admins only'), { code:'42501' });
+      if (!target || target.deletedAt) throw Object.assign(new Error('Member not found'), { code:'P0002' });
+      const beforeState = { isAdmin: !!target.isAdmin, isVerifier: !!target.isVerifier };
+      const admins = [...users.values()].filter((u)=>u.isAdmin && !u.deletedAt).length;
+      if (target.isAdmin && !isAdmin && admins <= 1) throw Object.assign(new Error('The last administrator cannot be removed'), { code:'23514' });
+      target.isAdmin = !!isAdmin; target.isVerifier = !!isVerifier;
+      adminAuditEvents.push({ id: adminAuditEvents.length+1, actorId, targetUserId, eventType:'member.roles_updated',
+        beforeState, afterState:{ isAdmin:target.isAdmin, isVerifier:target.isVerifier }, createdAt:new Date().toISOString() });
+      return { id:target.id, name:target.name, email:target.email, isAdmin:target.isAdmin, isVerifier:target.isVerifier };
+    },
+    async listAdminAuditEvents({ limit = 100 } = {}) { return adminAuditEvents.slice().reverse().slice(0, Math.min(Math.max(limit,1),200)).map(copy); },
     async setVerifier(id, isVerifier) { users.get(id).isVerifier = !!isVerifier; },
-    // Admin views. Deleted (anonymised) members are not listed.
-    async listUsers() { return [...users.values()].filter((u) => !u.deletedAt).sort((a, b) => a.id - b.id).map(copy); },
     // limit is an integer, or null for the default. Returns the member, or null if the id is unknown.
     async setInviteLimit(id, limit) {
       const u = users.get(id);
@@ -201,7 +223,7 @@ function createMemoryRepo() {
 
     // ---- help messages ----
     async addHelpMessage({ userId, body }) {
-      const m = { id: nextId(), userId, body, createdAt: new Date().toISOString(), resolvedAt: null };
+      const m = { id: nextId(), userId, body, createdAt: new Date().toISOString(), resolvedAt: null, assignedToId:null, assignedById:null, assignedAt:null };
       helpMessages.set(m.id, m);
       return copy(m);
     },
@@ -212,20 +234,109 @@ function createMemoryRepo() {
     async listHelpMessages() {
       return [...helpMessages.values()].sort((a, b) => (a.resolvedAt ? 1 : 0) - (b.resolvedAt ? 1 : 0) || a.id - b.id).map(copy);
     },
-    // Idempotent: an already resolved message keeps its first timestamp. Returns null if it does not exist.
-    async resolveHelpMessage(id, at) {
-      const m = helpMessages.get(id);
-      if (!m) return null;
-      if (!m.resolvedAt) m.resolvedAt = at;
+    async assignHelpMessage({ id, actorId, assigneeId }) {
+      const actor=users.get(actorId), m=helpMessages.get(id), assignee=assigneeId===null?null:users.get(assigneeId);
+      if (!actor?.isAdmin || actor.deletedAt) throw Object.assign(new Error('Admins only'),{code:'42501'});
+      if (!m) throw Object.assign(new Error('Support message not found'),{code:'P0002'});
+      if (assigneeId!==null && (!assignee || assignee.deletedAt || (!assignee.isAdmin && !assignee.isVerifier)))
+        throw Object.assign(new Error('Assignee must be an active administrator or verifier'),{code:'23514'});
+      const beforeState={assignedTo:m.assignedToId,assignedBy:m.assignedById,assignedAt:m.assignedAt};
+      m.assignedToId=assigneeId; m.assignedById=actorId; m.assignedAt=assigneeId===null?null:new Date().toISOString();
+      supportAuditEvents.push({id:supportAuditEvents.length+1,actorId,helpMessageId:id,eventType:assigneeId===null?'support.unassigned':'support.assigned',
+        beforeState,afterState:{assignedTo:assigneeId,assignedBy:actorId,assignedAt:m.assignedAt},createdAt:new Date().toISOString()});
       return copy(m);
     },
+    // Idempotent: an already resolved message keeps its first timestamp; only the first resolution is audited.
+    async resolveHelpMessage(id, at, actorId) {
+      const actor=users.get(actorId), m=helpMessages.get(id);
+      if (!actor?.isAdmin || actor.deletedAt) throw Object.assign(new Error('Admins only'),{code:'42501'});
+      if (!m) return null;
+      if (!m.resolvedAt) {
+        const beforeState={resolvedAt:null,assignedTo:m.assignedToId};
+        m.resolvedAt=at;
+        supportAuditEvents.push({id:supportAuditEvents.length+1,actorId,helpMessageId:id,eventType:'support.resolved',
+          beforeState,afterState:{resolvedAt:at,assignedTo:m.assignedToId},createdAt:at});
+      }
+      return copy(m);
+    },
+    async listSupportAuditEvents({limit=100}={}) { return supportAuditEvents.slice().reverse().slice(0,Math.min(Math.max(limit,1),200)).map(copy); },
 
     // ---- contributions and repayments ----
     async listContributionsByStatus(statuses) { return [...contributions.values()].filter((e) => statuses.includes(e.status)).sort((a, b) => a.id - b.id).map(copy); },
     async listRepaymentsByStatus(statuses) { return [...repayments.values()].filter((e) => statuses.includes(e.status)).sort((a, b) => a.id - b.id).map(copy); },
+    // Synchronous check-and-write sections mirror the Postgres request-row lock semantics in tests.
+    // `at` is the app clock (tests inject one); the Supabase RPCs use the database clock and ignore it.
+    async recordContribution({ requestId, contributorId, amountCents, utr = null, idempotencyKey, at = new Date().toISOString() }) {
+      const key = `contribution.create:${contributorId}:${idempotencyKey}`;
+      const hash = JSON.stringify({ requestId, contributorId, amountCents, utr });
+      if (financialIdempotency.has(key)) {
+        const saved = financialIdempotency.get(key);
+        if (saved.hash !== hash) throw Object.assign(new Error('This idempotency key was already used for a different contribution'), { code: '22023' });
+        return copy(saved.row);
+      }
+      const r = requests.get(requestId);
+      if (!r || r.status !== 'open') throw Object.assign(new Error('This request is not accepting contributions'), { code: 'P0001' });
+      if (contributorId === r.borrowerId) throw Object.assign(new Error('You cannot fund your own request'), { code: 'P0001' });
+      const mutual = follows.some((f) => f.followerId === contributorId && f.followeeId === r.borrowerId)
+        && follows.some((f) => f.followerId === r.borrowerId && f.followeeId === contributorId);
+      if (!mutual) throw Object.assign(new Error('Only mutual connections can fund this request'), { code: 'P0001' });
+      const reserved = [...contributions.values()].filter((c) => c.requestId === requestId && ['sent','confirmed'].includes(c.status)).reduce((n,c)=>n+c.amountCents,0);
+      if (reserved + amountCents > r.principalCents) throw Object.assign(new Error(`Only ${Math.max(0,r.principalCents-reserved)} paise is still needed`), { code: 'P0001' });
+      const row = { id: nextId(), requestId, contributorId, amountCents, utr, status: 'sent', createdAt: at, confirmedAt: null, updatedAt: null };
+      contributions.set(row.id, row);
+      financialIdempotency.set(key, { hash, row: copy(row) });
+      return copy(row);
+    },
+    async recordRepayment({ requestId, payerId, lenderId, amountCents, utr = null, idempotencyKey, at = new Date().toISOString() }) {
+      const key = `repayment.create:${payerId}:${idempotencyKey}`;
+      const hash = JSON.stringify({ requestId, payerId, lenderId, amountCents, utr });
+      if (financialIdempotency.has(key)) {
+        const saved = financialIdempotency.get(key);
+        if (saved.hash !== hash) throw Object.assign(new Error('This idempotency key was already used for a different repayment'), { code: '22023' });
+        return copy(saved.row);
+      }
+      const r = requests.get(requestId);
+      if (!r || r.status !== 'funded') throw Object.assign(new Error('Repayments can be recorded only for funded requests'), { code: 'P0001' });
+      if (payerId !== r.borrowerId && payerId !== r.trustedContactId) throw Object.assign(new Error('Only the borrower or trusted contact can record a repayment'), { code: 'P0001' });
+      if (!lenderId || lenderId === payerId) throw Object.assign(new Error('Choose a valid lender'), { code: 'P0001' });
+      const lent = [...contributions.values()].filter((c)=>c.requestId===requestId && c.contributorId===lenderId && c.status==='confirmed').reduce((n,c)=>n+c.amountCents,0);
+      const reserved = [...repayments.values()].filter((p)=>p.requestId===requestId && p.lenderId===lenderId && ['sent','confirmed'].includes(p.status)).reduce((n,p)=>n+p.amountCents,0);
+      if (!lent) throw Object.assign(new Error('Unknown lender'), { code: 'P0001' });
+      if (reserved + amountCents > lent) throw Object.assign(new Error(`Only ${Math.max(0,lent-reserved)} paise can still be repaid to this lender`), { code: 'P0001' });
+      const row = { id: nextId(), requestId, payerId, lenderId, amountCents, utr, status: 'sent', createdAt: at, confirmedAt: null, updatedAt: null };
+      repayments.set(row.id, row);
+      financialIdempotency.set(key, { hash, row: copy(row) });
+      return copy(row);
+    },
+    async reviseContribution({ entryId, actorId, amountCents, utr = null, at = new Date().toISOString() }) {
+      const row = contributions.get(entryId);
+      const r = row && requests.get(row.requestId);
+      if (!row || !r) throw Object.assign(new Error('Contribution not found'), { code: 'P0001' });
+      if (row.contributorId !== actorId) throw Object.assign(new Error('Only the person who sent this can change it'), { code: 'P0001' });
+      if (row.status !== 'not_received') throw Object.assign(new Error('You can correct an entry only after the borrower marked it not received'), { code: 'P0001' });
+      if (r.status !== 'open') throw Object.assign(new Error('This request is not accepting contributions'), { code: 'P0001' });
+      const reserved = [...contributions.values()].filter((c)=>c.requestId===r.id && c.id!==entryId && ['sent','confirmed'].includes(c.status)).reduce((n,c)=>n+c.amountCents,0);
+      if (reserved+amountCents>r.principalCents) throw Object.assign(new Error(`Only ${Math.max(0,r.principalCents-reserved)} paise is still needed`), { code: 'P0001' });
+      Object.assign(row, { amountCents, utr, status: 'sent', updatedAt: at });
+      return copy(row);
+    },
+    async reviseRepayment({ entryId, actorId, amountCents, utr = null, at = new Date().toISOString() }) {
+      const row = repayments.get(entryId);
+      const r = row && requests.get(row.requestId);
+      if (!row || !r) throw Object.assign(new Error('Repayment not found'), { code: 'P0001' });
+      if (row.payerId !== actorId) throw Object.assign(new Error('Only the person who sent this can change it'), { code: 'P0001' });
+      if (row.status !== 'not_received') throw Object.assign(new Error('You can correct a repayment only after it was marked not received'), { code: 'P0001' });
+      if (r.status !== 'funded') throw Object.assign(new Error('This request is not in repayment'), { code: 'P0001' });
+      const lent = [...contributions.values()].filter((c)=>c.requestId===r.id && c.contributorId===row.lenderId && c.status==='confirmed').reduce((n,c)=>n+c.amountCents,0);
+      const reserved = [...repayments.values()].filter((p)=>p.requestId===r.id && p.lenderId===row.lenderId && p.id!==entryId && ['sent','confirmed'].includes(p.status)).reduce((n,p)=>n+p.amountCents,0);
+      if (!lent) throw Object.assign(new Error('Unknown lender'), { code: 'P0001' });
+      if (reserved+amountCents>lent) throw Object.assign(new Error(`Only ${Math.max(0,lent-reserved)} paise can still be repaid to this lender`), { code: 'P0001' });
+      Object.assign(row, { amountCents, utr, status: 'sent', updatedAt: at });
+      return copy(row);
+    },
     ...entryApi(contributions, 'addContribution', 'getContribution', 'updateContribution', 'deleteContribution', 'listContributions'),
     ...entryApi(repayments, 'addRepayment', 'getRepayment', 'updateRepayment', 'deleteRepayment', 'listRepayments'),
-    _state: { users, follows, invites, requests, verifications, contributions, repayments },
+    _state: { users, follows, invites, requests, verifications, contributions, repayments, financialIdempotency },
   };
 }
 

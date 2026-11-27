@@ -426,7 +426,10 @@ test('members list: owner view with email, verifier flag, invite limit and invit
     const list = await admin('GET', '/members');
     assert.equal(list.status, 200);
     const row = list.body.members.find((m) => m.id === asha);
-    assert.deepEqual(row, { id: asha, name: 'asha', email: 'asha@example.com', isVerifier: false, inviteLimit: null, invitesThisMonth: 2 });
+    // Merged view (P-45): the role flags and dates from the security branch plus the invite fields from the owner admin.
+    assert.ok(row.createdAt);
+    assert.deepEqual(row, { id: asha, name: 'asha', email: 'asha@example.com', isAdmin: false, isVerifier: false, inviteLimit: null,
+      invitesThisMonth: 2, createdAt: row.createdAt, deletedAt: null });
     const boss = list.body.members.find((m) => m.name === 'boss');
     assert.equal(boss.isVerifier, true);
     // Last month's invite does not count.
@@ -788,5 +791,109 @@ test('admin invites show the email the person joined with and flag a difference'
     assert.equal(diff.joinedEmail, 'b@y.example');
     assert.equal(list.find((i) => i.email === 'cat@example.com').joinedEmail, 'cat@example.com');
     assert.equal(list.find((i) => i.email === 'open@example.com').joinedEmail, null);
+  } finally { await s.close(); }
+});
+
+test('admin member management is role-gated and role changes are audited', async () => {
+  const s = await setup({ ownerEmail: 'owner@example.com' });
+  try {
+    const owner = await s.call('owner', 'GET', '/me');
+    const member = await s.call('member', 'GET', '/me');
+    assert.equal(owner.body.user.isAdmin, true);
+    assert.equal(member.body.user.isAdmin, false);
+    assert.equal((await s.call('member', 'GET', '/admin/members')).status, 403);
+    assert.equal((await s.call('member', 'GET', '/admin/audit-events')).status, 403);
+    assert.equal((await s.call('member', 'GET', '/admin/operations')).status, 403);
+    const listed = await s.call('owner', 'GET', '/admin/members');
+    assert.equal(listed.status, 200);
+    assert.ok(listed.body.members.some((u) => u.id === member.body.user.id));
+    const invalid = await s.call('owner', 'PATCH', '/admin/members/' + member.body.user.id + '/roles', { isAdmin: true });
+    assert.equal(invalid.status, 400);
+    const changed = await s.call('owner', 'PATCH', '/admin/members/' + member.body.user.id + '/roles', { isAdmin: false, isVerifier: true });
+    assert.equal(changed.status, 200);
+    assert.equal(changed.body.member.isVerifier, true);
+    assert.equal((await s.call('member', 'GET', '/me')).body.user.isVerifier, true);
+    const audit = await s.call('owner', 'GET', '/admin/audit-events');
+    assert.equal(audit.status, 200);
+    assert.equal(audit.body.events.length, 1);
+    assert.equal(audit.body.events[0].actorName, 'owner');
+    assert.equal(audit.body.events[0].targetName, 'member');
+    assert.deepEqual(audit.body.events[0].beforeState, { isAdmin: false, isVerifier: false });
+    assert.deepEqual(audit.body.events[0].afterState, { isAdmin: false, isVerifier: true });
+    const ops = await s.call('owner', 'GET', '/admin/operations');
+    assert.equal(ops.status, 200);
+    assert.equal(ops.body.metrics.members, 2);
+    assert.equal(ops.body.metrics.admins, 1);
+    assert.equal(ops.body.metrics.verifiers, 2);
+  } finally { await s.close(); }
+});
+
+test('admin role management cannot remove the final administrator', async () => {
+  const s = await setup({ ownerEmail: 'owner@example.com' });
+  try {
+    const owner = (await s.call('owner', 'GET', '/me')).body.user;
+    const response = await s.call('owner', 'PATCH', '/admin/members/' + owner.id + '/roles', { isAdmin: false, isVerifier: false });
+    assert.equal(response.status, 409);
+    assert.match(response.body.error, /last administrator/i);
+    const stillAdmin = await s.call('owner', 'GET', '/me');
+    assert.equal(stillAdmin.body.user.isAdmin, true);
+    const audit = await s.call('owner', 'GET', '/admin/audit-events');
+    assert.equal(audit.body.events.length, 0);
+  } finally { await s.close(); }
+});
+
+
+test('admin can assign, reassign and unassign support messages with an audit trail', async () => {
+  const s = await setup({ ownerEmail:'owner@example.com' });
+  try {
+    const owner=(await s.call('owner','GET','/me')).body.user;
+    const member=(await s.call('member','GET','/me')).body.user;
+    const created=await s.call('member','POST','/help',{body:'Please help me update my account details'});
+    assert.equal(created.status,201);
+    const inbox=await s.call('owner','GET','/admin/help-messages');
+    const id=inbox.body.messages[0].id;
+    assert.equal(inbox.body.messages[0].assignedToId,null);
+    assert.equal((await s.call('member','POST','/admin/help-messages/'+id+'/assign',{assigneeId:owner.id})).status,403);
+    const invalid=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:member.id});
+    assert.equal(invalid.status,400);
+    const assigned=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:member.id+1000});
+    assert.equal(assigned.status,400);
+    const verifier=await s.repo.createUser({clerkId:'verifier-clerk',name:'verifier',email:'verifier@example.com',isVerifier:true});
+    const response=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:verifier.id});
+    assert.equal(response.status,200);
+    assert.equal(response.body.message.assignedToId,verifier.id);
+    assert.equal(response.body.message.assignedToName,'verifier');
+    const reassign=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:owner.id});
+    assert.equal(reassign.status,200);
+    assert.equal(reassign.body.message.assignedToId,owner.id);
+    const unassign=await s.call('owner','POST','/admin/help-messages/'+id+'/assign',{assigneeId:null});
+    assert.equal(unassign.status,200);
+    assert.equal(unassign.body.message.assignedToId,null);
+    const audit=await s.repo.listSupportAuditEvents();
+    assert.deepEqual(audit.map(e=>e.eventType),['support.unassigned','support.assigned','support.assigned']);
+    const adminAudit=await s.call('owner','GET','/admin/audit-events');
+    assert.equal(adminAudit.status,200);
+    assert.equal(adminAudit.body.events.filter(e=>e.eventType.startsWith('support.')).length,3);
+    assert.equal(audit[0].actorId,owner.id);
+    assert.equal(audit[0].helpMessageId,id);
+  } finally { await s.close(); }
+});
+
+test('support resolution is admin-only and writes a single audit event', async () => {
+  const s=await setup({ownerEmail:'owner@example.com'});
+  try {
+    const created=await s.call('member','POST','/help',{body:'I need help with my repayment history'});
+    assert.equal(created.status,201);
+    const id=(await s.call('owner','GET','/admin/help-messages')).body.messages[0].id;
+    assert.equal((await s.call('member','POST','/admin/help-messages/'+id+'/resolve')).status,403);
+    const first=await s.call('owner','POST','/admin/help-messages/'+id+'/resolve');
+    assert.equal(first.status,200);
+    assert.ok(first.body.message.resolvedAt);
+    const second=await s.call('owner','POST','/admin/help-messages/'+id+'/resolve');
+    assert.equal(second.status,200);
+    assert.equal(second.body.message.resolvedAt,first.body.message.resolvedAt);
+    const audit=await s.repo.listSupportAuditEvents();
+    assert.equal(audit.length,1);
+    assert.equal(audit[0].eventType,'support.resolved');
   } finally { await s.close(); }
 });
