@@ -31,3 +31,12 @@ These answers override earlier assumptions in docs 01, 03, 11 and 14 where they 
 - `supabase/migrations/0001_init.sql` applied. All 7 public tables have RLS enabled; `anon` and `authenticated` have no privileges (checked with `has_table_privilege`).
 - Security advisor: only INFO `rls_enabled_no_policy` on all 7 tables, which is intended (server-only access with the secret key).
 - Owner action still needed: put the staging URL and secret key into Vercel **Preview** env and the GitHub Actions staging secrets. Keys are never copied into the repository.
+
+## Owner decisions, 2026-11-27 (production-readiness audit)
+
+| # | Area | Decision |
+|---|---|---|
+| P-45 | Branches | Combine our branch and `security/production-readiness-2026-11` on a new branch `claude/combined-production`, resolving conflicts by hand per docs/production-readiness/04-branch-reconciliation.md. Nothing reaches `main` or production until the owner approves. |
+| P-46 | UTR | Optional when marking money sent (P-22 stands), but unique within a request when given. |
+| P-47 | Verifiers | Keep two approvals (P-5). The owner appoints a second verifier before the first request; the borrower sees "Waiting for the verification team" meanwhile. |
+| P-48 | Launch scope | Build the daily job that auto-closes requests at their due date and an `EMAIL_ENABLED` switch that defaults off. Reminders stay in-app on Home; the landing page must not promise email reminders. Due-date votes, thank-you notes and receipts come after launch. |
