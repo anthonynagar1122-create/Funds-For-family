@@ -276,6 +276,7 @@ test('the production checklist does not call 0007 a single transaction and lists
   const line = doc.split('\n').find((l) => l.includes('0007_index_audit_actor_foreign_keys.sql'));
   assert.ok(line);
   assert.doesNotMatch(line, /each a single transaction/);
+  assert.match(line, /0007_index_audit_actor_foreign_keys\.sql`, which has no `begin`\/`commit`/);
   const i11 = doc.indexOf('0011_audit_owner_settle_attribution.sql');
   const i12 = doc.indexOf('0012_settle_entry_rpc.sql');
   const i13 = doc.indexOf('0013_delete_account_cleanup.sql');

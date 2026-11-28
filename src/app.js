@@ -334,15 +334,15 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
 
   api.get('/admin/operations', requireAdmin, async (_req, res) => {
     const statuses = ['awaiting_contact','contact_declined','pending_verification','rejected','open','funded','repaid','withdrawn'];
-    const [users, requests, messages, events] = await Promise.all([
-      repo.listUsers({ limit:200 }),
+    // Counts come from count queries, not the 200-row member list (06-merge-review-fixes).
+    const [members, admins, verifiers, requests, messages, events] = await Promise.all([
+      repo.countUsers(), repo.countUsers({ role:'admin' }), repo.countUsers({ role:'verifier' }),
       Promise.all(statuses.map((status) => repo.listRequestsByStatus(status))),
       repo.listHelpMessages(),
       repo.listAdminAuditEvents({ limit:10 }),
     ]);
     const rows = requests.flat();
-    res.json({ metrics:{ members:users.length, admins:users.filter((u)=>u.isAdmin).length,
-      verifiers:users.filter((u)=>u.isVerifier).length, requests:rows.length,
+    res.json({ metrics:{ members, admins, verifiers, requests:rows.length,
       awaitingContact:rows.filter((r)=>r.status==='awaiting_contact').length,
       pendingVerification:rows.filter((r)=>r.status==='pending_verification').length,
       openFunding:rows.filter((r)=>r.status==='open').length, funded:rows.filter((r)=>r.status==='funded').length,

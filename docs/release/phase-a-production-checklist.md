@@ -1,7 +1,7 @@
 # Phase A production release checklist
 
 Plain-English steps for releasing Phase A (data and rules) to production. Nothing here has been run against production.
-Staging already has migrations 0002 and 0003 applied, plus the security branch's 0004 and 0005 (applied by name as `atomic_financial_ledger` (empty) and `atomic_financial_ledger_implementation`; see `docs/05-integration.md`). Whether 0006 and 0007 reached staging is unverified (`docs/13` records a timeout while applying 0006): check the history before applying. 0008 to 0011 must be applied to staging too. After the P-45 branch merge the order is: 0001 to 0008 (security branch numbers unchanged), then 0009_removed_entry_status, 0010_delete_account_fn (ours, renumbered from 0004 and 0005; never applied anywhere), then 0011_audit_owner_settle_attribution. Do each step in order and stop if a check does not come back as expected.
+Staging already has migrations 0002 and 0003 applied, plus the security branch's 0004 and 0005 (applied by name as `atomic_financial_ledger` (empty) and `atomic_financial_ledger_implementation`; see `docs/05-integration.md`). Whether 0006 and 0007 reached staging is unverified (`docs/13` records a timeout while applying 0006): check the history before applying. 0008 to 0013 must be applied to staging too. After the P-45 branch merge and the review fixes the order is: 0001 to 0008 (security branch numbers unchanged), then 0009_removed_entry_status, 0010_delete_account_fn (ours, renumbered from 0004 and 0005; never applied anywhere), then 0011_audit_owner_settle_attribution, 0012_settle_entry_rpc and 0013_delete_account_cleanup (review fixes, `docs/production-readiness/06-merge-review-fixes.md`). Do each step in order and stop if a check does not come back as expected.
 
 ## 1. Read-only checks on the production database
 
@@ -55,7 +55,7 @@ where token is not null;
 1. Get the owner's explicit approval, in writing, for the release.
 2. Apply `supabase/migrations/0002_customer_ready.sql`. It runs inside a single transaction, so a failure leaves nothing half done.
 3. Check it finished without errors, then apply `supabase/migrations/0003_fix_upi_check.sql`. It is also a single transaction.
-4. Apply the security branch migrations in order, each a single transaction: `0004_atomic_financial_ledger.sql`, `0005_financial_audit_actor_attribution.sql`, `0006_admin_audit_and_role_management.sql`, `0007_index_audit_actor_foreign_keys.sql`. On staging, check the history first: 0004 and 0005 are already there under the names `atomic_financial_ledger` (empty) and `atomic_financial_ledger_implementation`, and 0006/0007 may be; do not apply them twice and do not run `supabase db push` from a fresh checkout until the history is reconciled.
+4. Apply the security branch migrations in order: `0004_atomic_financial_ledger.sql`, `0005_financial_audit_actor_attribution.sql`, `0006_admin_audit_and_role_management.sql` (each runs inside its own transaction), then `0007_index_audit_actor_foreign_keys.sql`, which has no `begin`/`commit`: it is five separate `create index if not exists` statements, each committed on its own. If one fails, the earlier indexes stay; it is safe to re-run after fixing the cause. On staging, check the history first: 0004 and 0005 are already there under the names `atomic_financial_ledger` (empty) and `atomic_financial_ledger_implementation`, and 0006/0007 may be; do not apply them twice and do not run `supabase db push` from a fresh checkout until the history is reconciled.
 5. Before `0008_utr_unique_per_request.sql`, run this read-only duplicate check; it must return no rows, because the unique index creation fails on existing duplicates. A UTR stays optional (P-46): the index only covers rows where a UTR is given.
 
    ```sql
@@ -73,7 +73,9 @@ where token is not null;
 
 7. Apply `supabase/migrations/0010_delete_account_fn.sql` after 0009 (single transaction). It adds `public.delete_member_account`, which account deletion calls; without it, deleting an account fails.
 8. Apply `supabase/migrations/0011_audit_owner_settle_attribution.sql` after 0010 (single transaction). It replaces the financial audit trigger function so an owner settlement is credited to `settled_by`.
-9. 0008 to 0011 must be applied to staging, and the Supabase contract suite (`test/integration/supabase.integration.test.js`) run against staging, before any production release.
+   Then apply `supabase/migrations/0012_settle_entry_rpc.sql` after 0011 (single transaction). It adds `public.settle_contribution` and `public.settle_repayment` (the owner settle routes call them; without them settling fails) and recreates the two UTR unique indexes from 0008 with `where utr is not null and status <> 'removed'`, so a removed entry releases its UTR.
+   Then apply `supabase/migrations/0013_delete_account_cleanup.sql` after 0012 (single transaction). It replaces `public.delete_member_account` so account deletion also clears `help_messages.assigned_to` for that member.
+9. 0008 to 0013 must be applied to staging, and the Supabase contract suite (`test/integration/supabase.integration.test.js`) run against staging, before any production release.
 10. Do not apply them to production by any other route than the approved release.
 
 ## 3. Make the owner an admin and verifier

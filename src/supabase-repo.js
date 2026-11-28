@@ -140,6 +140,15 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       const merged = [...combined.values()].sort((a,b)=>b.id-a.id);
       return list(cap === null ? merged : merged.slice(0, cap), USER);
     },
+    // Count of active (not deleted) members; role 'admin' or 'verifier' narrows it. An exact head count, no row cap.
+    async countUsers({ role = null } = {}) {
+      let q = db.from('users').select('id', { count: 'exact', head: true }).is('deleted_at', null);
+      if (role === 'admin') q = q.eq('is_admin', true);
+      else if (role === 'verifier') q = q.eq('is_verifier', true);
+      const res = await q;
+      if (res.error) throw fail(res.error);
+      return res.count ?? 0;
+    },
     async setMemberRoles({ actorId, targetUserId, isAdmin, isVerifier }) {
       const row = check(await db.rpc('admin_set_member_roles', {
         p_actor_id: actorId, p_target_user_id: targetUserId, p_is_admin: isAdmin, p_is_verifier: isVerifier,
@@ -182,8 +191,8 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
     },
 
     // Anonymise in place; the row stays so ledger rows keep a valid member. The email column is NOT NULL and unique,
-    // so it gets a unique placeholder. Everything happens in one transaction inside delete_member_account (migration 0005):
-    // the user row, the invite emails, follows and open invites. Never touches ledger rows. Null if the member does not exist.
+    // so it gets a unique placeholder. Everything happens in one transaction inside delete_member_account (migration 0010,
+    // replaced by 0013): the user row, the invite emails, follows, open invites and help-message assignments. Never touches ledger rows. Null if the member does not exist.
     async deleteAccount(id) {
       check(await db.rpc('delete_member_account', { p_user_id: id, p_placeholder_email: `deleted-${id}@deleted.invalid`,
         p_clerk_placeholder: `deleted:${id}` }));

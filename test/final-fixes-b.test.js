@@ -121,11 +121,11 @@ test('memory deleteAccount clears is_admin and is_verifier', async () => {
 });
 
 // ---- P-45 merge: one ordered migration history ----
-test('migration numbers are unique and in order 0001-0012 after the merge and review fixes', () => {
+test('migration numbers are unique and in order 0001-0013 after the merge and review fixes', () => {
   const files = fs.readdirSync(path.join(root, 'supabase/migrations')).filter((f) => f.endsWith('.sql')).sort();
   const nums = files.map((f) => f.slice(0, 4));
   assert.equal(new Set(nums).size, nums.length, `duplicate migration number in ${files.join(', ')}`);
-  assert.deepEqual(nums, ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012']);
+  assert.deepEqual(nums, ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013']);
   assert.ok(files.includes('0004_atomic_financial_ledger.sql') && files.includes('0005_financial_audit_actor_attribution.sql'),
     'the security branch migrations keep their numbers (already on staging)');
   assert.ok(files.includes('0009_removed_entry_status.sql') && files.includes('0010_delete_account_fn.sql'));

@@ -98,6 +98,10 @@ function createMemoryRepo() {
         .sort((a,b)=>b.id-a.id);
       return (limit === null ? rows : rows.slice(0, Math.min(Math.max(limit,1),200))).map(copy);
     },
+    // Count of active (not deleted) members; role 'admin' or 'verifier' narrows it. No row cap (admin operations).
+    async countUsers({ role = null } = {}) {
+      return [...users.values()].filter((u) => !u.deletedAt && (role === 'admin' ? u.isAdmin : role === 'verifier' ? u.isVerifier : true)).length;
+    },
     async setMemberRoles({ actorId, targetUserId, isAdmin, isVerifier }) {
       const actor = users.get(actorId), target = users.get(targetUserId);
       if (!actor?.isAdmin || actor.deletedAt) throw Object.assign(new Error('Admins only'), { code:'42501' });
@@ -144,6 +148,8 @@ function createMemoryRepo() {
       for (const [iid, inv] of invites) {
         if ((inv.inviterId === id || inv.acceptedUserId === id) && !inv.acceptedAt && !inv.revokedAt && !inv.supersededAt) invites.delete(iid);
       }
+      // 0013: a support message assigned to the deleted member is unassigned.
+      for (const m of helpMessages.values()) if (m.assignedToId === id) m.assignedToId = null;
       return copy(u);
     },
 
