@@ -478,8 +478,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     res.json({ entries });
   });
 
-  // Owner settles a stuck entry. confirm marks it received; remove deletes it. Both need a note. No email in this phase.
-  async function adminSettle(req, res, { getter, updater, label, sides, finish, overCap }) {
+  // Owner settles a stuck entry. confirm marks it received; remove keeps it as status 'removed'. Both need a note.
+  // No email in this phase. The write goes through repo.settle* (Supabase: settle_contribution / settle_repayment,
+  // migration 0012), which locks the request row and re-checks status, the actor and the cap; the checks here give
+  // the friendly messages and the 7-day rule. Settle errors: 42501 -> 403, P0002 -> 404, 23514/55000 -> 409.
+  const SETTLE_ERRORS = { '42501': 403, P0002: 404, '23514': 409, '55000': 409, '22023': 400 };
+  async function adminSettle(req, res, { getter, settler, label, sides, finish, overCap }) {
     const id = parseId(req.params.id);
     const entry = id === null ? null : await getter(id);
     if (!entry) return fail(res, 404, `${label} not found`);
@@ -492,22 +496,27 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (!r) return fail(res, 404, 'Request not found');
     const { payerId, receiverId } = sides(entry, r);
     if (payerId === req.user.id || receiverId === req.user.id) return fail(res, 409, 'You are part of this payment, so someone else must settle it');
-    const at = now().toISOString();
-    const audit = { updatedAt: at, settledBy: req.user.id, settledNote: note, settledAt: at };
-    // Removal keeps the row as an audit record (status removed). Every list, total and owed figure leaves it out.
-    if (action === 'remove') {
-      await updater(entry.id, { status: 'removed', ...audit });
-      return res.json({ ok: true, removed: true, id: entry.id });
+    if (action === 'confirm') {
+      const blocked = await overCap(r, entry);
+      if (blocked) return fail(res, 409, blocked);
     }
-    const blocked = await overCap(r, entry);
-    if (blocked) return fail(res, 409, blocked);
-    const updated = await updater(entry.id, { status: 'confirmed', confirmedAt: at, ...audit });
+    let updated;
+    try {
+      updated = await settler({ entryId: entry.id, actorId: req.user.id, action, note, at: now().toISOString() });
+    } catch (err) {
+      const status = SETTLE_ERRORS[err?.code];
+      if (!status) throw err;
+      const capMsg = err.code === '23514' ? await overCap(r, entry).catch(() => null) : null;
+      return fail(res, status, capMsg || String(err.message || `${label} could not be settled`).replace(/^Supabase:\s*/, ''));
+    }
+    // Removal keeps the row as an audit record (status removed). Every list, total and owed figure leaves it out.
+    if (action === 'remove') return res.json({ ok: true, removed: true, id: entry.id });
     await finish(r);
     res.json({ ok: true, removed: false, id: updated.id, status: updated.status, request: { id: r.id, status: (await repo.getRequest(r.id)).status } });
   }
 
   api.post('/admin/contributions/:id/settle', requireAdmin, async (req, res) => adminSettle(req, res, {
-    getter: repo.getContribution, updater: repo.updateContribution, label: 'Contribution',
+    getter: repo.getContribution, settler: (a) => repo.settleContribution(a), label: 'Contribution',
     sides: (c, r) => ({ payerId: c.contributorId, receiverId: r.borrowerId }),
     finish: (r) => settleFunded(r.id),
     // A not_received entry is not in the totals, so confirming it counts as new money.
@@ -519,7 +528,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
   }));
 
   api.post('/admin/repayments/:id/settle', requireAdmin, async (req, res) => adminSettle(req, res, {
-    getter: repo.getRepayment, updater: repo.updateRepayment, label: 'Repayment',
+    getter: repo.getRepayment, settler: (a) => repo.settleRepayment(a), label: 'Repayment',
     sides: (p) => ({ payerId: p.payerId, receiverId: p.lenderId }),
     finish: (r) => settleRepaid(r.id),
     overCap: async (r, p) => {

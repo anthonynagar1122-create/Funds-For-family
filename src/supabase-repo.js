@@ -369,6 +369,18 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
         p_entry_id: entryId, p_actor_id: actorId, p_amount_cents: amountCents, p_utr: utr,
       })));
     },
+    // Owner settlement (P-34) through the locked RPCs of migration 0012. Errors keep their code
+    // (23514 cap, 42501 self-settle, P0002 missing, 55000 not waiting) so the route can map them.
+    async settleContribution({ entryId, actorId, action, note, at }) {
+      return CONTRIBUTION.toObj(check(await db.rpc('settle_contribution', {
+        p_entry_id: entryId, p_actor_id: actorId, p_action: action, p_note: note, p_at: at,
+      })));
+    },
+    async settleRepayment({ entryId, actorId, action, note, at }) {
+      return REPAYMENT.toObj(check(await db.rpc('settle_repayment', {
+        p_entry_id: entryId, p_actor_id: actorId, p_action: action, p_note: note, p_at: at,
+      })));
+    },
     addContribution: contrib.add, getContribution: contrib.get, updateContribution: contrib.update,
     deleteContribution: contrib.del, listContributions: contrib.list,
     addRepayment: repay.add, getRepayment: repay.get, updateRepayment: repay.update,

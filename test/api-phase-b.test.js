@@ -740,8 +740,9 @@ test('settle routes: a throwing repo gives a 500 JSON error, a missing request g
     const orphan = await s.repo.addContribution({ requestId: 999999, contributorId: await idOf(s.call, 'li'), amountCents: 100, status: 'sent', createdAt: '2026-11-01T00:00:00.000Z' });
     const missing = await admin('POST', `/contributions/${orphan.id}/settle`, { action: 'remove', note: 'a valid note' });
     assert.equal(missing.status, 404);
-    const real = s.repo.updateContribution;
-    s.repo.updateContribution = async () => { throw new Error('db down'); };
+    // The settle write goes through repo.settleContribution (locked RPC, 06-merge-review-fixes I-2).
+    const real = s.repo.settleContribution;
+    s.repo.settleContribution = async () => { throw new Error('db down'); };
     try {
       const r = await Promise.race([
         admin('POST', `/contributions/${cid}/settle`, { action: 'confirm', note: 'a valid note' }),
@@ -750,7 +751,7 @@ test('settle routes: a throwing repo gives a 500 JSON error, a missing request g
       assert.equal(r.status, 500);
       assert.ok(r.body.error);
       assert.doesNotMatch(r.text, /db down/);
-    } finally { s.repo.updateContribution = real; }
+    } finally { s.repo.settleContribution = real; }
   } finally { await s.close(); }
 });
 

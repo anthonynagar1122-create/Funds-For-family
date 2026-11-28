@@ -18,6 +18,25 @@ const REQUEST_PATCH = ['status', 'decidedAt', 'fundedAt', 'repaidAt', 'fundedCen
   'originalRepaymentDate', 'withdrawnAt', 'contactDecidedAt', 'category', 'purpose', 'trustedContactId'];
 const ENTRY_PATCH = ['status', 'utr', 'amountCents', 'confirmedAt', 'updatedAt', 'settledBy', 'settledNote', 'settledAt', 'helpRequestedAt'];
 
+const fail = (message, code) => Object.assign(new Error(message), { code });
+
+// Shared body of settleContribution / settleRepayment (see there).
+function settleEntry({ row, r, kind, actorId, action, note, at, sides, room }) {
+  if (action !== 'confirm' && action !== 'remove') throw fail('Choose confirm or remove', '22023');
+  if (!row || !r) throw fail(`${kind} not found`, 'P0002');
+  if (row.status !== 'sent' && row.status !== 'not_received') throw fail('Only a payment still waiting can be settled', '55000');
+  if (sides.includes(actorId)) throw fail('You are part of this payment, so someone else must settle it', '42501');
+  const audit = { updatedAt: at, settledBy: actorId, settledNote: note, settledAt: at };
+  if (action === 'remove') {
+    Object.assign(row, { status: 'removed', ...audit });
+    return copy(row);
+  }
+  const { reserved, cap, msg } = room();
+  if (reserved + row.amountCents > cap) throw fail(msg(Math.max(0, cap - reserved)), '23514');
+  Object.assign(row, { status: 'confirmed', confirmedAt: at, ...audit });
+  return copy(row);
+}
+
 function createMemoryRepo() {
   const users = new Map();          // id -> user
   const follows = [];               // {followerId, followeeId}
@@ -339,6 +358,33 @@ function createMemoryRepo() {
       if (reserved+amountCents>lent) throw Object.assign(new Error(`Only ${Math.max(0,lent-reserved)} paise can still be repaid to this lender`), { code: 'P0001' });
       Object.assign(row, { amountCents, utr, status: 'sent', updatedAt: at });
       return copy(row);
+    },
+    // Owner settlement (P-34), mirroring settle_contribution / settle_repayment (0012): one synchronous section stands
+    // in for the request-row lock. Codes: P0002 missing, 55000 not waiting, 42501 actor is payer or receiver,
+    // 23514 over the cap, 22023 bad action. "remove" keeps the row as status 'removed'.
+    async settleContribution({ entryId, actorId, action, note, at = new Date().toISOString() }) {
+      const row = contributions.get(entryId);
+      const r = row && requests.get(row.requestId);
+      return settleEntry({ row, r, kind: 'Contribution', actorId, action, note, at,
+        sides: [row?.contributorId, r?.borrowerId],
+        room: () => {
+          const reserved = [...contributions.values()].filter((c) => c.requestId === r.id && c.id !== entryId && ['sent', 'confirmed'].includes(c.status))
+            .reduce((n, c) => n + c.amountCents, 0);
+          return { reserved, cap: r.principalCents, msg: (left) => `Only ${left} paise is still needed` };
+        } });
+    },
+    async settleRepayment({ entryId, actorId, action, note, at = new Date().toISOString() }) {
+      const row = repayments.get(entryId);
+      const r = row && requests.get(row.requestId);
+      return settleEntry({ row, r, kind: 'Repayment', actorId, action, note, at,
+        sides: [row?.payerId, row?.lenderId],
+        room: () => {
+          const lent = [...contributions.values()].filter((c) => c.requestId === r.id && c.contributorId === row.lenderId && c.status === 'confirmed')
+            .reduce((n, c) => n + c.amountCents, 0);
+          const reserved = [...repayments.values()].filter((p) => p.requestId === r.id && p.lenderId === row.lenderId && p.id !== entryId && ['sent', 'confirmed'].includes(p.status))
+            .reduce((n, p) => n + p.amountCents, 0);
+          return { reserved, cap: lent, msg: (left) => `Only ${left} paise can still be repaid to this lender` };
+        } });
     },
     ...entryApi(contributions, 'addContribution', 'getContribution', 'updateContribution', 'deleteContribution', 'listContributions'),
     ...entryApi(repayments, 'addRepayment', 'getRepayment', 'updateRepayment', 'deleteRepayment', 'listRepayments'),
