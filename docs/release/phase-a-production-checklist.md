@@ -94,7 +94,8 @@ The app also promotes the owner automatically on their next sign-in, but only wh
 
 - Check whether `RESEND_API_KEY` is set in the production environment (Vercel project settings). If it is set, the app can send real email to members.
 - Confirm the owner has approved sending real email. Do not leave the key set without that approval.
-- `EMAIL_ENABLED` is a Phase C setting and does not exist yet. Until then, the only switch is whether `RESEND_API_KEY` is set. With no key, the app logs "email skipped" and sends nothing.
+- `EMAIL_ENABLED` is the master switch and defaults to off. While it is off (or unset) no email is sent by any path, even if `RESEND_API_KEY` is set; the log shows "email skipped: EMAIL_ENABLED is off". Set it to `true` only after the owner approves real email.
+- Backups, incidents, key rotation and the owner-only switches are in [operations.md](operations.md). Confirm daily backups and run the restore drill there before launch.
 
 ## 5. Integration tests against staging
 
@@ -114,5 +115,6 @@ They must all pass. Without credentials the tests skip, and a skip is not a pass
 ## 7. Environment variables
 
 - `OWNER_EMAIL`: the owner's verified email. Whoever signs in with this email (verified in Clerk) is admitted as admin and verifier.
+- `EMAIL_ENABLED`: leave `false` (or unset) unless the owner has approved email.
 - `CRON_SECRET`: needed in Phase C for scheduled jobs. Not required for Phase A, but set it before Phase C goes live.
 - Existing variables (Clerk keys, Supabase URL and service key, `APP_URL`) must already be correct for production.

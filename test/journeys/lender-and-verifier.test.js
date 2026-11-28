@@ -517,8 +517,8 @@ test('every email carries a plain-text part and a link to the request', { todo: 
   } finally { await s.close(); }
 });
 
-test('production email sending sits behind EMAIL_ENABLED, default off, and logs without addresses', { todo: 'gap: services.js sends whenever RESEND_API_KEY is set' }, () => {
-  assert.ok(/EMAIL_ENABLED/.test(src('src/services.js')));
+test('production email sending sits behind EMAIL_ENABLED, default off, and logs without addresses', () => {
+  assert.ok(/EMAIL_ENABLED/.test(src('src/services.js') + src('src/mailer.js')));
 });
 
 test('verifiers are told by email when a request starts waiting for them', { todo: 'gap: verifiers learn only by opening Home' }, async () => {

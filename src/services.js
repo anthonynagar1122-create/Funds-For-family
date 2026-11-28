@@ -6,6 +6,7 @@ const { Resend } = require('resend');
 const { createApp } = require('./app');
 const { createSupabaseRepo } = require('./supabase-repo');
 const config = require('./config');
+const { createMailer } = require('./mailer');
 
 /**
  * Clerk user -> app identity. The email is trusted (owner admission, email-matched invites) only when Clerk
@@ -35,13 +36,8 @@ function buildProductionApp(env = process.env) {
     return identityFromClerkUser(u);
   };
 
-  const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
-  const from = env.EMAIL_FROM || 'Funds For Family <no-reply@example.invalid>';
-  const mailer = async ({ to, subject, html }) => {
-    if (!resend) { console.warn('RESEND_API_KEY not set; email skipped:', subject); return; }
-    const { error } = await resend.emails.send({ from, to, subject, html });
-    if (error) throw new Error(error.message);
-  };
+  // EMAIL_ENABLED (default off) gates every email; see src/mailer.js.
+  const mailer = createMailer(env, { resend: () => new Resend(env.RESEND_API_KEY) });
 
   const api = createApp({
     repo,

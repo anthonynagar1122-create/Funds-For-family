@@ -341,8 +341,8 @@ test('daily cron closes part-funded requests, withdraws unfunded ones and sends 
   has(/"crons"/, 'vercel.json');
 });
 
-test('email sending is behind an EMAIL_ENABLED switch that defaults to off', { todo: 'gap: only RESEND_API_KEY gates sending (src/services.js:38); no EMAIL_ENABLED (spec 7, checklist section 4)' }, () => {
-  has(/EMAIL_ENABLED/, 'src/services.js', 'src/config.js');
+test('email sending is behind an EMAIL_ENABLED switch that defaults to off', () => {
+  has(/EMAIL_ENABLED/, 'src/services.js', 'src/mailer.js');
 });
 
 test('borrower can propose a new due date on a funded or overdue request', { todo: 'gap: Phase C date-changes not built; POST /requests/:id/date-changes returns 404 (spec 5.5)' }, async () => {

@@ -204,8 +204,8 @@ gap('owner: daily cron is wired in vercel.json and guarded by CRON_SECRET (Phase
   assert.match(read('src', 'app.js') + read('src', 'services.js'), /CRON_SECRET/);
 });
 
-gap('owner: email sending is behind EMAIL_ENABLED, default off (Phase C)', 'mailer sends whenever RESEND_API_KEY is set; EMAIL_ENABLED does not exist', async () => {
-  assert.match(read('src', 'services.js') + read('src', 'config.js'), /EMAIL_ENABLED/);
+test('owner: email sending is behind EMAIL_ENABLED, default off (Phase C)', async () => {
+  assert.match(read('src', 'services.js') + read('src', 'config.js') + read('src', 'mailer.js'), /EMAIL_ENABLED/);
 });
 
 gap('owner: reminder, overdue and thank-you emails exist (Phase C)', 'only transactional emails exist; no 7-day/1-day/overdue reminders, date-change or thank-you mail', async () => {
@@ -213,7 +213,7 @@ gap('owner: reminder, overdue and thank-you emails exist (Phase C)', 'only trans
   assert.match(src, /notifications_sent|notificationsSent/, 'the reminder dedupe table is unused by any code in src/');
 });
 
-gap('owner: .env.example documents the pilot variables and drops the removed interest rate', '.env.example has no OWNER_EMAIL, CRON_SECRET or EMAIL_ENABLED and still lists INTEREST_RATE_ANNUAL=0.12', async () => {
+test('owner: .env.example documents the pilot variables and drops the removed interest rate', async () => {
   const env = read('.env.example');
   assert.match(env, /^OWNER_EMAIL=/m);
   assert.match(env, /^#?\s*CRON_SECRET=/m);
