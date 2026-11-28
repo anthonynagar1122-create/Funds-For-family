@@ -330,6 +330,125 @@ function runContract(makeRepo, { prefix = '' } = {}) {
     assert.deepEqual(await repo.membersWhoActed([{ id: onlySent.id, since: early }]), [], 'a sent entry is not funding');
     assert.deepEqual(await repo.membersWhoActed([]), []);
   });
+
+  // ---- 06 merge-review fixes ----
+  test('contract: findIdempotentEntry returns the entry a committed idempotent create saved, or null', async () => {
+    const repo = await makeRepo();
+    const [b, c, l] = [await mk(repo, 'ib'), await mk(repo, 'ic'), await mk(repo, 'il')];
+    await repo.addFollow(l.id, b.id); await repo.addFollow(b.id, l.id);
+    const r = await repo.createRequest(req(b, c));
+    const key = `${prefix}${uniq()}-idem`.replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 100);
+    const made = await repo.recordContribution({ requestId: r.id, contributorId: l.id, amountCents: 1200, utr: null, idempotencyKey: key });
+    const found = await repo.findIdempotentEntry({ operation: 'contribution.create', actorId: l.id, idempotencyKey: key });
+    assert.equal(found.id, made.id);
+    assert.equal(found.requestId, r.id);
+    assert.equal(found.amountCents, 1200);
+    assert.equal(found.contributorId, l.id);
+    assert.equal(await repo.findIdempotentEntry({ operation: 'contribution.create', actorId: b.id, idempotencyKey: key }), null, 'per actor');
+    assert.equal(await repo.findIdempotentEntry({ operation: 'repayment.create', actorId: l.id, idempotencyKey: key }), null, 'per operation');
+    assert.equal(await repo.findIdempotentEntry({ operation: 'contribution.create', actorId: l.id, idempotencyKey: `${key}x` }), null);
+    const fr = await repo.createRequest(req(b, c, { status: 'funded' }));
+    await repo.addContribution({ requestId: fr.id, contributorId: l.id, amountCents: 5000, status: 'confirmed' });
+    const pay = await repo.recordRepayment({ requestId: fr.id, payerId: b.id, lenderId: l.id, amountCents: 700, utr: null, idempotencyKey: key });
+    const pf = await repo.findIdempotentEntry({ operation: 'repayment.create', actorId: b.id, idempotencyKey: key });
+    assert.equal(pf.id, pay.id);
+    assert.equal(pf.lenderId, l.id);
+    assert.equal(pf.payerId, b.id);
+  });
+
+  test('contract: countUsers counts active members, admins and verifiers without a row cap', async () => {
+    const repo = await makeRepo();
+    const before = { all: await repo.countUsers(), admin: await repo.countUsers({ role: 'admin' }), verifier: await repo.countUsers({ role: 'verifier' }) };
+    const a = await mk(repo, 'cu1'); const v = await mk(repo, 'cu2'); await mk(repo, 'cu3'); const gone = await mk(repo, 'cu4');
+    await repo.updateUser(a.id, { isAdmin: true }); await repo.updateUser(v.id, { isVerifier: true });
+    await repo.updateUser(gone.id, { isAdmin: true, isVerifier: true });
+    await repo.deleteAccount(gone.id);
+    assert.equal(await repo.countUsers(), before.all + 3, 'deleted members are not counted');
+    assert.equal(await repo.countUsers({ role: 'admin' }), before.admin + 1);
+    assert.equal(await repo.countUsers({ role: 'verifier' }), before.verifier + 1);
+  });
+
+  test('contract: deleteAccount clears help-message assignments that point at the deleted member', async () => {
+    const repo = await makeRepo();
+    const [admin, helper, asker] = [await mk(repo, 'da'), await mk(repo, 'dh'), await mk(repo, 'dk')];
+    await repo.updateUser(admin.id, { isAdmin: true }); await repo.updateUser(helper.id, { isVerifier: true });
+    const m = await repo.addHelpMessage({ userId: asker.id, body: 'Please help me with my request' });
+    const other = await repo.addHelpMessage({ userId: asker.id, body: 'Another question for the team' });
+    await repo.assignHelpMessage({ id: m.id, actorId: admin.id, assigneeId: helper.id });
+    await repo.assignHelpMessage({ id: other.id, actorId: admin.id, assigneeId: admin.id });
+    await repo.deleteAccount(helper.id);
+    const all = await repo.listHelpMessages();
+    assert.equal(all.find((x) => x.id === m.id).assignedToId, null, 'assignment to the deleted member is cleared');
+    assert.equal(all.find((x) => x.id === other.id).assignedToId, admin.id, 'other assignments stay');
+  });
+
+  const settleFixture = async (repo) => {
+    const [b, c, l, admin] = [await mk(repo, 'sb'), await mk(repo, 'sc'), await mk(repo, 'sl'), await mk(repo, 'sa')];
+    await repo.updateUser(admin.id, { isAdmin: true });
+    return { b, c, l, admin };
+  };
+  const codeOf = (p) => p.then(() => null, (e) => e.code);
+  const at = '2026-12-01T10:00:00.000Z';
+
+  test('contract: settleContribution confirms or removes a waiting entry with the settle audit fields', async () => {
+    const repo = await makeRepo();
+    const { b, c, l, admin } = await settleFixture(repo);
+    const r = await repo.createRequest(req(b, c));
+    const e1 = await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 20000, status: 'sent' });
+    const e2 = await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 10000, status: 'not_received' });
+    const ok = await repo.settleContribution({ entryId: e1.id, actorId: admin.id, action: 'confirm', note: 'Checked by phone', at });
+    assert.equal(ok.id, e1.id);
+    assert.equal(ok.status, 'confirmed');
+    assert.ok(ok.confirmedAt);
+    assert.equal(ok.settledBy, admin.id);
+    assert.equal(ok.settledNote, 'Checked by phone');
+    assert.ok(ok.settledAt);
+    const gone = await repo.settleContribution({ entryId: e2.id, actorId: admin.id, action: 'remove', note: 'Never went', at });
+    assert.equal(gone.status, 'removed');
+    assert.equal(gone.settledBy, admin.id);
+    assert.ok(await repo.getContribution(e2.id), 'removed is kept, never deleted');
+  });
+
+  test('contract: settleContribution refuses cap (23514), self-settle (42501), missing (P0002), wrong status (55000)', async () => {
+    const repo = await makeRepo();
+    const { b, c, l, admin } = await settleFixture(repo);
+    const r = await repo.createRequest(req(b, c));
+    await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 30000, status: 'confirmed' });
+    await repo.addContribution({ requestId: r.id, contributorId: c.id, amountCents: 15000, status: 'sent' });
+    const over = await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 10000, status: 'not_received' });
+    assert.equal(await codeOf(repo.settleContribution({ entryId: over.id, actorId: admin.id, action: 'confirm', note: 'valid note', at })), '23514');
+    assert.equal((await repo.getContribution(over.id)).status, 'not_received', 'nothing written');
+    assert.equal(await codeOf(repo.settleContribution({ entryId: over.id, actorId: l.id, action: 'remove', note: 'valid note', at })), '42501', 'payer');
+    assert.equal(await codeOf(repo.settleContribution({ entryId: over.id, actorId: b.id, action: 'remove', note: 'valid note', at })), '42501', 'receiver');
+    assert.equal(await codeOf(repo.settleContribution({ entryId: 2147483000, actorId: admin.id, action: 'remove', note: 'valid note', at })), 'P0002');
+    const done = (await repo.listContributions(r.id)).find((x) => x.status === 'confirmed');
+    assert.equal(await codeOf(repo.settleContribution({ entryId: done.id, actorId: admin.id, action: 'remove', note: 'valid note', at })), '55000');
+    // Within the cap the same not_received entry can be confirmed (it fits exactly).
+    const fits = await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 5000, status: 'not_received' });
+    assert.equal((await repo.settleContribution({ entryId: fits.id, actorId: admin.id, action: 'confirm', note: 'valid note', at })).status, 'confirmed');
+  });
+
+  test('contract: settleRepayment confirms or removes, and refuses cap, self-settle, missing and wrong status', async () => {
+    const repo = await makeRepo();
+    const { b, c, l, admin } = await settleFixture(repo);
+    const r = await repo.createRequest(req(b, c, { status: 'funded' }));
+    await repo.addContribution({ requestId: r.id, contributorId: l.id, amountCents: 10000, status: 'confirmed' });
+    const paid = await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: l.id, amountCents: 6000, status: 'confirmed' });
+    const over = await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: l.id, amountCents: 5000, status: 'not_received' });
+    assert.equal(await codeOf(repo.settleRepayment({ entryId: over.id, actorId: admin.id, action: 'confirm', note: 'valid note', at })), '23514');
+    assert.equal(await codeOf(repo.settleRepayment({ entryId: over.id, actorId: b.id, action: 'confirm', note: 'valid note', at })), '42501', 'payer');
+    assert.equal(await codeOf(repo.settleRepayment({ entryId: over.id, actorId: l.id, action: 'confirm', note: 'valid note', at })), '42501', 'lender');
+    assert.equal(await codeOf(repo.settleRepayment({ entryId: 2147483000, actorId: admin.id, action: 'remove', note: 'valid note', at })), 'P0002');
+    assert.equal(await codeOf(repo.settleRepayment({ entryId: paid.id, actorId: admin.id, action: 'remove', note: 'valid note', at })), '55000');
+    const gone = await repo.settleRepayment({ entryId: over.id, actorId: admin.id, action: 'remove', note: 'Never arrived', at });
+    assert.equal(gone.status, 'removed');
+    assert.equal(gone.settledNote, 'Never arrived');
+    const fits = await repo.addRepayment({ requestId: r.id, payerId: b.id, lenderId: l.id, amountCents: 4000, status: 'sent' });
+    const ok = await repo.settleRepayment({ entryId: fits.id, actorId: admin.id, action: 'confirm', note: 'Lender confirmed', at });
+    assert.equal(ok.status, 'confirmed');
+    assert.equal(ok.settledBy, admin.id);
+    assert.ok(ok.confirmedAt && ok.settledAt);
+  });
 }
 
 module.exports = { runContract };
