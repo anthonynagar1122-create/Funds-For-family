@@ -40,3 +40,4 @@ These answers override earlier assumptions in docs 01, 03, 11 and 14 where they 
 | P-46 | UTR | Optional when marking money sent (P-22 stands), but unique within a request when given. |
 | P-47 | Verifiers | Keep two approvals (P-5). The owner appoints a second verifier before the first request; the borrower sees "Waiting for the verification team" meanwhile. |
 | P-48 | Launch scope | Build the daily job that auto-closes requests at their due date and an `EMAIL_ENABLED` switch that defaults off. Reminders stay in-app on Home; the landing page must not promise email reminders. Due-date votes, thank-you notes and receipts come after launch. |
+| P-49 | Member tabs | Five member tabs at every width: Home, Requests (mutual connections' open requests plus my activity), + New, Circle, Profile. The admin and verifier workspace is a header button. |
