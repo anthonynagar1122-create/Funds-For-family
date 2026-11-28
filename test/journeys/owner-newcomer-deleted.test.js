@@ -497,13 +497,13 @@ test('journey visitor: landing claims match the product, SEO and install basics 
   assert.match(legal, /not yet been reviewed by a lawyer/);
 });
 
-gap('visitor: the landing footer links to Terms and Privacy (spec 8.10)', 'footer has only "App" and "Questions"; terms and privacy are reachable only at /app/#/terms or inside the welcome step', async () => {
+test('visitor: the landing footer links to Terms and Privacy (spec 8.10)', async () => {
   const footer = landing.slice(landing.indexOf('<footer'));
   assert.match(footer, /href="[^"]*(terms)[^"]*"/i);
   assert.match(footer, /href="[^"]*(privacy)[^"]*"/i);
 });
 
-gap('visitor: /terms and /privacy are real static pages (spec 8.10)', 'spec says static pages at /terms and /privacy; there are none and vercel.json has no rewrite, so those URLs 404', async () => {
+test('visitor: /terms and /privacy are real static pages (spec 8.10)', async () => {
   const vercel = read('vercel.json');
   const has = (n) => fs.existsSync(path.join(ROOT, 'public', `${n}.html`)) || fs.existsSync(path.join(ROOT, 'public', n, 'index.html')) || new RegExp(`"source":\\s*"/${n}"`).test(vercel);
   assert.ok(has('terms') && has('privacy'));
@@ -518,7 +518,7 @@ gap('visitor: the FAQ explains adding the app to the home screen (spec 8 landing
   assert.match(landingText, /home screen/i);
 });
 
-gap('visitor: landing promises only what exists: trusted-contact reminders need the Phase C cron', 'landing says the trusted contact "get[s] the due-date reminders" and is "kept informed of the due date"; no reminder job exists', async () => {
+test('visitor: landing promises only what exists: trusted-contact reminders need the Phase C cron', async () => {
   const promises = /due-date reminders|kept informed of the due date/i.test(landingText);
   const cron = /"crons"/.test(read('vercel.json'));
   assert.ok(!promises || cron, 'landing promises reminders but vercel.json has no crons');

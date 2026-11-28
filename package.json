@@ -11,6 +11,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "build:legal": "node scripts/build-legal.js",
     "test": "node --test test/*.test.js test/pages/*.test.js test/journeys/*.test.js",
     "test:integration": "node --test test/integration/*.test.js"
   },

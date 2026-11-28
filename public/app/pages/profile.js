@@ -64,19 +64,6 @@
       <section aria-labelledby="stmt-h"><h2 id="stmt-h">Statement</h2>
         <p class="muted">Everything you have borrowed and lent, to print or save.</p>
         <a class="btn btn-secondary" id="statement-link" href="#/profile/statement">Open my statement</a></section>
-      <section aria-labelledby="mail-h"><h2 id="mail-h">Email preferences</h2>
-        <div class="stack" id="email-prefs">
-          <label class="check" for="pref-reminders"><input id="pref-reminders" type="checkbox"${me.emailReminders === false ? '' : ' checked'}><span>Reminders before and after a repayment date</span></label>
-          <label class="check" for="pref-thanks"><input id="pref-thanks" type="checkbox"${me.emailThanks === false ? '' : ' checked'}><span>Thank-you notes from people you lent to</span></label>
-          <p class="muted" id="prefs-status" role="status"></p>
-        </div>
-        <h3>Always on</h3>
-        <ul class="list" id="essential-emails">
-          <li>Emails about a request you made, funded or were named on <span class="badge">Always on</span></li>
-          <li>Emails when a payment is sent, received or not received <span class="badge">Always on</span></li>
-          <li>Emails when a repayment date changes <span class="badge">Always on</span></li>
-        </ul>
-      </section>
       <section aria-labelledby="help-h"><h2 id="help-h">Get help</h2>
         <form id="help-form" class="stack" novalidate>
           <label for="f-help">How can we help?</label>
@@ -119,23 +106,7 @@
       finally { btn.disabled = false; }
     });
 
-    let saved = { reminders: me.emailReminders !== false, thanks: me.emailThanks !== false };
-    $('#email-prefs').addEventListener('change', async () => {
-      const status = $('#prefs-status');
-      const reminders = $('#pref-reminders').checked;
-      const thanks = $('#pref-thanks').checked;
-      status.textContent = '';
-      try {
-        const { user } = await window.Api.patch('/me/email-preferences', { reminders, thanks });
-        ctx.onUser?.(user);
-        saved = { reminders, thanks };
-        status.textContent = 'Saved';
-      } catch (e) {
-        $('#pref-reminders').checked = saved.reminders;
-        $('#pref-thanks').checked = saved.thanks;
-        status.textContent = `Could not save. ${e.message}`;
-      }
-    });
+    // Email preference toggles are hidden until email reminders exist (P-48); the API route stays.
 
     loadMyHelp();
     $('#help-form').addEventListener('submit', async (ev) => {

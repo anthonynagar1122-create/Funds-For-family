@@ -5,7 +5,7 @@
 //  - API: network-first with last-saved fallback, ONLY for the allow-list below.
 //  - Never cached: /api/admin*, /api/invites*, any request carrying an invite token, any other API path.
 // Bump CACHE_VERSION on each release; older caches are deleted on activate.
-const CACHE_VERSION = 'ff-v11'; // ff-v11: P-45 combined branch (nav, workspace entry, Requests page)
+const CACHE_VERSION = 'ff-v12'; // ff-v12: terms/privacy links on sign-in, email preferences hidden (P-48)
 const SHELL_FILES = [
   '/app/', '/app/index.html', '/styles.css', '/app.js',
   '/app/money.js', '/app/format.js', '/app/api.js', '/app/nav.js', '/app/card-model.js',

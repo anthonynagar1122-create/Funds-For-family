@@ -43,5 +43,8 @@
     root.innerHTML = kind === 'privacy' ? PRIVACY : TERMS;
   }
 
-  window.LegalPage = { render };
+  const api = { render, TERMS, PRIVACY };
+  // Browser: window.LegalPage. Node: scripts/build-legal.js reads the same text to build the static /terms and /privacy pages.
+  if (typeof window !== 'undefined') window.LegalPage = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

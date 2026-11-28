@@ -101,16 +101,15 @@ test('sections render: initials, name, UPI, trust facts, statement link, help, d
     assert.match(trust, /Lent to 5 requests/);
     assert.doesNotMatch(await page.locator('#view-profile').innerText(), /overdue|unpaid|nominee|interest/i);
     assert.equal(await page.locator('#statement-link').getAttribute('href'), '#/profile/statement');
-    for (const name of ['Get help', 'Delete account', 'Email preferences', 'Trust history']) {
+    for (const name of ['Get help', 'Delete account', 'Trust history']) {
       assert.ok(await page.getByRole('heading', { name }).count(), name);
     }
     assert.ok(await page.getByRole('button', { name: 'Sign out' }).count());
     // 44 px targets
-    for (const sel of ['#details-save', '#help-send', '#sign-out', '#statement-link', '#pref-reminders']) {
+    for (const sel of ['#details-save', '#help-send', '#sign-out', '#statement-link']) {
       const box = await page.locator(sel).boundingBox();
-      assert.ok(box.height >= 24 && (sel === '#pref-reminders' || box.height >= 44), sel);
+      assert.ok(box.height >= 24 && box.height >= 44, sel);
     }
-    assert.ok((await page.locator('label[for="pref-reminders"]').boundingBox()).height >= 44);
   } finally { await ctx.close(); }
 });
 
@@ -136,19 +135,12 @@ test('saving details patches name and UPI; an error shows as text on the form', 
   } finally { await ctx.close(); }
 });
 
-test('email preferences: two toggles that save; essential emails are listed as always on, not toggles', { skip }, async () => {
-  const { page, ctx, state } = await open();
+test('email preferences are hidden while no email is sent (P-48, G-13)', { skip }, async () => {
+  const { page, ctx } = await open();
   try {
-    assert.equal(await page.getByLabel(/Reminders before/).isChecked(), true);
-    assert.equal(await page.getByLabel(/Thank-you notes/).isChecked(), false);
-    await page.getByLabel(/Thank-you notes/).check();
-    await page.waitForFunction(() => document.querySelector('#prefs-status').textContent === 'Saved');
-    assert.deepEqual(state.prefs.at(-1), { reminders: true, thanks: true });
-    assert.equal(await page.locator('#email-prefs input[type=checkbox]').count(), 2);
-    const essential = page.locator('#essential-emails');
-    assert.equal(await essential.locator('input').count(), 0);
-    assert.equal(await essential.locator('li').count(), 3);
-    assert.equal(await essential.getByText('Always on').count(), 3);
+    assert.equal(await page.locator('#email-prefs').count(), 0);
+    assert.equal(await page.locator('#essential-emails').count(), 0);
+    assert.equal(await page.getByText(/Always on|Reminders before/).count(), 0);
   } finally { await ctx.close(); }
 });
 

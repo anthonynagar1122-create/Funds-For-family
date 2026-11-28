@@ -47,3 +47,23 @@ test('copy: P-7 and P-8 describe mutual connections and invite-only joining', ()
   assert.match(text, /follow each other/i);
   assert.match(text, /invit/i);
 });
+
+// P-48: reminders are not built (no daily job, email off by default). The landing must not promise them, or anything
+// else that does not exist yet.
+test('copy: P-48 promises no reminders and no email', () => {
+  assert.doesNotMatch(text, /remind/i, 'a reminder is promised');
+  assert.doesNotMatch(text, /e-?mail(ed|s)?\b(?!\s+address)/i, 'email notifications are promised');
+  assert.doesNotMatch(text, /kept informed|notif(y|ied|ication)|alert(ed|s)?\b/i, 'a notification is promised');
+  assert.doesNotMatch(text, /get the due-date/i);
+});
+
+test('copy: the trusted contact is described by what the app does today (named, sees the request, may help)', () => {
+  assert.match(text, /trusted contact is a member the borrower names/i);
+  assert.match(text, /no obligation to repay/i);
+});
+
+test('copy: the footer links Terms and Privacy and nothing else new', () => {
+  const footer = html.slice(html.indexOf('<footer'));
+  const hrefs = [...footer.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(hrefs, ['/app/', '#faq', '/terms/', '/privacy/']);
+});
