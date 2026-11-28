@@ -264,6 +264,12 @@ function createMemoryRepo() {
     // ---- contributions and repayments ----
     async listContributionsByStatus(statuses) { return [...contributions.values()].filter((e) => statuses.includes(e.status)).sort((a, b) => a.id - b.id).map(copy); },
     async listRepaymentsByStatus(statuses) { return [...repayments.values()].filter((e) => statuses.includes(e.status)).sort((a, b) => a.id - b.id).map(copy); },
+    // The entry a committed idempotent create saved (operation 'contribution.create' or 'repayment.create'), or null.
+    // Lets the route replay a retry before its pre-checks, which a committed first call may now fail (UTR, cap).
+    async findIdempotentEntry({ operation, actorId, idempotencyKey }) {
+      const saved = financialIdempotency.get(`${operation}:${actorId}:${idempotencyKey}`);
+      return saved ? copy(saved.row) : null;
+    },
     // Synchronous check-and-write sections mirror the Postgres request-row lock semantics in tests.
     // `at` is the app clock (tests inject one); the Supabase RPCs use the database clock and ignore it.
     async recordContribution({ requestId, contributorId, amountCents, utr = null, idempotencyKey, at = new Date().toISOString() }) {

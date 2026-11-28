@@ -1005,6 +1005,22 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     return `Only ${formatInr(Math.max(0, (owed?.lentCents ?? 0) - others))} can still be repaid to this lender`;
   }
 
+  // Idempotent create (I-1, 06-merge-review-fixes): with an Idempotency-Key header, a key this member already used is
+  // looked up BEFORE the UTR and cap pre-checks, because a committed first call makes those fail on a retry. Same body
+  // -> { entry } to replay as the first success; different body -> the refusal the record RPC gives (409). Without a
+  // header a fresh key is generated and nothing is replayed. Returns { idempotencyKey, entry?, error?, status? }.
+  async function idempotentReplay(req, operation, sameBody) {
+    const header = req.get('idempotency-key');
+    const idempotencyKey = header || randomUUID();
+    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return { idempotencyKey, status: 400, error: 'Invalid idempotency key' };
+    if (!header) return { idempotencyKey };
+    const saved = await repo.findIdempotentEntry({ operation, actorId: req.user.id, idempotencyKey });
+    if (!saved) return { idempotencyKey };
+    if (sameBody(saved)) return { idempotencyKey, entry: saved };
+    const kind = operation === 'repayment.create' ? 'repayment' : 'contribution';
+    return { idempotencyKey, status: 409, error: `This idempotency key was already used for a different ${kind}` };
+  }
+
   // A confirmation can be retried after the request update failed, so every confirm re-checks the transition.
   async function settleFunded(requestId) {
     const { confirmedCents } = rules.fundingTotals(await repo.listContributions(requestId));
@@ -1029,6 +1045,12 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (parsed.error) return fail(res, 400, parsed.error, 'amount');
     const u = readUtr(req.body);
     if (u.error) return fail(res, 400, u.error, 'utr');
+    const idem = await idempotentReplay(req, 'contribution.create',
+      (e) => e.requestId === r.id && e.amountCents === parsed.paise && (e.utr ?? null) === u.utr);
+    if (idem.error) return fail(res, idem.status, idem.error);
+    if (idem.entry) {
+      return res.status(201).json({ contribution: contributionJson(idem.entry), request: await detail(await repo.getRequest(r.id), req.user.id) });
+    }
     if (u.utr && await utrTakenOnRequest(r.id, u.utr)) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
     const totals = rules.fundingTotals(await repo.listContributions(r.id));
     const check = rules.checkContribution({
@@ -1036,8 +1058,7 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
       contributorId: req.user.id, borrowerId: r.borrowerId, isMutual: mutual, status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const idempotencyKey = req.get('idempotency-key') || randomUUID();
-    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return fail(res, 400, 'Invalid idempotency key');
+    const { idempotencyKey } = idem;
     let created;
     try {
       created = await repo.recordContribution({
@@ -1150,7 +1171,6 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (req.user.id !== r.borrowerId && req.user.id !== r.trustedContactId) {
       return fail(res, 403, 'Only the borrower or trusted contact can record a repayment');
     }
-    if (r.status !== 'funded') return fail(res, 409, 'Repayments can be recorded only for funded requests');
     const rawLender = req.body?.lenderId;
     const lenderId = Number(rawLender);
     if (!(typeof rawLender === 'number' || /^\d+$/.test(rawLender ?? '')) || !Number.isInteger(lenderId)) {
@@ -1160,14 +1180,21 @@ function createApp({ repo, identify, mailer = async () => {}, now = () => new Da
     if (parsed.error) return fail(res, 400, parsed.error, 'amount');
     const u = readUtr(req.body);
     if (u.error) return fail(res, 400, u.error, 'utr');
+    // A retry of a committed repayment replays it, even once the request is repaid or the lender's cap is full.
+    const idem = await idempotentReplay(req, 'repayment.create',
+      (e) => e.requestId === r.id && e.lenderId === lenderId && e.amountCents === parsed.paise && (e.utr ?? null) === u.utr);
+    if (idem.error) return fail(res, idem.status, idem.error);
+    if (idem.entry) {
+      return res.status(201).json({ repayment: repaymentJson(idem.entry), request: await detail(await repo.getRequest(r.id), req.user.id) });
+    }
+    if (r.status !== 'funded') return fail(res, 409, 'Repayments can be recorded only for funded requests');
     if (u.utr && await utrTakenOnRequest(r.id, u.utr)) return fail(res, 409, UTR_TAKEN_MSG, 'utr');
     const check = rules.checkRepayment({
       amountCents: parsed.paise, payerId: req.user.id, borrowerId: r.borrowerId, trustedContactId: r.trustedContactId,
       lenderId, owed: (await owedFor(r.id)).get(lenderId), status: r.status,
     });
     if (!check.ok) return fail(res, 409, check.reason);
-    const idempotencyKey = req.get('idempotency-key') || randomUUID();
-    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return fail(res, 400, 'Invalid idempotency key');
+    const { idempotencyKey } = idem;
     let created;
     try {
       created = await repo.recordRepayment({

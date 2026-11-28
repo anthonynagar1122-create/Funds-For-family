@@ -335,6 +335,14 @@ function createSupabaseRepo({ url, serviceRoleKey, fetch: customFetch }) {
       if (statuses.length === 0) return [];
       return list(check(await db.from('repayments').select().in('status', statuses).order('id', { ascending: true })), REPAYMENT);
     },
+    // The entry a committed idempotent create saved (financial_idempotency.response), or null. A row whose response is
+    // still null belongs to a create in flight; the record RPC answers that case, so it reads as null here.
+    async findIdempotentEntry({ operation, actorId, idempotencyKey }) {
+      const row = check(await db.from('financial_idempotency').select('response').eq('operation', operation)
+        .eq('actor_id', actorId).eq('idempotency_key', idempotencyKey).maybeSingle());
+      if (!row?.response) return null;
+      return (operation === 'repayment.create' ? REPAYMENT : CONTRIBUTION).toObj(row.response);
+    },
     // Creation uses Postgres RPCs: request-row locks, cap checks, idempotency and audit triggers
     // execute in one database transaction. Never replace these with read/check/insert calls.
     async recordContribution({ requestId, contributorId, amountCents, utr = null, idempotencyKey }) {
