@@ -308,7 +308,7 @@ test('lender can reach the circle feed from the app (Requests tab or Home lists 
   assert.ok(wired, 'a lender can find open requests without typing the URL');
 });
 
-test('lender can correct (PATCH) or remove (DELETE) an entry the borrower marked not received, from the request page', { todo: 'gap: Home "Fix" opens a page with no edit or delete control' }, () => {
+test('lender can correct (PATCH) or remove (DELETE) an entry the borrower marked not received, from the request page', () => {
   const page = src('public/app/pages/request.js');
   assert.ok(/Api\.patch\([^)]*contributions/.test(page), 'edit amount or UTR');
   assert.ok(/Api\.delete\([^)]*contributions/.test(page), 'remove the entry');

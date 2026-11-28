@@ -402,23 +402,23 @@ test('closing or withdrawing voids leftover "sent" entries so they cannot block 
 
 // ---- Front end gaps (static checks of the page source: the pages are plain browser scripts) ----
 
-test('request page lets the borrower withdraw while it is withdrawable', { todo: 'gap: API exists (src/app.js:804) but public/app/pages/request.js has no withdraw control' }, () => {
+test('request page lets the borrower withdraw while it is withdrawable', () => {
   has(/\/withdraw/, 'public/app/pages/request.js');
 });
 
-test('request page lets the borrower "Close with Rs X" on a part-funded open request', { todo: 'gap: API exists (src/app.js:818) but request.js has no close control' }, () => {
+test('request page lets the borrower "Close with Rs X" on a part-funded open request', () => {
   has(/\/close/, 'public/app/pages/request.js');
 });
 
-test('request page lets the borrower pick another trusted contact after a decline', { todo: 'gap: API exists (src/app.js:759) but no page calls /trusted-contact; Home links to a page with no picker' }, () => {
+test('request page lets the borrower pick another trusted contact after a decline', () => {
   has(/trusted-contact/, 'public/app/pages/request.js');
 });
 
-test('a rejected request offers "Try again" with the form prefilled', { todo: 'gap: rejection reason is plain red text; no Try again button or prefill (spec 5.2, P-39)' }, () => {
+test('a rejected request offers "Try again" with the form prefilled', () => {
   has(/Try again/, 'public/app/pages/request.js', 'public/app/pages/new-request.js');
 });
 
-test('a lender can correct or remove an entry the borrower marked not received', { todo: 'BROKEN: Home says "Fix" but the request page has no edit or delete control, so PATCH/DELETE on contributions and repayments are unreachable' }, () => {
+test('a lender can correct or remove an entry the borrower marked not received', () => {
   has(/Api\.patch\(`\/(contributions|repayments)/, 'public/app/pages/request.js');
   has(/Api\.delete\(`\/(contributions|repayments)/, 'public/app/pages/request.js');
 });

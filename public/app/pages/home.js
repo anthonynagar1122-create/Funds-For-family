@@ -64,8 +64,10 @@
     const needsHtml = needs.length
       ? `<ul class="cards" id="needs-list">${needs.map((n) => {
         const t = needText(n);
-        return `<li class="card" data-kind="${esc(n.kind)}"><p class="card-title"><a class="home-link" href="#/request/${esc(n.requestId)}">${t.title}</a></p>
-          <p class="row-actions"><a class="btn btn-sm btn-primary" href="#/request/${esc(n.requestId)}">${esc(t.cta)}</a></p></li>`;
+        // A Fix item links to its entry on the request page (scrolled and focused there).
+        const anchor = n.kind === 'fix_contribution' && n.entryId ? `/contribution-${esc(n.entryId)}` : n.kind === 'fix_repayment' && n.entryId ? `/repayment-${esc(n.entryId)}` : '';
+        return `<li class="card" data-kind="${esc(n.kind)}"><p class="card-title"><a class="home-link" href="#/request/${esc(n.requestId)}${anchor}">${t.title}</a></p>
+          <p class="row-actions"><a class="btn btn-sm btn-primary" href="#/request/${esc(n.requestId)}${anchor}">${esc(t.cta)}</a></p></li>`;
       }).join('')}</ul>`
       : '<p class="empty" id="needs-empty">Nothing needs you right now.</p>';
     root.innerHTML = `<h1 id="home-title" tabindex="-1">Home</h1>

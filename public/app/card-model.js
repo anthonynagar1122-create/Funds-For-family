@@ -79,7 +79,21 @@
     };
   }
 
-  const api = { requestCard };
+  // Borrower-only controls on the request page. They mirror the API rules (withdraw, close, trusted-contact), so
+  // the page only offers what the server will accept. The server stays authoritative.
+  const WITHDRAWABLE = ['awaiting_contact', 'contact_declined', 'pending_verification', 'open'];
+  function ownerActions(request, viewer) {
+    if (!request || !viewer || viewer.id !== request.borrowerId) return [];
+    const confirmed = (request.totals && request.totals.confirmedCents) || 0;
+    const out = [];
+    if (WITHDRAWABLE.includes(request.status) && confirmed === 0) out.push({ id: 'withdraw', label: 'Withdraw request' });
+    if (request.status === 'open' && confirmed > 0) out.push({ id: 'close', label: 'Close with ' + formatCents(confirmed), confirmedCents: confirmed });
+    if (request.status === 'contact_declined') out.push({ id: 'repick-contact', label: 'Choose another trusted contact' });
+    if (request.status === 'rejected') out.push({ id: 'try-again', label: 'Try again' });
+    return out;
+  }
+
+  const api = { requestCard, ownerActions };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;

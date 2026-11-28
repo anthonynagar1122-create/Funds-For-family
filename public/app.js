@@ -78,19 +78,19 @@
   }
 
   // ---- New request ----
-  async function renderNew() {
+  async function renderNew(from) {
     show('view-new');
-    try { await NewRequestPage.render($('#new-root'), { toast, go: (h) => Router.go(h) }); }
+    try { await NewRequestPage.render($('#new-root'), { toast, go: (h) => Router.go(h), from, myId: me?.id }); }
     catch (err) { $('#new-root').innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`; }
     $('#new-title')?.focus();
   }
 
   // ---- Request detail ----
-  async function renderDetail(id) {
+  async function renderDetail(id, entry) {
     show('view-detail');
-    try { await RequestPage.render($('#detail'), { id, me, userName, toast, rerender: () => renderDetail(id) }); }
+    try { await RequestPage.render($('#detail'), { id, me, userName, toast, entry, rerender: () => renderDetail(id, entry) }); }
     catch (err) { $('#detail').innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`; }
-    $('#detail-title')?.focus();
+    if (!entry) $('#detail-title')?.focus();
   }
 
   // ---- Requests tab: open requests in my circle (mutual connections, the /feed list; G-06) plus my activity ----
@@ -351,9 +351,9 @@
   }
   Router.register('home', guarded(renderHome));
   Router.register('feed', guarded(renderFeed)); // the older feed stays reachable at #/feed
-  Router.register('new', guarded(renderNew));
+  Router.register('new', guarded((from) => renderNew(from)));
   Router.register('requests', guarded(renderActivity));
-  Router.register('request', guarded((id) => (id ? renderDetail(id) : renderActivity())));
+  Router.register('request', guarded((id, entry) => (id ? renderDetail(id, entry) : renderActivity())));
   Router.register('circle', guarded(renderPeople));
   Router.register('profile', guarded((sub) => renderProfile(sub)));
   Router.register('workspace', guarded(renderWorkspace));

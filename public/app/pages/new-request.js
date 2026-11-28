@@ -163,6 +163,23 @@
     });
   }
 
+  // "Try again" (P-39): #/new/<id> starts the form from the viewer's own rejected request. Anything else leaves it blank.
+  // The date is not copied (it is usually in the past). The server still validates everything on send.
+  async function prefill(root, from, myId) {
+    if (!/^\d+$/.test(String(from ?? ''))) return;
+    try {
+      const { request: r } = await window.Api.get(`/requests/${from}`);
+      if (r.status !== 'rejected' || r.borrowerId !== myId) return;
+      const set = (sel, v) => { const el = root.querySelector(sel); if (el && v !== null && v !== undefined) el.value = String(v); };
+      set('#f-amount', r.principalCents % 100 === 0 ? String(r.principalCents / 100) : (r.principalCents / 100).toFixed(2));
+      set('#f-category', r.category);
+      set('#f-purpose', r.purpose);
+      set('#f-contact', r.trustedContactId);
+      const count = root.querySelector('#purpose-count');
+      if (count) count.textContent = `${String(r.purpose || '').length} of ${PURPOSE_MAX.toLocaleString('en-IN')}`;
+    } catch { /* a missing or hidden request just gives a blank form */ }
+  }
+
   async function render(root, ctx = {}) {
     root.innerHTML = '<p class="muted" role="status">Loading…</p>';
     // The server stays authoritative; if the overview cannot load, show the form and let the API decide.
@@ -171,6 +188,7 @@
     if (active) { root.innerHTML = activeRequestHtml(active); return; }
     const { users } = await window.Api.get('/users');
     root.innerHTML = formHtml(users || []);
+    await prefill(root, ctx.from, ctx.myId);
     wire(root, ctx);
   }
 
